@@ -5,6 +5,7 @@ import scrapy
 import urllib
 
 PRODUCT_URL = r"/products/"
+COLLECTION_URL = r"/collections/"
 
 
 class ShopifySpider(scrapy.spiders.SitemapSpider):
@@ -16,9 +17,11 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
 
     If no parameters are provided, the spider does nothing.
     """
-
     name = 'ShopifySpider'
-    sitemap_rules = [(PRODUCT_URL, "parse_product")]
+    sitemap_rules = [
+        (PRODUCT_URL, "parse"),
+        (COLLECTION_URL, "parse")
+    ]
 
     def __init__(self, *args, url=None, url_file=None, **kwargs):
         """Constructs spider with sitemap_urls determined by url or url_file.
@@ -39,22 +42,26 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
             self.sitemap_urls = []
 
     def sitemap_filter(self, entries):
-        """Modifies product links to reach each product's data file."""
+        """Modifies links to reach data files."""
         for entry in entries:
-            if re.search(PRODUCT_URL, entry["loc"]):
+            valid_type = any([
+                re.search(PRODUCT_URL, entry["loc"]),
+                re.search(COLLECTION_URL, entry["loc"])
+            ])
+            if valid_type:
                 entry["loc"] = entry["loc"] + ".json"
             yield entry
 
-    def parse_product(self, response):
-        """Yields product data plus the source URL and store domain."""
-        product = json.loads(response.text)
-        product["url"] = response.request.url
-        product["store"] = urllib.parse.urlparse(response.request.url).netloc
-        yield product
+    def parse(self, response):
+        """Yields item data plus source URL and store domain."""
+        data = json.loads(response.text)
+        data["url"] = response.request.url
+        data["store"] = urllib.parse.urlparse(response.request.url).netloc
+        yield data
 
 
 def get_sitemap_url(url):
-    """Infers the sitemap URL from a given URL."""
+    """Infers sitemap URL from given URL."""
     url = urllib.parse.urlparse(url)
     url = ["https", url.netloc, "/sitemap.xml"] + [None]*3
     return urllib.parse.urlunparse(url)
