@@ -6,7 +6,7 @@ The spiders can be used like any standard Scrapy spider. Set your working direct
 
 Crawl a single Shopify store:
 ```bash
-scrapy crawl ShopifySpider -a url=https://www.mollyjogger.com/
+scrapy crawl ShopifySpider -a url=https://www.example.com/
 ```
 Crawl multiple Shopify stores at once using a text file with one URL per line:
 ```bash
