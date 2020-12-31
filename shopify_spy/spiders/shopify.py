@@ -12,12 +12,12 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
     # allowed_domains = ["shopify.com"]
     sitemap_rules = [(PRODUCT_URL, "parse_product")]
 
-    def __init__(self, *args, url=None, from_file=None, **kwargs):
+    def __init__(self, *args, url=None, url_file=None, **kwargs):
         super().__init__(*args, **kwargs)
         if url:
             self.sitemap_urls = [get_sitemap_url(url)]
-        elif from_file:
-            with open(from_file) as f:
+        elif url_file:
+            with open(url_file) as f:
                 self.sitemap_urls = [get_sitemap_url(x) for x in f.readlines()]
         else:
             self.sitemap_urls = []
