@@ -20,6 +20,11 @@ scrapy crawl GoogleSpider -a query="board games"
 * [Scrapy](https://docs.scrapy.org/en/latest/index.html)
 * [BeautifulSoup](https://www.crummy.com/software/BeautifulSoup/bs4/doc/)
 
+## Limitations
+* Attempting to crawl a large store may result in a temporary ban. This can be mitigated by configuring the autothrottle settings, which are lax by default.
+
+* Google does not like being crawled, so heavy use of GoogleSpider will result in a temporary ban.
+
 ## Contributing
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
 
