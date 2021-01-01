@@ -8,7 +8,7 @@ def sha1(string):
 
 
 def write_test_page(response, dst):
-    """Saves response as a human-readable html file in directory dst."""
+    """Saves response as an html file in directory dst."""
     os.makedirs(dst, exist_ok=True)
     path = os.path.join(dst, sha1(response.request.url) + ".html")
     with open(path, "wb") as f:
