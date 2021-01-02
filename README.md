@@ -12,9 +12,9 @@ Scrape multiple Shopify stores at once using a text file with one URL per line:
 ```cmd
 scrapy crawl ShopifySpider -a url_file=shopify_spy\resources\targets.txt
 ```
-Specify which items to scrape (defaults shown):
+Specify which items to scrape:
 ```cmd
-scrapy crawl ShopifySpider -a url=https://www.example.com/ -a products=True -a collections=False -a images=True
+scrapy crawl ShopifySpider -a url=https://www.example.com/ -a products=False -a collections=True
 ```
 Scrape Google for Shopify stores in a particular niche:
 ```cmd
