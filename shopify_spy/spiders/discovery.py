@@ -6,7 +6,7 @@ import bs4
 RE_MYSHOPIFY = re.compile(r"https?://[\w\d\-]+\.myshopify\.com/?")
 
 
-class GoogleSpider(scrapy.Spider):
+class DiscoverySpider(scrapy.Spider):
     """Spider for scraping Shopify URLS from Google.
 
     Usage example:
@@ -17,7 +17,7 @@ class GoogleSpider(scrapy.Spider):
     Warning:
     Tread lightly. Google does not like being scraped.
     """
-    name = "GoogleSpider"
+    name = "DiscoverySpider"
     allowed_domains = ["google.com"]
     custom_settings = {
         "ROBOTSTXT_OBEY": False,
