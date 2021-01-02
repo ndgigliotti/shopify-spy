@@ -5,15 +5,19 @@ A simple Scrapy project for scraping Shopify websites. The project includes two 
 The spiders can be used like any standard Scrapy spider. Set your working directory to the project directory and execute one of the following commands. The scrape results will be stored in a JSON lines file in `shopify_spy\resources\SpiderClassName`.
 
 Scrape a single Shopify store:
-```bash
+```cmd
 scrapy crawl ShopifySpider -a url=https://www.example.com/
 ```
 Scrape multiple Shopify stores at once using a text file with one URL per line:
-```bash
+```cmd
 scrapy crawl ShopifySpider -a url_file=shopify_spy\resources\targets.txt
 ```
+Specify which items to scrape (defaults shown):
+```cmd
+scrapy crawl ShopifySpider -a url=https://www.example.com/ -a products=True -a collections=False -a images=True
+```
 Scrape Google for Shopify stores in a particular niche:
-```bash
+```cmd
 scrapy crawl GoogleSpider -a query="board games"
 ```
 ## Technologies Used
