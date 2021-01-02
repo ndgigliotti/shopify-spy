@@ -21,6 +21,7 @@ class GoogleSpider(scrapy.Spider):
     allowed_domains = ["google.com"]
     custom_settings = {
         "ROBOTSTXT_OBEY": False,
+        "ITEM_PIPELINES": {"shopify_spy.pipelines.DuplicateURLPipeline": 100}
     }
 
     def __init__(self, query=None, *args, **kwargs):
