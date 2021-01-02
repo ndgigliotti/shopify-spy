@@ -13,10 +13,3 @@ def write_test_page(response, dst):
     path = os.path.join(dst, sha1(response.request.url) + ".html")
     with open(path, "wb") as f:
         f.write(response.body)
-
-
-def drop_dups(seq):
-    """Returns list without duplicates in original order."""
-    seen = set()
-    add = seen.add
-    return [x for x in seq if not (x in seen or add(x))]
