@@ -34,13 +34,17 @@ class GoogleSpider(scrapy.Spider):
         """
         super().__init__(*args, **kwargs)
         self.start_urls = [get_search_url(query)] if query else []
+        self._rank_count = 1
 
     def parse(self, response):
         """Yields Shopify URLS and request for next page."""
         soup = bs4.BeautifulSoup(response.text, "lxml")
-        urls = [x["href"] for x in soup.find_all("a", href=RE_MYSHOPIFY)]
-        urls = [RE_MYSHOPIFY.search(x)[0] for x in urls]
-        yield from [{"url": x} for x in urls]
+        elems = soup.find_all("a", href=RE_MYSHOPIFY)
+        for elem in elems:
+            url = RE_MYSHOPIFY.search(elem["href"])[0]
+            rank = self._rank_count
+            self._rank_count += 1
+            yield {"url": url, "rank": rank}
         next_ = soup.find("a", attrs={"aria-label": "Next page", "href": True})
         if next_:
             yield scrapy.Request("https://www.google.com" + next_["href"])
@@ -49,4 +53,4 @@ class GoogleSpider(scrapy.Spider):
 def get_search_url(query, site="myshopify.com"):
     """Constructs Google search URL from query with site constraint."""
     terms = "+".join(query.split())
-    return "https://www.google.com/search?q={terms}+site:{site}".format(**locals())
+    return f"https://www.google.com/search?q={terms}+site:{site}"
