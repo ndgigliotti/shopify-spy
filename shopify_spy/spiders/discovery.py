@@ -10,7 +10,7 @@ class DiscoverySpider(scrapy.Spider):
     """Spider for scraping Shopify URLS from Google.
 
     Usage example:
-    scrapy crawl GoogleSpider -a query="board games"
+    scrapy crawl DiscoverySpider -a query="board games"
 
     If no query is provided, the spider does nothing.
 
