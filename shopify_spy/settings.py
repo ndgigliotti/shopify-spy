@@ -43,7 +43,8 @@ TELNETCONSOLE_ENABLED = False
 
 FEED_URI = PurePath(RESOURCES_DIR).as_uri() + "/%(name)s/%(time)s.json"
 FEED_FORMAT = "jsonlines"
-
+IMAGES_STORE = path.join(RESOURCES_DIR, "images")
+IMAGES_RESULT_FIELD = "scraped_images"
 # Enable and configure the AutoThrottle extension (disabled by default)
 # See https://doc.scrapy.org/en/latest/topics/autothrottle.html
 # AUTOTHROTTLE_ENABLED = True
