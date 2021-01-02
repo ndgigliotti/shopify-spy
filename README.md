@@ -1,5 +1,5 @@
 # Shopify Spy
-A simple Scrapy project for scraping Shopify websites. The project includes two spiders: ShopifySpider and GoogleSpider. ShopifySpider is a universal Shopify spider, designed to extract data from any Shopify store. GoogleSpider is designed for discovering Shopify URLs.
+A simple Scrapy project for scraping Shopify websites. The project includes two spiders: ShopifySpider and DiscoverySpider. ShopifySpider is a universal Shopify spider, designed to extract detailed data from any Shopify store. DiscoverySpider is a tool for discovering Shopify sites using Google.
 
 ## Usage
 The spiders can be used like any standard Scrapy spider. Set your working directory to the project directory and execute one of the following commands. The scrape results will be stored in a JSON lines file in `shopify_spy\resources\SpiderClassName`.
@@ -18,7 +18,7 @@ scrapy crawl ShopifySpider -a url=https://www.example.com/ -a products=False -a 
 ```
 Scrape Google for Shopify stores in a particular niche:
 ```cmd
-scrapy crawl GoogleSpider -a query="board games"
+scrapy crawl DiscoverySpider -a query="board games"
 ```
 ## Technologies Used
 * [Scrapy](https://docs.scrapy.org/en/latest/index.html)
@@ -27,7 +27,7 @@ scrapy crawl GoogleSpider -a query="board games"
 ## Limitations
 * Attempting to scrape a large store may result in a temporary ban. This can be mitigated by configuring the autothrottle settings, which are lax by default.
 
-* Google does not like being scraped, so heavy use of GoogleSpider will result in a temporary ban.
+* Google does not like being scraped. Heavy use of DiscoverySpider may result in a temporary ban or worse.
 
 ## Contributing
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
