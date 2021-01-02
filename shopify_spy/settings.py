@@ -11,15 +11,15 @@ from pathlib import PurePath
 #     https://doc.scrapy.org/en/latest/topics/downloader-middleware.html
 #     https://doc.scrapy.org/en/latest/topics/spider-middleware.html
 
-BOT_NAME = 'shopify_spy'
+BOT_NAME = "shopify_spy"
 
-SPIDER_MODULES = ['shopify_spy.spiders']
-NEWSPIDER_MODULE = 'shopify_spy.spiders'
+SPIDER_MODULES = ["shopify_spy.spiders"]
+NEWSPIDER_MODULE = "shopify_spy.spiders"
 RESOURCES_DIR = path.join(path.dirname(path.abspath(__file__)), "resources")
 TEST_PAGES_DIR = path.join(RESOURCES_DIR, "test_pages")
 
 # Crawl responsibly by identifying yourself (and your website) on the user-agent
-#USER_AGENT = 'shopify_spy (+http://www.yourdomain.com)'
+#USER_AGENT = "shopify_spy (+http://www.yourdomain.com)"
 
 # Obey robots.txt rules
 ROBOTSTXT_OBEY = True
@@ -62,6 +62,6 @@ IMAGES_RESULT_FIELD = "scraped_images"
 # See https://doc.scrapy.org/en/latest/topics/downloader-middleware.html#httpcache-middleware-settings
 HTTPCACHE_ENABLED = False
 HTTPCACHE_EXPIRATION_SECS = 0
-HTTPCACHE_DIR = 'httpcache'
+HTTPCACHE_DIR = "httpcache"
 HTTPCACHE_IGNORE_HTTP_CODES = []
-HTTPCACHE_STORAGE = 'scrapy.extensions.httpcache.FilesystemCacheStorage'
+HTTPCACHE_STORAGE = "scrapy.extensions.httpcache.FilesystemCacheStorage"

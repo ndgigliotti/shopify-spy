@@ -7,15 +7,15 @@ import scrapy
 
 
 class ShopifySpider(scrapy.spiders.SitemapSpider):
-    """Sitemap-based spider for scraping Shopify stores.
+    r"""Sitemap-based spider for scraping Shopify stores.
 
     Usage examples:
     scrapy crawl ShopifySpider -a url=https://www.example.com/
-    scrapy crawl ShopifySpider -a url_file=shopify_spy\\resources\\targets.txt
+    scrapy crawl ShopifySpider -a url_file=shopify_spy\resources\targets.txt
 
     If no urls are provided, the spider does nothing.
     """
-    name = 'ShopifySpider'
+    name = "ShopifySpider"
     custom_settings = {
         "ITEM_PIPELINES": {"scrapy.pipelines.images.ImagesPipeline": 1}
     }

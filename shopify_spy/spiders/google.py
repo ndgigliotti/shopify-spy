@@ -17,8 +17,8 @@ class GoogleSpider(scrapy.Spider):
     Warning:
     Tread lightly. Google does not like being scraped.
     """
-    name = 'GoogleSpider'
-    allowed_domains = ['google.com']
+    name = "GoogleSpider"
+    allowed_domains = ["google.com"]
     custom_settings = {
         "ROBOTSTXT_OBEY": False,
     }
