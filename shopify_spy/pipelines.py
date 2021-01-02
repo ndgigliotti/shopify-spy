@@ -8,6 +8,8 @@ from scrapy.exceptions import DropItem
 
 
 class DuplicateURLPipeline:
+    """Drops item if URL has already been seen."""
+
     def __init__(self):
         self.urls_seen = set()
 
