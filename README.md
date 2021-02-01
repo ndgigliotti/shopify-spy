@@ -1,5 +1,5 @@
 # Shopify Spy
-A Scrapy project for scraping Shopify websites. The project includes two spiders: ShopifySpider and DiscoverySpider. ShopifySpider is a universal Shopify spider, designed to extract detailed data from any Shopify store. This includes high-value information like vendor names and inventory levels. DiscoverySpider is a tool for discovering Shopify sites using Google.
+A Scrapy project for scraping Shopify websites. The project includes two spiders: ShopifySpider and DiscoverySpider. ShopifySpider is a universal Shopify spider, designed to extract detailed data&mdash;including high-value information like **vendor names** and **inventory levels**&mdash;from any Shopify store. DiscoverySpider is a supplementary tool for discovering Shopify sites using Google.
 
 ## Usage
 The spiders can be used like any standard Scrapy spider. Set your working directory to the project directory and execute one of the following commands. The scrape results will be stored in a JSON lines file in `shopify_spy\resources\SpiderClassName`.
