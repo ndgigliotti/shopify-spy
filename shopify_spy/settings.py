@@ -15,7 +15,8 @@ BOT_NAME = "shopify_spy"
 
 SPIDER_MODULES = ["shopify_spy.spiders"]
 NEWSPIDER_MODULE = "shopify_spy.spiders"
-RESOURCES_DIR = path.join(path.dirname(path.abspath(__file__)), "resources")
+RESOURCES_DIR = path.join(path.dirname(path.dirname(
+    path.abspath(__file__))), "resources")
 TEST_PAGES_DIR = path.join(RESOURCES_DIR, "test_pages")
 
 # Crawl responsibly by identifying yourself (and your website) on the user-agent
