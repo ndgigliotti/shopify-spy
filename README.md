@@ -2,7 +2,7 @@
 Shopify Spy is a simple but powerful Scrapy application for scraping Shopify websites. Its main feature is ShopifySpider, a universal Shopify spider. The spider is designed to extract detailed data from *any* Shopify store, including high-value information like vendor names and inventory levels.
 
 ## Usage
-ShopifySpider can be used like any Scrapy spider. Set your working directory to the project directory and execute one of the following commands. Arguments must be preceded with the `-a` flag, as is standard for Scrapy. The results will be stored in a JSON lines file in `/resources/ShopifySpider`.
+ShopifySpider can be used like any Scrapy spider, but you must provide it with a URL. Set your working directory to the project directory and execute one of the following commands.
 
 Scrape a single Shopify store:
 ```shell
@@ -16,6 +16,7 @@ Specify which items to scrape:
 ```shell
 scrapy crawl ShopifySpider -a url=https://www.example.com/ -a products=False -a collections=True
 ```
+ Arguments must always be preceded with the `-a` flag, as is standard for Scrapy. The results will be stored in a JSON lines file in `/resources/ShopifySpider`.
 
 ## Technologies Used
 * [Scrapy](https://docs.scrapy.org/en/latest/index.html)
