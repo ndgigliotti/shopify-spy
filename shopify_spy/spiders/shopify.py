@@ -2,8 +2,9 @@
 import re
 import json
 import urllib
-from distutils.util import strtobool
 import scrapy
+import nested_lookup as nl
+from shopify_spy.utils import as_bool
 
 
 class ShopifySpider(scrapy.spiders.SitemapSpider):
@@ -45,11 +46,11 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
 
         # Determine what to scrape
         self.sitemap_rules = []
-        if strtobool(str(products)):
+        if as_bool(products):
             self.sitemap_rules.append(("/products/", "parse_product"))
-        if strtobool(str(collections)):
+        if as_bool(collections):
             self.sitemap_rules.append(("/collections/", "parse_collection"))
-        self.images_enabled = strtobool(str(images))
+        self.images_enabled = as_bool(images)
 
         super().__init__(*args, **kwargs)
 
@@ -70,14 +71,12 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         @scrapes product image_urls
         """
         data = extract_data(response)
-        image_urls = []
 
         # Get image urls
         if self.images_enabled:
-            for x in data.get("product", {}).get("images", []):
-                url = x.get("src")
-                if url:
-                    image_urls.append(url)
+            image_urls = nl.nested_lookup("src", data)
+        else:
+            image_urls = []
 
         # Set special field with image_urls
         data["image_urls"] = image_urls
@@ -93,11 +92,12 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         @scrapes collection image_urls
         """
         data = extract_data(response)
-        image_urls = []
+
         if self.images_enabled:
-            url = data.get("collection", {}).get("image", {}).get("src")
-            if url:
-                image_urls.append(url)
+            image_urls = nl.nested_lookup("src", data)
+        else:
+            image_urls = []
+
         data["image_urls"] = image_urls
         yield data
 

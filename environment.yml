@@ -37,6 +37,7 @@ dependencies:
   - lz4-c=1.9.3=h8ffe710_1
   - more-itertools=8.10.0=pyhd3eb1b0_0
   - mypy_extensions=0.4.3=py39hcbf5309_3
+  - nested-lookup=0.2.22=pyhd8ed1ab_0
   - olefile=0.46=pyh9f0ad1d_1
   - openjpeg=2.4.0=hb211442_1
   - openssl=1.1.1l=h8ffe710_0
