@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-import re
 import json
+import re
 import urllib
-import scrapy
+
 import nested_lookup as nl
+import scrapy
 from shopify_spy.utils import as_bool
 
 

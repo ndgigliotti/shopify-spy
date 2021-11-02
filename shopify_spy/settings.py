@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from os.path import dirname, abspath, join
+from os.path import abspath, dirname, join
 from pathlib import PurePath
 
 # Scrapy settings for shopify_spy project
