@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from os import path
+from os.path import dirname, abspath, join
 from pathlib import PurePath
 
 # Scrapy settings for shopify_spy project
@@ -15,18 +15,18 @@ BOT_NAME = "shopify_spy"
 
 SPIDER_MODULES = ["shopify_spy.spiders"]
 NEWSPIDER_MODULE = "shopify_spy.spiders"
-RESOURCES_DIR = path.join(path.dirname(path.dirname(
-    path.abspath(__file__))), "resources")
-TEST_PAGES_DIR = path.join(RESOURCES_DIR, "test_pages")
+
+RESOURCES_DIR = join(dirname(dirname(abspath(__file__))), "resources")
+RESOURCES_URI = PurePath(RESOURCES_DIR).as_uri()
 
 # Crawl responsibly by identifying yourself (and your website) on the user-agent
-#USER_AGENT = "shopify_spy (+http://www.yourdomain.com)"
+# USER_AGENT = "your_name (+http://www.yourdomain.com)"
 
 # Obey robots.txt rules
 ROBOTSTXT_OBEY = True
 
 # Configure maximum concurrent requests performed by Scrapy (default: 16)
-#CONCURRENT_REQUESTS = 32
+# CONCURRENT_REQUESTS = 32
 
 # Configure a delay for requests for the same website (default: 0)
 # See https://doc.scrapy.org/en/latest/topics/settings.html#download-delay
@@ -42,10 +42,25 @@ COOKIES_ENABLED = False
 # Disable Telnet Console (enabled by default)
 TELNETCONSOLE_ENABLED = False
 
-FEED_URI = PurePath(RESOURCES_DIR).as_uri() + "/%(name)s/%(time)s.json"
+FEEDS = {
+    f"{RESOURCES_URI}/%(name)s/%(time)s.json": {
+        "format": "jsonlines",
+        "encoding": "utf8",
+        "store_empty": False,
+        "fields": None,
+        "item_export_kwargs": {"export_empty_fields": True},
+    },
+}
+
+
 FEED_FORMAT = "jsonlines"
-IMAGES_STORE = path.join(RESOURCES_DIR, "images")
+FEED_URI_PARAMS = "shopify_spy.utils.uri_params"
+
+# Configure pipelines
+ITEM_PIPELINES = {"scrapy.pipelines.images.ImagesPipeline": 1}
+IMAGES_STORE = join(RESOURCES_DIR, "images")
 IMAGES_RESULT_FIELD = "scraped_images"
+
 # Enable and configure the AutoThrottle extension (disabled by default)
 # See https://doc.scrapy.org/en/latest/topics/autothrottle.html
 # AUTOTHROTTLE_ENABLED = True
@@ -64,5 +79,4 @@ IMAGES_RESULT_FIELD = "scraped_images"
 HTTPCACHE_ENABLED = False
 HTTPCACHE_EXPIRATION_SECS = 0
 HTTPCACHE_DIR = "httpcache"
-HTTPCACHE_IGNORE_HTTP_CODES = []
-HTTPCACHE_STORAGE = "scrapy.extensions.httpcache.FilesystemCacheStorage"
+HTTPCACHE_GZIP = True
