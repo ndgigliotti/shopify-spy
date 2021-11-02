@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import re
-import warnings
 import json
 import urllib
 from distutils.util import strtobool
@@ -12,9 +11,7 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
 
     Usage examples:
     scrapy crawl shopify_spider -a url=https://www.example.com/
-    scrapy crawl shopify_spider -a url_file=shopify_spy\resources\targets.txt
-
-    If no urls are provided, the spider does nothing.
+    scrapy crawl shopify_spider -a url_file=shopify_spy\resources\urls.txt
     """
     name = "shopify_spider"
 
@@ -26,7 +23,7 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         products=True,
         collections=False,
         images=True,
-        **kwargs
+        **kwargs,
     ):
         """Constructs spider with sitemap_urls determined by url or url_file.
 
@@ -45,8 +42,6 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
                 self.sitemap_urls = [get_sitemap_url(x) for x in f.readlines()]
         else:
             self.sitemap_urls = []
-
-        
 
         # Determine what to scrape
         self.sitemap_rules = []
