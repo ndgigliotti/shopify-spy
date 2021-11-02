@@ -117,8 +117,8 @@ def extract_data(response):
 
 def get_sitemap_url(url):
     """Infers sitemap URL from given URL."""
-    if not urllib.parse.urlparse(url).scheme:
-        warnings.warn("URL scheme not specified. Assuming 'https'.")
-    url = urllib.parse.urlparse(url, scheme="https")
-    url = [url.scheme, url.netloc or url.path, "/sitemap.xml", None, None, None]
-    return urllib.parse.urlunparse(url)
+    parsed = urllib.parse.urlparse(url)
+    if not parsed.scheme:
+        raise ValueError(f"Scheme not specified in URL: {url}")
+    sitemap_url = [parsed.scheme, parsed.netloc, "sitemap.xml", None, None, None]
+    return urllib.parse.urlunparse(sitemap_url)
