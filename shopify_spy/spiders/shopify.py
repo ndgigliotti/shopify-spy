@@ -25,7 +25,7 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         images=True,
         **kwargs,
     ):
-        """Constructs spider with sitemap_urls determined by url or url_file.
+        """Initializes spider by inferring sitemap URLs.
 
         Keyword arguments:
         url -- complete URL of target Shopify store (default None)
