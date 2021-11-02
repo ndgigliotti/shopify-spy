@@ -86,4 +86,3 @@ dependencies:
   - zope=1.0=py39haa95532_1
   - zope.interface=5.4.0=py39h2bbff1b_0
   - zstd=1.5.0=h6255e5f_0
-prefix: C:\Users\ndgig\anaconda3\envs\scrape-env
