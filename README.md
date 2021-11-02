@@ -39,4 +39,4 @@ Pull requests are welcome. For major changes, please open an issue first to disc
 
 ## Credits
 
-Icon by [Bartama Graphic]("https://www.flaticon.com/authors/bartama-graphic").
+Icon by [Bartama Graphic](https://www.flaticon.com/authors/bartama-graphic).
