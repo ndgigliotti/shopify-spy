@@ -1,3 +1,5 @@
+<div align="center"><img src="resources/icon.png", width=150></div>
+
 # Shopify Spy
 
 Shopify Spy is a simple but powerful [Scrapy](https://docs.scrapy.org/en/latest/index.html) application for scraping Shopify websites. Its main feature is `shopify_spider`, a universal Shopify spider. The spider is designed to extract detailed data from *any* Shopify store, including high-value information like vendor names and inventory levels.
@@ -33,3 +35,8 @@ Pull requests are welcome. For major changes, please open an issue first to disc
 ## License
 
 [MIT](https://choosealicense.com/licenses/mit/)
+
+
+## Credits
+
+Icon by [Bartama Graphic]("https://www.flaticon.com/authors/bartama-graphic").
