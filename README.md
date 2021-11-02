@@ -6,7 +6,7 @@ To find Shopify stores to scrape, try searching Google with the argument `site:m
 
 ## Usage
 
-The spider can be used like any Scrapy spider, but you must provide it with a URL. Set your working directory to the project directory and execute one of the following commands.
+The spider can be used like any Scrapy spider, but you must provide it with an URL. Set your working directory to the project directory and execute one of the following commands.
 
 Scrape a single Shopify store:
 ```shell
