@@ -8,7 +8,7 @@ To find Shopify stores to scrape, try searching Google with the argument `site:m
 
 ## Forking
 
-Shopify Spy is simply a project built using the Scrapy framework. To use it, fork and/or clone the repository. Forking is recommended, since you might want to adjust the settings in `shopify_spy/settings.py`, and you can fetch updates.
+Shopify Spy is just a project built using the Scrapy framework. To use it, fork and/or clone the repository. Forking is recommended, since you might want to adjust the settings in `shopify_spy/settings.py`, and can fetch updates.
 
 ## Usage
 
@@ -27,6 +27,8 @@ Specify which items to scrape:
 scrapy crawl shopify_spider -a url=https://www.example.com/ -a products=False -a collections=True
 ```
  Arguments must always be preceded with the `-a` flag, as is standard for Scrapy. The results will be stored in a JSON lines file in `/resources/shopify_spider`.
+
+Please refer to the [Scrapy documentation](https://docs.scrapy.org/en/latest/index.html) for questions about adjusting the settings, more advanced usage, or the Scrapy framework in general.
 
 ## Limitations
 
