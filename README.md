@@ -6,6 +6,10 @@ Shopify Spy is a simple but powerful [Scrapy](https://docs.scrapy.org/en/latest/
 
 To find Shopify stores to scrape, try searching Google with the argument `site:myshopify.com`.
 
+## Forking
+
+Shopify Spy is simply a project built using the Scrapy framework. To use it, fork and/or clone the repository. Forking is recommended, since you might want to adjust the settings in `shopify_spy/settings.py`, and you can fetch updates.
+
 ## Usage
 
 The spider can be used like any Scrapy spider, but you must provide it with an URL. Set your working directory to the project directory and execute one of the following commands.
