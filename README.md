@@ -4,6 +4,8 @@
 
 Shopify Spy is a simple but powerful [Scrapy](https://docs.scrapy.org/en/latest/index.html) application for scraping Shopify websites. Its main feature is `shopify_spider`, a universal Shopify spider. The spider is designed to extract detailed data from *any* Shopify store, including high-value information like vendor names and inventory levels.
 
+Supports dynamic website content via scrapy-playwright. See browser settings in `custom_settings` in `shopify_spy/spiders/shopify.py`.
+
 To find Shopify stores to scrape, try searching Google with the argument `site:myshopify.com`.
 
 ## Forking
@@ -13,6 +15,13 @@ Shopify Spy is just a project built using the Scrapy framework. To use it, fork 
 ## Usage
 
 The spider can be used like any Scrapy spider, but you must provide it with an URL. Set your working directory to the project directory and execute one of the following commands.
+
+Install scrapy-playwright
+
+```
+pip install scrapy-playwright
+```
+
 
 Scrape a single Shopify store:
 ```shell

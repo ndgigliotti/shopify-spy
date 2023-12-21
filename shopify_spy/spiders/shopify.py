@@ -5,17 +5,19 @@ import urllib
 
 import nested_lookup as nl
 import scrapy
+from scrapy_playwright.page import PageMethod
 from shopify_spy.utils import as_bool
 
-
 class ShopifySpider(scrapy.spiders.SitemapSpider):
-    r"""Sitemap-based spider for scraping Shopify stores.
-
-    Usage examples:
-    scrapy crawl shopify_spider -a url=https://www.example.com/
-    scrapy crawl shopify_spider -a url_file=shopify_spy\resources\urls.txt
-    """
     name = "shopify_spider"
+
+    custom_settings = {
+        "TWISTED_REACTOR": "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
+        "DOWNLOADER_MIDDLEWARES": {
+            "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler": 543,
+        },
+        "PLAYWRIGHT_BROWSER_TYPE": "chromium",  # Optional: set Playwright browser type (default is "chromium")
+    }
 
     def __init__(
         self,
@@ -27,16 +29,6 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         images=True,
         **kwargs,
     ):
-        """Initializes spider by inferring sitemap URLs.
-
-        Keyword arguments:
-        url -- complete URL of target Shopify store (default None)
-        url_file -- path to text file with one URL per line (default None)
-        products -- scrape products (default True)
-        collections -- scrape collections (default False)
-        images -- scrape images (default True)
-        """
-        # Determine starting sitemap URLs
         if url:
             self.sitemap_urls = [get_sitemap_url(url)]
         elif url_file:
@@ -45,7 +37,6 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         else:
             self.sitemap_urls = []
 
-        # Determine what to scrape
         self.sitemap_rules = []
         if as_bool(products):
             self.sitemap_rules.append(("/products/", "parse_product"))
@@ -56,44 +47,31 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         super().__init__(*args, **kwargs)
 
     def sitemap_filter(self, entries):
-        """Modifies links to reach data files."""
         for entry in entries:
             if re.search(r"/products/|/collections/", entry["loc"]):
                 entry["loc"] = entry["loc"] + ".json"
             yield entry
 
-    def parse_product(self, response):
-        """
-        Yields product data.
+    async def parse_product(self, response):
+        page = await response.follow(response.url, PageMethod.BROWSER)
+        rendered_body = await page.content()
+        await page.close()
 
-        @url https://www.mollyjogger.com/products/classic-jones-cap.json
-        @returns items 1 1
-        @returns requests 0 0
-        @scrapes product image_urls
-        """
-        data = extract_data(response)
-
-        # Get image urls
+        data = extract_data_from_rendered_body(rendered_body)
         if self.images_enabled:
             image_urls = nl.nested_lookup("src", data)
         else:
             image_urls = []
 
-        # Set special field with image_urls
         data["image_urls"] = image_urls
         yield data
 
-    def parse_collection(self, response):
-        """
-        Yields collection data.
+    async def parse_collection(self, response):
+        page = await response.follow(response.url, PageMethod.BROWSER)
+        rendered_body = await page.content()
+        await page.close()
 
-        @url https://www.denydesigns.com/collections/wall.json
-        @returns items 1 1
-        @returns requests 0 0
-        @scrapes collection image_urls
-        """
-        data = extract_data(response)
-
+        data = extract_data_from_rendered_body(rendered_body)
         if self.images_enabled:
             image_urls = nl.nested_lookup("src", data)
         else:
@@ -103,18 +81,19 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         yield data
 
 
-def extract_data(response):
-    """Deserializes JSON and returns item and metadata as dict."""
-    data = json.loads(response.text)
-    data["url"] = response.request.url
-    data["store"] = urllib.parse.urlparse(response.request.url).netloc
+def extract_data_from_rendered_body(rendered_body):
+    """Deserializes rendered HTML and returns item and metadata as dict."""
+    # Process the rendered HTML and extract data
+    # This depends on the structure of the HTML and the data you need to extract.
+    # For example, you might use BeautifulSoup to parse the HTML.
+    # data = ...
     return data
 
 
 def get_sitemap_url(url):
-    """Infers sitemap URL from given URL."""
     parsed = urllib.parse.urlparse(url)
     if not parsed.scheme:
         raise ValueError(f"Scheme not specified in URL: {url}")
     sitemap_url = [parsed.scheme, parsed.netloc, "sitemap.xml", None, None, None]
     return urllib.parse.urlunparse(sitemap_url)
+
