@@ -1,3 +1,4 @@
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -16,7 +17,15 @@ from shopify_spy.config import (
 from shopify_spy.spiders.shopify import ShopifySpider, extract_data, get_sitemap_url
 from shopify_spy.utils import as_bool, find_all_values, uri_params
 
-runner = CliRunner(env={"NO_COLOR": "1"})
+runner = CliRunner()
+
+# Pattern to strip ANSI escape codes from Rich output
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def strip_ansi(text: str) -> str:
+    """Strip ANSI escape codes from text."""
+    return ANSI_ESCAPE.sub("", text)
 
 
 @pytest.mark.integration
@@ -304,27 +313,28 @@ def test_parse_collection_no_images():
 def test_cli_help():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    assert "Scrape product and collection data" in result.stdout
+    assert "Scrape product and collection data" in strip_ansi(result.stdout)
 
 
 def test_cli_version():
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert "shopify-spy" in result.stdout
+    assert "shopify-spy" in strip_ansi(result.stdout)
 
 
 def test_cli_scrape_help():
     result = runner.invoke(app, ["scrape", "--help"])
     assert result.exit_code == 0
-    assert "--products" in result.stdout
-    assert "--no-products" in result.stdout
-    assert "--url-file" in result.stdout
+    output = strip_ansi(result.stdout)
+    assert "--products" in output
+    assert "--no-products" in output
+    assert "--url-file" in output
 
 
 def test_cli_init_help():
     result = runner.invoke(app, ["init", "--help"])
     assert result.exit_code == 0
-    assert "--force" in result.stdout
+    assert "--force" in strip_ansi(result.stdout)
 
 
 def test_cli_init_creates_file(tmp_path):
@@ -340,7 +350,7 @@ def test_cli_init_refuses_overwrite(tmp_path):
     config_file.write_text("existing content")
     result = runner.invoke(app, ["init", str(config_file)])
     assert result.exit_code == 1
-    assert "already exists" in result.stdout
+    assert "already exists" in strip_ansi(result.stdout)
 
 
 def test_cli_init_force_overwrite(tmp_path):
@@ -355,7 +365,7 @@ def test_cli_scrape_no_url():
     """Test that scrape fails when no URL provided (non-interactive)."""
     result = runner.invoke(app, ["scrape"])
     assert result.exit_code == 1
-    assert "No URLs provided" in result.stdout
+    assert "No URLs provided" in strip_ansi(result.stdout)
 
 
 # --- Config loading tests ---
