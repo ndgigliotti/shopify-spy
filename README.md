@@ -6,42 +6,71 @@ Shopify Spy is a simple but powerful [Scrapy](https://docs.scrapy.org/en/latest/
 
 To find Shopify stores to scrape, try searching Google with the argument `site:myshopify.com`.
 
-## Forking
+## Installation
 
-Shopify Spy is just a project built using the Scrapy framework. To use it, fork and/or clone the repository. Forking is recommended, since you might want to adjust the settings in `shopify_spy/settings.py`, and can fetch updates.
+Shopify Spy is a Scrapy project meant to be forked or cloned. Forking is recommended if you plan to customize settings in `shopify_spy/settings.py` while still being able to pull upstream updates.
+
+```shell
+git clone https://github.com/your-username/shopify-spy.git
+cd shopify-spy
+
+# Optional: add upstream to pull future updates
+git remote add upstream https://github.com/ORIGINAL_OWNER/shopify-spy.git
+```
+
+Install dependencies using [uv](https://docs.astral.sh/uv/) (recommended) or pip:
+
+```shell
+# Using uv
+uv sync
+
+# Using pip
+pip install .
+```
+
+Requires Python 3.10+.
 
 ## Usage
 
-The spider can be used like any Scrapy spider, but you must provide it with an URL. Set your working directory to the project directory and execute one of the following commands.
+The spider can be used like any Scrapy spider, but you must provide it with a URL. Run from the project directory:
 
-Scrape a single Shopify store:
 ```shell
+# Scrape a single store
 scrapy crawl shopify_spider -a url=https://www.example.com/
-```
-Scrape multiple Shopify stores at once using a text file with one URL per line:
-```shell
+
+# Scrape multiple stores from a text file (one URL per line)
 scrapy crawl shopify_spider -a url_file=resources/urls.txt
-```
-Specify which items to scrape:
-```shell
+
+# Specify what to scrape (products/collections/images can be True/False)
 scrapy crawl shopify_spider -a url=https://www.example.com/ -a products=False -a collections=True
 ```
- Arguments must always be preceded with the `-a` flag, as is standard for Scrapy. The results will be stored in a JSON lines file in `/resources/shopify_spider`.
 
-Please refer to the [Scrapy documentation](https://docs.scrapy.org/en/latest/index.html) for questions about adjusting the settings, more advanced usage, or the Scrapy framework in general.
+Arguments must always be preceded with the `-a` flag, as is standard for Scrapy. Results are stored as JSON lines in `resources/shopify_spider/`.
+
+Refer to the [Scrapy documentation](https://docs.scrapy.org/en/latest/index.html) for adjusting settings or advanced usage.
 
 ## Limitations
 
-Attempting to scrape a large store may result in a temporary ban. This can be mitigated by configuring AutoThrottle, which is disabled by default.
+Attempting to scrape a large store may result in a temporary ban. This can be mitigated by enabling AutoThrottle in `shopify_spy/settings.py`.
 
 ## Contributing
 
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change. Make sure to update the tests in `tests.py` and contracts in the spider.
+Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+
+```shell
+# Install dev dependencies
+uv sync --all-extras
+
+# Run tests
+pytest
+
+# Run linter
+ruff check .
+```
 
 ## License
 
 [MIT](https://choosealicense.com/licenses/mit/)
-
 
 ## Credits
 

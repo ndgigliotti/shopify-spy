@@ -1,10 +1,13 @@
-# -*- coding: utf-8 -*-
 import json
 import re
-import urllib
+import urllib.parse
+from collections.abc import Generator, Iterator
+from typing import Any
 
 import nested_lookup as nl
 import scrapy
+from scrapy.http import Response
+
 from shopify_spy.utils import as_bool
 
 
@@ -15,38 +18,39 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
     scrapy crawl shopify_spider -a url=https://www.example.com/
     scrapy crawl shopify_spider -a url_file=shopify_spy\resources\urls.txt
     """
+
     name = "shopify_spider"
 
     def __init__(
         self,
-        *args,
-        url=None,
-        url_file=None,
-        products=True,
-        collections=False,
-        images=True,
-        **kwargs,
-    ):
-        """Initializes spider by inferring sitemap URLs.
+        *args: Any,
+        url: str | None = None,
+        url_file: str | None = None,
+        products: bool | str = True,
+        collections: bool | str = False,
+        images: bool | str = True,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize spider by inferring sitemap URLs.
 
-        Keyword arguments:
-        url -- complete URL of target Shopify store (default None)
-        url_file -- path to text file with one URL per line (default None)
-        products -- scrape products (default True)
-        collections -- scrape collections (default False)
-        images -- scrape images (default True)
+        Args:
+            url: Complete URL of target Shopify store.
+            url_file: Path to text file with one URL per line.
+            products: Whether to scrape products.
+            collections: Whether to scrape collections.
+            images: Whether to scrape images.
         """
         # Determine starting sitemap URLs
         if url:
             self.sitemap_urls = [get_sitemap_url(url)]
         elif url_file:
             with open(url_file) as f:
-                self.sitemap_urls = [get_sitemap_url(x) for x in f.readlines()]
+                self.sitemap_urls = [get_sitemap_url(line.strip()) for line in f]
         else:
             self.sitemap_urls = []
 
         # Determine what to scrape
-        self.sitemap_rules = []
+        self.sitemap_rules: list[tuple[str, str]] = []
         if as_bool(products):
             self.sitemap_rules.append(("/products/", "parse_product"))
         if as_bool(collections):
@@ -55,16 +59,15 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
 
         super().__init__(*args, **kwargs)
 
-    def sitemap_filter(self, entries):
-        """Modifies links to reach data files."""
+    def sitemap_filter(self, entries: Iterator[dict[str, Any]]) -> Generator[dict[str, Any]]:
+        """Modify links to reach JSON data files."""
         for entry in entries:
             if re.search(r"/products/|/collections/", entry["loc"]):
                 entry["loc"] = entry["loc"] + ".json"
             yield entry
 
-    def parse_product(self, response):
-        """
-        Yields product data.
+    def parse_product(self, response: Response) -> Generator[dict[str, Any]]:
+        """Yield product data.
 
         @url https://www.mollyjogger.com/products/classic-jones-cap.json
         @returns items 1 1
@@ -73,19 +76,16 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         """
         data = extract_data(response)
 
-        # Get image urls
         if self.images_enabled:
-            image_urls = nl.nested_lookup("src", data)
+            image_urls: list[str] = nl.nested_lookup("src", data)
         else:
             image_urls = []
 
-        # Set special field with image_urls
         data["image_urls"] = image_urls
         yield data
 
-    def parse_collection(self, response):
-        """
-        Yields collection data.
+    def parse_collection(self, response: Response) -> Generator[dict[str, Any]]:
+        """Yield collection data.
 
         @url https://www.denydesigns.com/collections/wall.json
         @returns items 1 1
@@ -95,7 +95,7 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         data = extract_data(response)
 
         if self.images_enabled:
-            image_urls = nl.nested_lookup("src", data)
+            image_urls: list[str] = nl.nested_lookup("src", data)
         else:
             image_urls = []
 
@@ -103,18 +103,18 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         yield data
 
 
-def extract_data(response):
-    """Deserializes JSON and returns item and metadata as dict."""
-    data = json.loads(response.text)
+def extract_data(response: Response) -> dict[str, Any]:
+    """Deserialize JSON and return item with metadata."""
+    data: dict[str, Any] = json.loads(response.text)
     data["url"] = response.request.url
     data["store"] = urllib.parse.urlparse(response.request.url).netloc
     return data
 
 
-def get_sitemap_url(url):
-    """Infers sitemap URL from given URL."""
+def get_sitemap_url(url: str) -> str:
+    """Infer sitemap URL from given URL."""
     parsed = urllib.parse.urlparse(url)
     if not parsed.scheme:
         raise ValueError(f"Scheme not specified in URL: {url}")
-    sitemap_url = [parsed.scheme, parsed.netloc, "sitemap.xml", None, None, None]
+    sitemap_url = (parsed.scheme, parsed.netloc, "sitemap.xml", "", "", "")
     return urllib.parse.urlunparse(sitemap_url)
