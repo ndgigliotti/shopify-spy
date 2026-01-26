@@ -301,7 +301,7 @@ def run_spider(urls: list[str], config: Config, log_level: str | None = None) ->
             from shopify_spy.spiders.headless import HeadlessSpider
         except ImportError:
             console.print("[red]Error: scrapy-playwright not installed.[/red]")
-            console.print("Install with: uv pip install shopify-spy[headless]")
+            console.print("Install with: uv pip install 'shopify-spy\\[headless]'")
             raise typer.Exit(1)
 
         spider_cls = HeadlessSpider
