@@ -1,0 +1,51 @@
+[project]
+name = "shopify-spy"
+version = "1.0.0"
+description = "A Scrapy spider for scraping any Shopify store"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "scrapy>=2.11",
+    "pillow>=10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.9",
+    "pre-commit>=4.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "UP",     # pyupgrade
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests.py"]
+filterwarnings = [
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+]
+markers = [
+    "integration: marks tests that hit external services (deselect with '-m not integration')",
+]
+addopts = "-m 'not integration'"
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=7.0.0",
+]

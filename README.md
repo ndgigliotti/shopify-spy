@@ -2,46 +2,72 @@
 
 # Shopify Spy
 
-Shopify Spy is a simple but powerful [Scrapy](https://docs.scrapy.org/en/latest/index.html) application for scraping Shopify websites. Its main feature is `shopify_spider`, a universal Shopify spider. The spider is designed to extract detailed data from *any* Shopify store, including high-value information like vendor names and inventory levels.
+[![CI](https://github.com/ndgigliotti/shopify-spy/actions/workflows/ci.yml/badge.svg)](https://github.com/ndgigliotti/shopify-spy/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+Shopify Spy is a simple but powerful [Scrapy](https://docs.scrapy.org/en/latest/index.html) application for scraping Shopify websites. Its main feature is `shopify_spider`, a universal spider for Shopify stores. The spider extracts detailed data including high-value information like vendor names and inventory levels.
 
 To find Shopify stores to scrape, try searching Google with the argument `site:myshopify.com`.
 
-## Forking
+## Installation
 
-Shopify Spy is just a project built using the Scrapy framework. To use it, fork and/or clone the repository. Forking is recommended, since you might want to adjust the settings in `shopify_spy/settings.py`, and can fetch updates.
+Shopify Spy is a Scrapy project meant to be forked or cloned. Forking is recommended if you plan to customize settings in `shopify_spy/settings.py` while still being able to pull upstream updates.
+
+```shell
+git clone https://github.com/your-username/shopify-spy.git
+cd shopify-spy
+
+# Optional: add upstream to pull future updates
+git remote add upstream https://github.com/ORIGINAL_OWNER/shopify-spy.git
+```
+
+Install dependencies with pip:
+
+```shell
+pip install .
+```
+
+Or using [uv](https://docs.astral.sh/uv/) (faster):
+
+```shell
+uv sync
+```
+
+Requires Python 3.10+.
 
 ## Usage
 
-The spider can be used like any Scrapy spider, but you must provide it with an URL. Set your working directory to the project directory and execute one of the following commands.
+The spider can be used like any Scrapy spider, but you must provide it with a URL. Run from the project directory:
 
-Scrape a single Shopify store:
 ```shell
+# Scrape a single store
 scrapy crawl shopify_spider -a url=https://www.example.com/
-```
-Scrape multiple Shopify stores at once using a text file with one URL per line:
-```shell
+
+# Scrape multiple stores from a text file (one URL per line)
 scrapy crawl shopify_spider -a url_file=resources/urls.txt
-```
-Specify which items to scrape:
-```shell
+
+# Specify what to scrape (products/collections/images can be True/False)
 scrapy crawl shopify_spider -a url=https://www.example.com/ -a products=False -a collections=True
 ```
- Arguments must always be preceded with the `-a` flag, as is standard for Scrapy. The results will be stored in a JSON lines file in `/resources/shopify_spider`.
 
-Please refer to the [Scrapy documentation](https://docs.scrapy.org/en/latest/index.html) for questions about adjusting the settings, more advanced usage, or the Scrapy framework in general.
+Arguments must always be preceded with the `-a` flag, as is standard for Scrapy. Results are stored as JSON lines in `resources/shopify_spider/`.
+
+Refer to the [Scrapy documentation](https://docs.scrapy.org/en/latest/index.html) for adjusting settings or advanced usage.
 
 ## Limitations
 
-Attempting to scrape a large store may result in a temporary ban. This can be mitigated by configuring AutoThrottle, which is disabled by default.
+**Standard Shopify stores.** This spider works with standard Shopify stores using Liquid themes, which represent nearly all Shopify sites. The small number of headless stores built on [Hydrogen](https://hydrogen.shopify.dev/) or other custom storefronts are not supported, as they use the Storefront GraphQL API instead of the JSON endpoints this spider relies on.
 
-## Contributing
+Attempting to scrape a large store may result in a temporary ban. This can be mitigated by enabling AutoThrottle in `shopify_spy/settings.py`.
 
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change. Make sure to update the tests in `tests.py` and contracts in the spider.
+## Feedback
+
+Found a bug or have a suggestion? [Open an issue](https://github.com/ndgigliotti/shopify-spy/issues).
 
 ## License
 
 [MIT](https://choosealicense.com/licenses/mit/)
-
 
 ## Credits
 

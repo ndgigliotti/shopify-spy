@@ -1,58 +1,286 @@
-import random
 import subprocess
+import sys
+from unittest.mock import Mock
 
-from shopify_spy.spiders.shopify import get_sitemap_url
-from shopify_spy.utils import as_bool
+import pytest
+
+from shopify_spy.spiders.shopify import ShopifySpider, extract_data, get_sitemap_url
+from shopify_spy.utils import as_bool, find_all_values, uri_params
 
 
+@pytest.mark.integration
 def test_contracts():
-    subprocess.run(["scrapy", "check", "shopify_spider"], check=True)
+    """Integration test that hits real Shopify endpoints via Scrapy contracts."""
+    subprocess.run([sys.executable, "-m", "scrapy", "check", "shopify_spider"], check=True)
+
+
+# --- get_sitemap_url tests ---
 
 
 def test_get_sitemap_url():
     inputs = [
         "https://www.example.com",
         "https://www.example.com/",
-        "https://www.example.com/products/big_fancy_table"
+        "https://www.example.com/products/big_fancy_table",
         "https://www.example.com/products/big_fancy_table/",
     ]
+    expected = ["https://www.example.com/sitemap.xml"] * 4
 
-    correct = ["https://www.example.com/sitemap.xml"] * 4
+    for url, answer in zip(inputs, expected):
+        assert get_sitemap_url(url) == answer
 
-    for input, answer in zip(inputs, correct):
-        assert get_sitemap_url(input) == answer
+
+def test_get_sitemap_url_no_scheme():
+    with pytest.raises(ValueError, match="Scheme not specified"):
+        get_sitemap_url("www.example.com")
+
+
+# --- as_bool tests ---
 
 
 def test_as_bool():
-    pos_inputs = [
-        "y",
-        "yes",
-        "t",
-        "T",
-        "TRue",
-        "on",
-        "ON",
-        "1",
-        True,
-        1,
+    pos_inputs = ["y", "yes", "t", "T", "TRue", "on", "ON", "1", True, 1]
+    neg_inputs = ["n", "NO", "f", "false", "OfF", "0", "null", "na", "nan", False, 0, None]
+
+    for value in pos_inputs:
+        assert as_bool(value) is True
+
+    for value in neg_inputs:
+        assert as_bool(value) is False
+
+
+def test_as_bool_invalid():
+    with pytest.raises(ValueError, match="Could not interpret"):
+        as_bool("maybe")
+
+    with pytest.raises(ValueError, match="Could not interpret"):
+        as_bool("invalid")
+
+
+# --- uri_params tests ---
+
+
+def test_uri_params():
+    mock_spider = Mock()
+    mock_spider.name = "test_spider"
+
+    params = {"key": "value", "time": "2026-01-01"}
+    result = uri_params(params, mock_spider)
+
+    assert result == {"key": "value", "time": "2026-01-01", "spider_name": "test_spider"}
+
+
+def test_find_all_values():
+    nested = {
+        "product": {
+            "title": "Test",
+            "images": [
+                {"src": "http://img1.jpg", "alt": "Image 1"},
+                {"src": "http://img2.jpg", "alt": "Image 2"},
+            ],
+            "featured_image": {"src": "http://featured.jpg"},
+        }
+    }
+
+    result = list(find_all_values("src", nested))
+    assert result == ["http://img1.jpg", "http://img2.jpg", "http://featured.jpg"]
+
+    # Empty case
+    assert list(find_all_values("nonexistent", nested)) == []
+
+    # Simple dict
+    assert list(find_all_values("key", {"key": "value"})) == ["value"]
+
+    # List at root
+    assert list(find_all_values("x", [{"x": 1}, {"x": 2}])) == [1, 2]
+
+
+def test_find_all_values_empty_containers():
+    """Test with empty dicts and lists."""
+    assert list(find_all_values("key", {})) == []
+    assert list(find_all_values("key", [])) == []
+    assert list(find_all_values("key", {"a": {}, "b": []})) == []
+
+
+def test_find_all_values_none_values():
+    """Test handling of None values."""
+    # None as a value should be returned
+    assert list(find_all_values("key", {"key": None})) == [None]
+    # None in a list should be skipped (not iterable)
+    assert list(find_all_values("key", [None, {"key": "found"}])) == ["found"]
+
+
+def test_find_all_values_nested_lists():
+    """Test deeply nested list structures."""
+    data = [[{"x": 1}], [{"x": 2}, {"x": 3}]]
+    assert list(find_all_values("x", data)) == [1, 2, 3]
+
+
+def test_find_all_values_value_is_container():
+    """Test when the value itself is a dict or list."""
+    data = {"items": [1, 2, 3], "meta": {"nested": "value"}}
+    assert list(find_all_values("items", data)) == [[1, 2, 3]]
+    assert list(find_all_values("meta", data)) == [{"nested": "value"}]
+
+
+def test_find_all_values_duplicate_keys():
+    """Test finding same key at multiple nesting levels."""
+    data = {
+        "id": "outer",
+        "child": {
+            "id": "inner",
+            "grandchild": {"id": "deepest"},
+        },
+    }
+    assert list(find_all_values("id", data)) == ["outer", "inner", "deepest"]
+
+
+def test_find_all_values_primitives_at_root():
+    """Test that primitives at root return empty (not iterable)."""
+    assert list(find_all_values("key", "string")) == []
+    assert list(find_all_values("key", 123)) == []
+    assert list(find_all_values("key", None)) == []
+    assert list(find_all_values("key", True)) == []
+
+
+def test_find_all_values_mixed_types():
+    """Test with various value types."""
+    data = {
+        "string": "text",
+        "number": 42,
+        "float": 3.14,
+        "bool": True,
+        "null": None,
+    }
+    assert list(find_all_values("string", data)) == ["text"]
+    assert list(find_all_values("number", data)) == [42]
+    assert list(find_all_values("float", data)) == [3.14]
+    assert list(find_all_values("bool", data)) == [True]
+    assert list(find_all_values("null", data)) == [None]
+
+
+# --- extract_data tests ---
+
+
+def test_extract_data():
+    mock_response = Mock()
+    mock_response.text = '{"product": {"title": "Test Product", "price": 100}}'
+    mock_response.request.url = "https://www.example.com/products/test.json"
+
+    result = extract_data(mock_response)
+
+    assert result["product"] == {"title": "Test Product", "price": 100}
+    assert result["url"] == "https://www.example.com/products/test.json"
+    assert result["store"] == "www.example.com"
+
+
+# --- sitemap_filter tests ---
+
+
+def test_sitemap_filter():
+    spider = ShopifySpider(url="https://www.example.com")
+
+    entries = [
+        {"loc": "https://www.example.com/products/item1"},
+        {"loc": "https://www.example.com/collections/sale"},
+        {"loc": "https://www.example.com/pages/about"},
     ]
-    neg_inputs = [
-        "n",
-        "NO",
-        "f",
-        "false",
-        "OfF",
-        "0",
-        "null",
-        "na",
-        "nan",
-        False,
-        0,
-        None,
+
+    result = list(spider.sitemap_filter(iter(entries)))
+
+    assert result[0]["loc"] == "https://www.example.com/products/item1.json"
+    assert result[1]["loc"] == "https://www.example.com/collections/sale.json"
+    assert result[2]["loc"] == "https://www.example.com/pages/about"  # unchanged
+
+
+# --- spider __init__ tests ---
+
+
+def test_spider_init_with_url_file(tmp_path):
+    url_file = tmp_path / "urls.txt"
+    url_file.write_text("https://www.store1.com\n\nhttps://www.store2.com\n")
+
+    spider = ShopifySpider(url_file=str(url_file))
+
+    assert spider.sitemap_urls == [
+        "https://www.store1.com/sitemap.xml",
+        "https://www.store2.com/sitemap.xml",
     ]
-    pos_correct = [True] * len(pos_inputs)
-    neg_correct = [False] * len(neg_inputs)
-    queue = list(zip(pos_inputs, pos_correct)) + list(zip(neg_inputs, neg_correct))
-    random.shuffle(queue)
-    for input, answer in queue:
-        assert as_bool(input) is answer
+
+
+def test_spider_init_with_collections():
+    spider = ShopifySpider(url="https://www.example.com", products=False, collections=True)
+
+    assert spider.sitemap_rules == [("/collections/", "parse_collection")]
+    assert spider.sitemap_urls == ["https://www.example.com/sitemap.xml"]
+
+
+def test_spider_init_default():
+    spider = ShopifySpider(url="https://www.example.com")
+
+    assert spider.sitemap_rules == [("/products/", "parse_product")]
+    assert spider.images_enabled is True
+
+
+def test_spider_init_no_url():
+    spider = ShopifySpider()
+
+    assert spider.sitemap_urls == []
+
+
+# --- parse methods tests (unit tests complement contract integration tests) ---
+
+
+def test_parse_product():
+    spider = ShopifySpider(url="https://www.example.com", images=True)
+
+    mock_response = Mock()
+    mock_response.text = '{"product": {"title": "Test", "images": [{"src": "http://img1.jpg"}]}}'
+    mock_response.request.url = "https://www.example.com/products/test.json"
+
+    results = list(spider.parse_product(mock_response))
+
+    assert len(results) == 1
+    assert results[0]["product"]["title"] == "Test"
+    assert results[0]["url"] == "https://www.example.com/products/test.json"
+    assert results[0]["store"] == "www.example.com"
+    assert results[0]["image_urls"] == ["http://img1.jpg"]
+
+
+def test_parse_product_no_images():
+    spider = ShopifySpider(url="https://www.example.com", images=False)
+
+    mock_response = Mock()
+    mock_response.text = '{"product": {"title": "Test", "images": [{"src": "http://img1.jpg"}]}}'
+    mock_response.request.url = "https://www.example.com/products/test.json"
+
+    results = list(spider.parse_product(mock_response))
+
+    assert results[0]["image_urls"] == []
+
+
+def test_parse_collection():
+    spider = ShopifySpider(url="https://www.example.com", collections=True, images=True)
+
+    mock_response = Mock()
+    mock_response.text = '{"collection": {"title": "Sale", "image": {"src": "http://img.jpg"}}}'
+    mock_response.request.url = "https://www.example.com/collections/sale.json"
+
+    results = list(spider.parse_collection(mock_response))
+
+    assert len(results) == 1
+    assert results[0]["collection"]["title"] == "Sale"
+    assert results[0]["url"] == "https://www.example.com/collections/sale.json"
+    assert results[0]["image_urls"] == ["http://img.jpg"]
+
+
+def test_parse_collection_no_images():
+    spider = ShopifySpider(url="https://www.example.com", collections=True, images=False)
+
+    mock_response = Mock()
+    mock_response.text = '{"collection": {"title": "Sale", "image": {"src": "http://img.jpg"}}}'
+    mock_response.request.url = "https://www.example.com/collections/sale.json"
+
+    results = list(spider.parse_collection(mock_response))
+
+    assert results[0]["image_urls"] == []
