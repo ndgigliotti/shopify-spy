@@ -16,7 +16,7 @@ from shopify_spy.config import (
 from shopify_spy.spiders.shopify import ShopifySpider, extract_data, get_sitemap_url
 from shopify_spy.utils import as_bool, find_all_values, uri_params
 
-runner = CliRunner()
+runner = CliRunner(env={"NO_COLOR": "1"})
 
 
 @pytest.mark.integration
