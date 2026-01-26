@@ -38,8 +38,8 @@ shopify-spy scrape https://www.example.com
 # Scrape multiple stores
 shopify-spy scrape https://store1.com https://store2.com https://store3.com
 
-# Scrape without downloading images
-shopify-spy scrape https://www.example.com --no-images
+# Download product images
+shopify-spy scrape https://www.example.com --images
 
 # Include collections
 shopify-spy scrape https://www.example.com --collections
@@ -70,7 +70,7 @@ shopify-spy scrape [URL] [OPTIONS]
 - `--url-file, -f FILE` - File containing URLs (one per line)
 - `--products / --no-products` - Scrape products (default: yes)
 - `--collections / --no-collections` - Scrape collections (default: no)
-- `--images / --no-images` - Download images (default: yes)
+- `--images / --no-images` - Download images (default: no)
 - `--output, -o PATH` - Output directory (default: `./output`)
 - `--config, -c FILE` - Path to YAML config file
 - `--concurrent INT` - Concurrent requests per domain (default: 16)
@@ -100,7 +100,7 @@ Shopify Spy can be configured via YAML file. Create one with `shopify-spy init`:
 scrape:
   products: true      # Scrape product data
   collections: false  # Scrape collection data
-  images: true        # Download product images
+  images: false       # Download product images
 
 output:
   dir: ./output       # Output directory for results

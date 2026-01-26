@@ -365,7 +365,7 @@ def test_config_defaults():
     config = Config()
     assert config.scrape.products is True
     assert config.scrape.collections is False
-    assert config.scrape.images is True
+    assert config.scrape.images is False
     assert config.output.dir == Path("./output")
     assert config.network.concurrent_requests == 16
     assert config.throttle.enabled is True
@@ -443,7 +443,7 @@ def test_apply_cli_overrides():
     )
     assert overridden.scrape.products is False
     assert overridden.scrape.collections is True
-    assert overridden.scrape.images is True  # unchanged
+    assert overridden.scrape.images is False  # unchanged (default)
     assert overridden.output.dir == Path("/custom")
     assert overridden.network.concurrent_requests == 4
     assert overridden.network.user_agent == "MyBot/1.0"

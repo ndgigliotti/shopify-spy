@@ -11,7 +11,7 @@ class ScrapeConfig(BaseModel):
 
     products: bool = True
     collections: bool = False
-    images: bool = True
+    images: bool = False
 
 
 class OutputConfig(BaseModel):
@@ -68,7 +68,7 @@ DEFAULT_CONFIG_YAML = """\
 scrape:
   products: true      # Scrape product data
   collections: false  # Scrape collection data
-  images: true        # Download product images
+  images: false       # Download product images
 
 output:
   dir: ./output       # Output directory for results
