@@ -69,11 +69,11 @@ Pull requests are welcome. For major changes, please open an issue first to disc
 # Install dev dependencies
 uv sync --all-extras
 
-# Run tests
-pytest
+# Set up pre-commit hooks (runs ruff automatically on commit)
+uv run pre-commit install
 
-# Run linter
-ruff check .
+# Run tests
+uv run pytest
 ```
 
 ## License
