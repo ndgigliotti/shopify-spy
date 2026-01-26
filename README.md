@@ -1,4 +1,4 @@
-<div align="center"><img src="assets/icon.png", width=150></div>
+<div align="center"><img src="https://raw.githubusercontent.com/ndgigliotti/shopify-spy/master/assets/icon.png" width=150></div>
 
 # Shopify Spy
 
