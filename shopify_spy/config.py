@@ -21,6 +21,7 @@ class ScrapeConfig(BaseModel):
     products: bool = True
     collections: bool = False
     images: bool = False
+    headless: bool = False  # Use Playwright for headless Shopify stores
 
 
 class OutputConfig(BaseModel):
@@ -79,6 +80,7 @@ scrape:
   products: true      # Scrape product data
   collections: false  # Scrape collection data
   images: false       # Download product images
+  headless: false     # Use Playwright for headless Shopify stores
 
 output:
   dir: ./output       # Output directory for results

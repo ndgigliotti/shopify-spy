@@ -448,6 +448,7 @@ def test_apply_cli_overrides():
         products=False,
         collections=True,
         images=None,  # should not override
+        headless=True,
         output=Path("/custom"),
         format=None,
         concurrent=4,
@@ -457,6 +458,7 @@ def test_apply_cli_overrides():
     assert overridden.scrape.products is False
     assert overridden.scrape.collections is True
     assert overridden.scrape.images is False  # unchanged (default)
+    assert overridden.scrape.headless is True
     assert overridden.output.dir == Path("/custom")
     assert overridden.network.concurrent_requests == 4
     assert overridden.network.user_agent == "MyBot/1.0"
@@ -471,6 +473,7 @@ def test_apply_cli_overrides_none_values():
         products=None,
         collections=None,
         images=None,
+        headless=None,
         output=None,
         format=None,
         concurrent=None,
@@ -479,6 +482,7 @@ def test_apply_cli_overrides_none_values():
     )
     assert overridden.scrape.products is True
     assert overridden.scrape.collections is False
+    assert overridden.scrape.headless is False  # unchanged (default)
     assert overridden.output.dir == Path("./output")
     assert overridden.throttle.enabled is True  # default is now True
     assert overridden.network.user_agent is None  # uses Scrapy default

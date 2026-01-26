@@ -76,6 +76,12 @@ def scrape(
         bool | None,
         typer.Option("--images/--no-images", help="Download product images."),
     ] = None,
+    headless: Annotated[
+        bool | None,
+        typer.Option(
+            "--headless/--no-headless", help="Use Playwright for headless/Hydrogen stores."
+        ),
+    ] = None,
     output: Annotated[
         Path | None,
         typer.Option("--output", "-o", help="Output directory for results."),
@@ -125,6 +131,7 @@ def scrape(
         products=products,
         collections=collections,
         images=images,
+        headless=headless,
         output=output,
         format=format,
         concurrent=concurrent,
@@ -179,6 +186,7 @@ def apply_cli_overrides(
     products: bool | None,
     collections: bool | None,
     images: bool | None,
+    headless: bool | None,
     output: Path | None,
     format: OutputFormat | None,
     concurrent: int | None,
@@ -198,6 +206,8 @@ def apply_cli_overrides(
         scrape_dict["collections"] = collections
     if images is not None:
         scrape_dict["images"] = images
+    if headless is not None:
+        scrape_dict["headless"] = headless
     if output is not None:
         output_dict["dir"] = output
     if format is not None:
@@ -240,8 +250,6 @@ def run_spider(urls: list[str], config: Config, log_level: str | None = None) ->
     # Deferred imports to avoid loading Scrapy until needed
     from scrapy.crawler import CrawlerProcess
     from scrapy.utils.project import get_project_settings
-
-    from shopify_spy.spiders.shopify import ShopifySpider
 
     settings = get_project_settings()
 
@@ -287,9 +295,37 @@ def run_spider(urls: list[str], config: Config, log_level: str | None = None) ->
     if not config.scrape.images:
         settings.set("ITEM_PIPELINES", {})
 
+    # Select spider based on headless mode
+    if config.scrape.headless:
+        try:
+            from shopify_spy.spiders.headless import HeadlessSpider
+        except ImportError:
+            console.print("[red]Error: scrapy-playwright not installed.[/red]")
+            console.print("Install with: uv pip install shopify-spy[headless]")
+            raise typer.Exit(1)
+
+        spider_cls = HeadlessSpider
+        settings.set("TWISTED_REACTOR", "twisted.internet.asyncioreactor.AsyncioSelectorReactor")
+        settings.set(
+            "DOWNLOAD_HANDLERS",
+            {
+                "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+                "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+            },
+        )
+        settings.set("PLAYWRIGHT_BROWSER_TYPE", "chromium")
+        settings.set("PLAYWRIGHT_LAUNCH_OPTIONS", {"headless": True})
+    else:
+        from shopify_spy.spiders.shopify import ShopifySpider
+
+        spider_cls = ShopifySpider
+
     console.print(f"[bold]Scraping {len(urls)} store(s)...[/bold]")
-    console.print(f"  Products: {config.scrape.products}")
-    console.print(f"  Collections: {config.scrape.collections}")
+    if config.scrape.headless:
+        console.print("  Mode: headless (Playwright)")
+    else:
+        console.print(f"  Products: {config.scrape.products}")
+        console.print(f"  Collections: {config.scrape.collections}")
     console.print(f"  Images: {config.scrape.images}")
     console.print(f"  Format: {config.output.format}")
     console.print(f"  Output: {output_dir}")
@@ -298,13 +334,16 @@ def run_spider(urls: list[str], config: Config, log_level: str | None = None) ->
 
     # Crawl each URL
     for store_url in urls:
-        process.crawl(
-            ShopifySpider,
-            url=store_url,
-            products=config.scrape.products,
-            collections=config.scrape.collections,
-            images=config.scrape.images,
-        )
+        if config.scrape.headless:
+            process.crawl(spider_cls, url=store_url)
+        else:
+            process.crawl(
+                spider_cls,
+                url=store_url,
+                products=config.scrape.products,
+                collections=config.scrape.collections,
+                images=config.scrape.images,
+            )
 
     process.start()
     console.print("[green]Done![/green]")
