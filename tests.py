@@ -13,7 +13,7 @@ def test_get_sitemap_url():
     inputs = [
         "https://www.example.com",
         "https://www.example.com/",
-        "https://www.example.com/products/big_fancy_table"
+        "https://www.example.com/products/big_fancy_table",
         "https://www.example.com/products/big_fancy_table/",
     ]
 
