@@ -96,6 +96,14 @@ def scrape(
         str | None,
         typer.Option("--user-agent", "-A", help="Custom User-Agent header."),
     ] = None,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-v", help="Show debug output."),
+    ] = False,
+    quiet: Annotated[
+        bool,
+        typer.Option("--quiet", "-q", help="Show only warnings and errors."),
+    ] = False,
 ) -> None:
     """Scrape products and collections from Shopify stores."""
     # Load config file (or defaults)
@@ -120,8 +128,14 @@ def scrape(
         console.print("Provide a URL argument, --url-file, or run interactively.")
         raise typer.Exit(1)
 
+    # Determine log level
+    if verbose and quiet:
+        console.print("[red]Error: Cannot use both --verbose and --quiet[/red]")
+        raise typer.Exit(1)
+    log_level = "DEBUG" if verbose else "WARNING" if quiet else None
+
     # Run the spider
-    run_spider(all_urls, config)
+    run_spider(all_urls, config, log_level=log_level)
 
 
 @app.command()
@@ -207,7 +221,7 @@ def get_urls(urls: list[str] | None, url_file: Path | None) -> list[str]:
     return []
 
 
-def run_spider(urls: list[str], config: Config) -> None:
+def run_spider(urls: list[str], config: Config, log_level: str | None = None) -> None:
     """Run the Shopify spider with the given configuration."""
     # Deferred imports to avoid loading Scrapy until needed
     from scrapy.crawler import CrawlerProcess
@@ -243,6 +257,9 @@ def run_spider(urls: list[str], config: Config) -> None:
 
     if config.network.user_agent:
         settings.set("USER_AGENT", config.network.user_agent)
+
+    if log_level:
+        settings.set("LOG_LEVEL", log_level)
 
     # Configure auto-throttle
     if config.throttle.enabled:

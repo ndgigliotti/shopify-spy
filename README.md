@@ -78,6 +78,8 @@ shopify-spy scrape [URL] [OPTIONS]
 - `--concurrent INT` - Concurrent requests per domain (default: 16)
 - `--throttle / --no-throttle` - Auto-throttle requests (default: yes)
 - `--user-agent, -A TEXT` - Custom User-Agent header
+- `--verbose, -v` - Show debug output
+- `--quiet, -q` - Show only warnings and errors
 
 ### `init`
 
