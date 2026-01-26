@@ -52,10 +52,14 @@ shopify-spy = "shopify_spy.cli:app"
 parquet = [
     "pyarrow>=14.0",
 ]
+headless = [
+    "scrapy-playwright>=0.0.40",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.9",
     "pre-commit>=4.0",
+    "scrapy-playwright>=0.0.40",
 ]
 
 [build-system]
