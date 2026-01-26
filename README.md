@@ -13,17 +13,17 @@ To find Shopify stores to scrape, try searching Google with `site:myshopify.com`
 
 ## Installation
 
+[pipx](https://pipx.pypa.io/) and [uv tool](https://docs.astral.sh/uv/) install CLI tools in isolated environments, so they won't conflict with other Python projects:
+
 ```bash
+# pipx
 pipx install shopify-spy
-```
 
-If you use [uv](https://docs.astral.sh/uv/):
-
-```bash
+# uv
 uv tool install shopify-spy
 ```
 
-Or install with pip in a virtual environment:
+Or install with pip if you want it in a specific virtual environment:
 
 ```bash
 pip install shopify-spy
