@@ -61,20 +61,9 @@ Refer to the [Scrapy documentation](https://docs.scrapy.org/en/latest/index.html
 
 Attempting to scrape a large store may result in a temporary ban. This can be mitigated by enabling AutoThrottle in `shopify_spy/settings.py`.
 
-## Contributing
+## Feedback
 
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
-
-```shell
-# Install dev dependencies
-uv sync --all-extras
-
-# Set up pre-commit hooks (runs ruff automatically on commit)
-uv run pre-commit install
-
-# Run tests
-uv run pytest
-```
+Found a bug or have a suggestion? [Open an issue](https://github.com/ndgigliotti/shopify-spy/issues).
 
 ## License
 
