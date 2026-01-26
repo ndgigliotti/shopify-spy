@@ -2,7 +2,7 @@
 
 # Shopify Spy
 
-Shopify Spy is a simple but powerful [Scrapy](https://docs.scrapy.org/en/latest/index.html) application for scraping Shopify websites. Its main feature is `shopify_spider`, a universal Shopify spider. The spider is designed to extract detailed data from *any* Shopify store, including high-value information like vendor names and inventory levels.
+Shopify Spy is a simple but powerful [Scrapy](https://docs.scrapy.org/en/latest/index.html) application for scraping Shopify websites. Its main feature is `shopify_spider`, a universal spider for classic Shopify stores. The spider extracts detailed data including high-value information like vendor names and inventory levels.
 
 To find Shopify stores to scrape, try searching Google with the argument `site:myshopify.com`.
 
@@ -50,6 +50,8 @@ Arguments must always be preceded with the `-a` flag, as is standard for Scrapy.
 Refer to the [Scrapy documentation](https://docs.scrapy.org/en/latest/index.html) for adjusting settings or advanced usage.
 
 ## Limitations
+
+**Classic Shopify stores only.** This spider works with traditional Shopify stores using Liquid themes, which expose `/products/[handle].json` and `/collections/[handle].json` endpoints. It does not work with headless Shopify stores built on [Hydrogen](https://hydrogen.shopify.dev/), which use the Storefront GraphQL API instead.
 
 Attempting to scrape a large store may result in a temporary ban. This can be mitigated by enabling AutoThrottle in `shopify_spy/settings.py`.
 
