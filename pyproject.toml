@@ -1,12 +1,12 @@
 [project]
 name = "shopify-spy"
 version = "0.1.0"
-description = "A Scrapy spider for scraping any Shopify store"
+description = "Simple CLI to scrape product data, images, and collections from Shopify stores"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
-    { name = "Nick Gigliotti", email = "ndgigliotti@gmail.com" },
+    { name = "Nicholas Gigliotti", email = "ndgigliotti@gmail.com" },
 ]
 keywords = [
     "shopify",
