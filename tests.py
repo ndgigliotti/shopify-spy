@@ -1,4 +1,3 @@
-import random
 import subprocess
 
 from shopify_spy.spiders.shopify import get_sitemap_url
@@ -52,7 +51,6 @@ def test_as_bool():
     ]
     pos_correct = [True] * len(pos_inputs)
     neg_correct = [False] * len(neg_inputs)
-    queue = list(zip(pos_inputs, pos_correct)) + list(zip(neg_inputs, neg_correct))
-    random.shuffle(queue)
-    for input, answer in queue:
+    cases = list(zip(pos_inputs, pos_correct)) + list(zip(neg_inputs, neg_correct))
+    for input, answer in cases:
         assert as_bool(input) is answer
