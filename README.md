@@ -145,6 +145,27 @@ output/
 
 Each line in the JSON file contains a product or collection with full metadata from Shopify's JSON API.
 
+### Image Metadata
+
+When using `--images`, each item includes a `scraped_images` field with download info:
+
+```json
+{
+  "image_urls": ["https://cdn.shopify.com/.../product.jpg"],
+  "scraped_images": [
+    {
+      "url": "https://cdn.shopify.com/.../product.jpg",
+      "path": "full/abc123def.jpg",
+      "checksum": "d41d8cd98f00b204e9800998ecf8427e",
+      "status": "downloaded"
+    }
+  ],
+  "product": { ... }
+}
+```
+
+The `path` is relative to the images directory (`output/images/` by default).
+
 ### Parsing Output
 
 **With jq:**
