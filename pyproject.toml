@@ -41,6 +41,10 @@ filterwarnings = [
     "ignore::UserWarning",
     "ignore::DeprecationWarning",
 ]
+markers = [
+    "integration: marks tests that hit external services (deselect with '-m not integration')",
+]
+addopts = "-m 'not integration'"
 
 [dependency-groups]
 dev = [

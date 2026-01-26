@@ -1,4 +1,5 @@
 import subprocess
+import sys
 from unittest.mock import Mock
 
 import pytest
@@ -7,8 +8,10 @@ from shopify_spy.spiders.shopify import ShopifySpider, extract_data, get_sitemap
 from shopify_spy.utils import as_bool, uri_params
 
 
+@pytest.mark.integration
 def test_contracts():
-    subprocess.run(["scrapy", "check", "shopify_spider"], check=True)
+    """Integration test that hits real Shopify endpoints via Scrapy contracts."""
+    subprocess.run([sys.executable, "-m", "scrapy", "check", "shopify_spider"], check=True)
 
 
 # --- get_sitemap_url tests ---
