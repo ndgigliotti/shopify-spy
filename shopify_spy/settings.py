@@ -11,6 +11,9 @@ from pathlib import Path
 
 BOT_NAME = "shopify_spy"
 
+# Use asyncio reactor (default since Scrapy 2.7)
+TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
+
 SPIDER_MODULES = ["shopify_spy.spiders"]
 NEWSPIDER_MODULE = "shopify_spy.spiders"
 
