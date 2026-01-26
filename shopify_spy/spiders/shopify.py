@@ -69,7 +69,7 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
     def parse_product(self, response: Response) -> Generator[dict[str, Any]]:
         """Yield product data.
 
-        @url https://www.mollyjogger.com/products/classic-jones-cap.json
+        @url https://www.snowdevil.ca/products/a-frame-1.json
         @returns items 1 1
         @returns requests 0 0
         @scrapes product image_urls
@@ -87,7 +87,7 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
     def parse_collection(self, response: Response) -> Generator[dict[str, Any]]:
         """Yield collection data.
 
-        @url https://www.denydesigns.com/collections/wall.json
+        @url https://www.snowdevil.ca/collections/2011-winter-sale.json
         @returns items 1 1
         @returns requests 0 0
         @scrapes collection image_urls
