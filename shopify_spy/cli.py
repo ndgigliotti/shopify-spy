@@ -77,6 +77,12 @@ def scrape(
         bool | None,
         typer.Option("--images/--no-images", help="Download product images."),
     ] = None,
+    headless: Annotated[
+        bool | None,
+        typer.Option(
+            "--headless/--no-headless", help="Use Playwright for headless/Hydrogen stores."
+        ),
+    ] = None,
     output: Annotated[
         Path | None,
         typer.Option("--output", "-o", help="Output directory for results."),
@@ -141,6 +147,7 @@ def scrape(
         products=products,
         collections=collections,
         images=images,
+        headless=headless,
         output=output,
         format=format,
         concurrent=concurrent,
@@ -197,6 +204,7 @@ def apply_cli_overrides(
     products: bool | None,
     collections: bool | None,
     images: bool | None,
+    headless: bool | None,
     output: Path | None,
     format: OutputFormat | None,
     concurrent: int | None,
@@ -221,6 +229,8 @@ def apply_cli_overrides(
         scrape_dict["images"] = images
     if limit is not None:
         scrape_dict["limit"] = limit
+    if headless is not None:
+        scrape_dict["headless"] = headless
     if output is not None:
         output_dict["dir"] = output
     if format is not None:
@@ -268,27 +278,6 @@ def run_spider(
     from scrapy.crawler import CrawlerProcess
     from scrapy.utils.project import get_project_settings
 
-    if config.scrape.platform == Platform.woocommerce:
-        from shopify_spy.spiders.woocommerce import WooCommerceSpider
-
-        spider_cls = WooCommerceSpider
-        spider_kwargs: dict = {"images": config.scrape.images, "limit": config.scrape.limit}
-    elif config.scrape.platform == Platform.squarespace:
-        from shopify_spy.spiders.squarespace import SquarespaceSpider
-
-        spider_cls = SquarespaceSpider
-        spider_kwargs = {"images": config.scrape.images, "limit": config.scrape.limit}
-    else:
-        from shopify_spy.spiders.shopify import ShopifySpider
-
-        spider_cls = ShopifySpider
-        spider_kwargs = {
-            "products": config.scrape.products,
-            "collections": config.scrape.collections,
-            "images": config.scrape.images,
-            "limit": config.scrape.limit,
-        }
-
     settings = get_project_settings()
 
     # Configure output directory
@@ -333,9 +322,56 @@ def run_spider(
     if not config.scrape.images:
         settings.set("ITEM_PIPELINES", {})
 
+    # Select spider and build kwargs based on platform and headless mode
+    if config.scrape.platform == Platform.woocommerce:
+        from shopify_spy.spiders.woocommerce import WooCommerceSpider
+
+        spider_cls = WooCommerceSpider
+        spider_kwargs: dict = {"images": config.scrape.images, "limit": config.scrape.limit}
+    elif config.scrape.platform == Platform.squarespace:
+        from shopify_spy.spiders.squarespace import SquarespaceSpider
+
+        spider_cls = SquarespaceSpider
+        spider_kwargs = {"images": config.scrape.images, "limit": config.scrape.limit}
+    elif config.scrape.headless:
+        try:
+            from shopify_spy.spiders.headless import HeadlessSpider
+        except ImportError:
+            console.print("[red]Error: scrapy-playwright not installed.[/red]")
+            console.print("Install with: uv pip install shopify-spy[headless]")
+            raise typer.Exit(1)
+
+        spider_cls = HeadlessSpider
+        spider_kwargs = {
+            "products": config.scrape.products,
+            "limit": config.scrape.limit,
+        }
+        settings.set("TWISTED_REACTOR", "twisted.internet.asyncioreactor.AsyncioSelectorReactor")
+        settings.set(
+            "DOWNLOAD_HANDLERS",
+            {
+                "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+                "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+            },
+        )
+        settings.set("PLAYWRIGHT_BROWSER_TYPE", "chromium")
+        settings.set("PLAYWRIGHT_LAUNCH_OPTIONS", {"headless": True})
+    else:
+        from shopify_spy.spiders.shopify import ShopifySpider
+
+        spider_cls = ShopifySpider
+        spider_kwargs = {
+            "products": config.scrape.products,
+            "collections": config.scrape.collections,
+            "images": config.scrape.images,
+            "limit": config.scrape.limit,
+        }
+
     console.print(f"[bold]Scraping {len(urls)} store(s)...[/bold]")
     console.print(f"  Platform: {config.scrape.platform.value}")
-    if config.scrape.platform == Platform.shopify:
+    if config.scrape.headless:
+        console.print("  Mode: headless (Playwright)")
+    elif config.scrape.platform == Platform.shopify:
         console.print(f"  Products: {config.scrape.products}")
         console.print(f"  Collections: {config.scrape.collections}")
     console.print(f"  Images: {config.scrape.images}")

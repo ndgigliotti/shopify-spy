@@ -28,18 +28,7 @@ class HeadlessSpider(scrapy.Spider):
     name = "headless_spider"
 
     custom_settings = {
-        # Playwright configuration
-        "TWISTED_REACTOR": "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
-        "DOWNLOAD_HANDLERS": {
-            "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-            "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-        },
-        "PLAYWRIGHT_BROWSER_TYPE": "chromium",
-        "PLAYWRIGHT_LAUNCH_OPTIONS": {"headless": True},
-        # Be respectful
-        "DOWNLOAD_DELAY": 1,
-        "CONCURRENT_REQUESTS": 8,
-        "CONCURRENT_REQUESTS_PER_DOMAIN": 4,
+        "DOWNLOAD_DELAY": 1,  # Sensible default for browser-based scraping
     }
 
     def __init__(
