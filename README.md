@@ -6,9 +6,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Shopify Spy is a simple but powerful [Scrapy](https://docs.scrapy.org/en/latest/index.html) application for scraping Shopify websites. Its main feature is `shopify_spider`, a universal spider for classic Shopify stores. The spider extracts detailed data including high-value information like vendor names and inventory levels.
-
-> **Note:** This spider only works with **classic Shopify stores** (Liquid themes). It does not support headless stores built with [Hydrogen](https://hydrogen.shopify.dev/) or other custom storefronts. See [Limitations](#limitations) for details.
+Shopify Spy is a simple but powerful [Scrapy](https://docs.scrapy.org/en/latest/index.html) application for scraping Shopify websites. Its main feature is `shopify_spider`, a universal spider for Shopify stores. The spider extracts detailed data including high-value information like vendor names and inventory levels.
 
 To find Shopify stores to scrape, try searching Google with the argument `site:myshopify.com`.
 
@@ -57,7 +55,7 @@ Refer to the [Scrapy documentation](https://docs.scrapy.org/en/latest/index.html
 
 ## Limitations
 
-**Classic Shopify stores only.** This spider works with traditional Shopify stores using Liquid themes, which expose `/products/[handle].json` and `/collections/[handle].json` endpoints. It does not work with headless Shopify stores built on [Hydrogen](https://hydrogen.shopify.dev/), which use the Storefront GraphQL API instead.
+**Standard Shopify stores.** This spider works with standard Shopify stores using Liquid themes, which represent nearly all Shopify sites. The small number of headless stores built on [Hydrogen](https://hydrogen.shopify.dev/) or other custom storefronts are not supported, as they use the Storefront GraphQL API instead of the JSON endpoints this spider relies on.
 
 Attempting to scrape a large store may result in a temporary ban. This can be mitigated by enabling AutoThrottle in `shopify_spy/settings.py`.
 
