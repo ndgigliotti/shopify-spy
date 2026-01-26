@@ -22,14 +22,16 @@ cd shopify-spy
 git remote add upstream https://github.com/ORIGINAL_OWNER/shopify-spy.git
 ```
 
-Install dependencies using [uv](https://docs.astral.sh/uv/) (recommended) or pip:
+Install dependencies with pip:
 
 ```shell
-# Using uv
-uv sync
-
-# Using pip
 pip install .
+```
+
+Or using [uv](https://docs.astral.sh/uv/) (faster):
+
+```shell
+uv sync
 ```
 
 Requires Python 3.10+.
