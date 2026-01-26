@@ -6,4 +6,5 @@ resources/*/
 
 # Claude Code
 CLAUDE*.md
+CODE_REVIEW.md
 .claude/

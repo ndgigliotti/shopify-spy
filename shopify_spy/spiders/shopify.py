@@ -12,11 +12,11 @@ from shopify_spy.utils import as_bool
 
 
 class ShopifySpider(scrapy.spiders.SitemapSpider):
-    r"""Sitemap-based spider for scraping Shopify stores.
+    """Sitemap-based spider for scraping Shopify stores.
 
     Usage examples:
     scrapy crawl shopify_spider -a url=https://www.example.com/
-    scrapy crawl shopify_spider -a url_file=shopify_spy\resources\urls.txt
+    scrapy crawl shopify_spider -a url_file=resources/urls.txt
     """
 
     name = "shopify_spider"
@@ -45,7 +45,7 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
             self.sitemap_urls = [get_sitemap_url(url)]
         elif url_file:
             with open(url_file) as f:
-                self.sitemap_urls = [get_sitemap_url(line.strip()) for line in f]
+                self.sitemap_urls = [get_sitemap_url(line.strip()) for line in f if line.strip()]
         else:
             self.sitemap_urls = []
 

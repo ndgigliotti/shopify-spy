@@ -16,7 +16,7 @@ def as_bool(value: Any) -> bool:
     Case insensitive. Raises ValueError if `value` is anything else. Expects
     a string or something castable as a string.
 
-    Based on distutils.util.strtobool.
+    Inspired by the former distutils.util.strtobool (removed in Python 3.12).
     """
     str_value = str(value).lower()
     if str_value in {"y", "yes", "t", "true", "on", "1"}:
