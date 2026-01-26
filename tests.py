@@ -5,7 +5,7 @@ from unittest.mock import Mock
 import pytest
 
 from shopify_spy.spiders.shopify import ShopifySpider, extract_data, get_sitemap_url
-from shopify_spy.utils import as_bool, uri_params
+from shopify_spy.utils import as_bool, find_all_values, uri_params
 
 
 @pytest.mark.integration
@@ -68,6 +68,31 @@ def test_uri_params():
     result = uri_params(params, mock_spider)
 
     assert result == {"key": "value", "time": "2026-01-01", "spider_name": "test_spider"}
+
+
+def test_find_all_values():
+    nested = {
+        "product": {
+            "title": "Test",
+            "images": [
+                {"src": "http://img1.jpg", "alt": "Image 1"},
+                {"src": "http://img2.jpg", "alt": "Image 2"},
+            ],
+            "featured_image": {"src": "http://featured.jpg"},
+        }
+    }
+
+    result = list(find_all_values("src", nested))
+    assert result == ["http://img1.jpg", "http://img2.jpg", "http://featured.jpg"]
+
+    # Empty case
+    assert list(find_all_values("nonexistent", nested)) == []
+
+    # Simple dict
+    assert list(find_all_values("key", {"key": "value"})) == ["value"]
+
+    # List at root
+    assert list(find_all_values("x", [{"x": 1}, {"x": 2}])) == [1, 2]
 
 
 # --- extract_data tests ---

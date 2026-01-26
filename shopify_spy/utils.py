@@ -1,6 +1,19 @@
+from collections.abc import Iterator
 from typing import Any
 
 import scrapy
+
+
+def find_all_values(key: str, obj: Any) -> Iterator[Any]:
+    """Recursively find all values for a key in nested dict/list structures."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == key:
+                yield v
+            yield from find_all_values(key, v)
+    elif isinstance(obj, list):
+        for item in obj:
+            yield from find_all_values(key, item)
 
 
 def uri_params(params: dict[str, Any], spider: scrapy.Spider) -> dict[str, Any]:

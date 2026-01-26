@@ -4,11 +4,10 @@ import urllib.parse
 from collections.abc import Generator, Iterator
 from typing import Any
 
-import nested_lookup as nl
 import scrapy
 from scrapy.http import Response
 
-from shopify_spy.utils import as_bool
+from shopify_spy.utils import as_bool, find_all_values
 
 
 class ShopifySpider(scrapy.spiders.SitemapSpider):
@@ -77,7 +76,7 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         data = extract_data(response)
 
         if self.images_enabled:
-            image_urls: list[str] = nl.nested_lookup("src", data)
+            image_urls = list(find_all_values("src", data))
         else:
             image_urls = []
 
@@ -95,7 +94,7 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         data = extract_data(response)
 
         if self.images_enabled:
-            image_urls: list[str] = nl.nested_lookup("src", data)
+            image_urls = list(find_all_values("src", data))
         else:
             image_urls = []
 

@@ -7,7 +7,6 @@ license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
     "scrapy>=2.11",
-    "nested-lookup>=0.2.25",
     "pillow>=10.0",
 ]
 
