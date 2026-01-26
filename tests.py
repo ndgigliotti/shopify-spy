@@ -134,3 +134,61 @@ def test_spider_init_no_url():
     spider = ShopifySpider()
 
     assert spider.sitemap_urls == []
+
+
+# --- parse methods tests (unit tests complement contract integration tests) ---
+
+
+def test_parse_product():
+    spider = ShopifySpider(url="https://www.example.com", images=True)
+
+    mock_response = Mock()
+    mock_response.text = '{"product": {"title": "Test", "images": [{"src": "http://img1.jpg"}]}}'
+    mock_response.request.url = "https://www.example.com/products/test.json"
+
+    results = list(spider.parse_product(mock_response))
+
+    assert len(results) == 1
+    assert results[0]["product"]["title"] == "Test"
+    assert results[0]["url"] == "https://www.example.com/products/test.json"
+    assert results[0]["store"] == "www.example.com"
+    assert results[0]["image_urls"] == ["http://img1.jpg"]
+
+
+def test_parse_product_no_images():
+    spider = ShopifySpider(url="https://www.example.com", images=False)
+
+    mock_response = Mock()
+    mock_response.text = '{"product": {"title": "Test", "images": [{"src": "http://img1.jpg"}]}}'
+    mock_response.request.url = "https://www.example.com/products/test.json"
+
+    results = list(spider.parse_product(mock_response))
+
+    assert results[0]["image_urls"] == []
+
+
+def test_parse_collection():
+    spider = ShopifySpider(url="https://www.example.com", collections=True, images=True)
+
+    mock_response = Mock()
+    mock_response.text = '{"collection": {"title": "Sale", "image": {"src": "http://img.jpg"}}}'
+    mock_response.request.url = "https://www.example.com/collections/sale.json"
+
+    results = list(spider.parse_collection(mock_response))
+
+    assert len(results) == 1
+    assert results[0]["collection"]["title"] == "Sale"
+    assert results[0]["url"] == "https://www.example.com/collections/sale.json"
+    assert results[0]["image_urls"] == ["http://img.jpg"]
+
+
+def test_parse_collection_no_images():
+    spider = ShopifySpider(url="https://www.example.com", collections=True, images=False)
+
+    mock_response = Mock()
+    mock_response.text = '{"collection": {"title": "Sale", "image": {"src": "http://img.jpg"}}}'
+    mock_response.request.url = "https://www.example.com/collections/sale.json"
+
+    results = list(spider.parse_collection(mock_response))
+
+    assert results[0]["image_urls"] == []
