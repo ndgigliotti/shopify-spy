@@ -145,6 +145,42 @@ output/
 
 Each line in the JSON file contains a product or collection with full metadata from Shopify's JSON API.
 
+### Parsing Output
+
+**With jq:**
+```bash
+# Extract product titles
+cat output/*.json | jq '.product.title'
+
+# Get prices
+cat output/*.json | jq '{title: .product.title, price: .product.variants[0].price}'
+```
+
+**With Python:**
+```python
+import json
+
+with open("output/shopify_spider_2024-01-15.json") as f:
+    for line in f:
+        item = json.loads(line)
+        print(item["product"]["title"])
+```
+
+**With pandas:**
+```python
+import pandas as pd
+
+df = pd.read_json("output/shopify_spider_2024-01-15.json", lines=True)
+products = pd.json_normalize(df["product"])
+```
+
+**With polars:**
+```python
+import polars as pl
+
+df = pl.read_ndjson("output/shopify_spider_2024-01-15.json")
+```
+
 ## Limitations
 
 **Standard Shopify stores only.** This tool works with standard Shopify stores using Liquid themes, which represent nearly all Shopify sites. The small number of headless stores built on [Hydrogen](https://hydrogen.shopify.dev/) or other custom storefronts are not supported, as they use the Storefront GraphQL API instead of the JSON endpoints this tool relies on.
