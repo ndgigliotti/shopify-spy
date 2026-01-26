@@ -1,11 +1,31 @@
+import re
 import subprocess
 import sys
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+from typer.testing import CliRunner
 
+from shopify_spy.cli import app, apply_cli_overrides, get_urls
+from shopify_spy.config import (
+    Config,
+    create_default_config,
+    load_config,
+    load_config_from_file,
+)
 from shopify_spy.spiders.shopify import ShopifySpider, extract_data, get_sitemap_url
 from shopify_spy.utils import as_bool, find_all_values, uri_params
+
+runner = CliRunner()
+
+# Pattern to strip ANSI escape codes from Rich output
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def strip_ansi(text: str) -> str:
+    """Strip ANSI escape codes from text."""
+    return ANSI_ESCAPE.sub("", text)
 
 
 @pytest.mark.integration
@@ -31,8 +51,9 @@ def test_get_sitemap_url():
 
 
 def test_get_sitemap_url_no_scheme():
-    with pytest.raises(ValueError, match="Scheme not specified"):
-        get_sitemap_url("www.example.com")
+    """URLs without scheme should default to https."""
+    assert get_sitemap_url("www.example.com") == "https://www.example.com/sitemap.xml"
+    assert get_sitemap_url("example.com") == "https://example.com/sitemap.xml"
 
 
 # --- as_bool tests ---
@@ -284,3 +305,199 @@ def test_parse_collection_no_images():
     results = list(spider.parse_collection(mock_response))
 
     assert results[0]["image_urls"] == []
+
+
+# --- CLI tests ---
+
+
+def test_cli_help():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "Scrape product and collection data" in strip_ansi(result.stdout)
+
+
+def test_cli_version():
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert "shopify-spy" in strip_ansi(result.stdout)
+
+
+def test_cli_scrape_help():
+    result = runner.invoke(app, ["scrape", "--help"])
+    assert result.exit_code == 0
+    output = strip_ansi(result.stdout)
+    assert "--products" in output
+    assert "--no-products" in output
+    assert "--url-file" in output
+
+
+def test_cli_init_help():
+    result = runner.invoke(app, ["init", "--help"])
+    assert result.exit_code == 0
+    assert "--force" in strip_ansi(result.stdout)
+
+
+def test_cli_init_creates_file(tmp_path):
+    config_file = tmp_path / "test-config.yaml"
+    result = runner.invoke(app, ["init", str(config_file)])
+    assert result.exit_code == 0
+    assert config_file.exists()
+    assert "scrape:" in config_file.read_text()
+
+
+def test_cli_init_refuses_overwrite(tmp_path):
+    config_file = tmp_path / "test-config.yaml"
+    config_file.write_text("existing content")
+    result = runner.invoke(app, ["init", str(config_file)])
+    assert result.exit_code == 1
+    assert "already exists" in strip_ansi(result.stdout)
+
+
+def test_cli_init_force_overwrite(tmp_path):
+    config_file = tmp_path / "test-config.yaml"
+    config_file.write_text("existing content")
+    result = runner.invoke(app, ["init", "--force", str(config_file)])
+    assert result.exit_code == 0
+    assert "scrape:" in config_file.read_text()
+
+
+def test_cli_scrape_no_url():
+    """Test that scrape fails when no URL provided (non-interactive)."""
+    result = runner.invoke(app, ["scrape"])
+    assert result.exit_code == 1
+    assert "No URLs provided" in strip_ansi(result.stdout)
+
+
+# --- Config loading tests ---
+
+
+def test_config_defaults():
+    config = Config()
+    assert config.scrape.products is True
+    assert config.scrape.collections is False
+    assert config.scrape.images is False
+    assert config.output.dir == Path("./output")
+    assert config.network.concurrent_requests == 16
+    assert config.throttle.enabled is True
+    assert config.throttle.start_delay == 1.0
+
+
+def test_config_images_dir():
+    config = Config()
+    assert config.output.images_dir == Path("./output/images")
+
+
+def test_load_config_from_file(tmp_path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("""
+scrape:
+  products: false
+  collections: true
+  images: false
+output:
+  dir: ./custom-output
+network:
+  concurrent_requests: 8
+""")
+    config = load_config_from_file(config_file)
+    assert config.scrape.products is False
+    assert config.scrape.collections is True
+    assert config.scrape.images is False
+    assert config.output.dir == Path("./custom-output")
+    assert config.network.concurrent_requests == 8
+
+
+def test_load_config_empty_file(tmp_path):
+    config_file = tmp_path / "empty.yaml"
+    config_file.write_text("")
+    config = load_config_from_file(config_file)
+    assert config.scrape.products is True  # default
+
+
+def test_load_config_with_explicit_path(tmp_path):
+    config_file = tmp_path / "my-config.yaml"
+    config_file.write_text("scrape:\n  products: false")
+    config = load_config(config_file)
+    assert config.scrape.products is False
+
+
+def test_load_config_no_file():
+    config = load_config(Path("/nonexistent/path.yaml"))
+    assert config.scrape.products is True  # default
+
+
+def test_create_default_config(tmp_path):
+    config_file = tmp_path / "new-config.yaml"
+    created = create_default_config(config_file)
+    assert created.exists()
+    content = created.read_text()
+    assert "scrape:" in content
+    assert "output:" in content
+    assert "network:" in content
+
+
+# --- CLI helper function tests ---
+
+
+def test_apply_cli_overrides():
+    config = Config()
+    overridden = apply_cli_overrides(
+        config,
+        products=False,
+        collections=True,
+        images=None,  # should not override
+        output=Path("/custom"),
+        concurrent=4,
+        throttle=False,
+        user_agent="MyBot/1.0",
+    )
+    assert overridden.scrape.products is False
+    assert overridden.scrape.collections is True
+    assert overridden.scrape.images is False  # unchanged (default)
+    assert overridden.output.dir == Path("/custom")
+    assert overridden.network.concurrent_requests == 4
+    assert overridden.network.user_agent == "MyBot/1.0"
+    assert overridden.throttle.enabled is False
+
+
+def test_apply_cli_overrides_none_values():
+    """Test that None values don't override config."""
+    config = Config()
+    overridden = apply_cli_overrides(
+        config,
+        products=None,
+        collections=None,
+        images=None,
+        output=None,
+        concurrent=None,
+        throttle=None,
+        user_agent=None,
+    )
+    assert overridden.scrape.products is True
+    assert overridden.scrape.collections is False
+    assert overridden.output.dir == Path("./output")
+    assert overridden.throttle.enabled is True  # default is now True
+    assert overridden.network.user_agent is None  # uses Scrapy default
+
+
+def test_get_urls_single_url():
+    urls = get_urls(["https://example.com"], None)
+    assert urls == ["https://example.com"]
+
+
+def test_get_urls_multiple_urls():
+    urls = get_urls(["https://store1.com", "https://store2.com"], None)
+    assert urls == ["https://store1.com", "https://store2.com"]
+
+
+def test_get_urls_from_file(tmp_path):
+    url_file = tmp_path / "urls.txt"
+    url_file.write_text("https://store1.com\n\nhttps://store2.com\n")
+    urls = get_urls(None, url_file)
+    assert urls == ["https://store1.com", "https://store2.com"]
+
+
+def test_get_urls_empty():
+    """Test that empty input returns empty list (non-interactive)."""
+    urls = get_urls(None, None)
+    assert urls == []

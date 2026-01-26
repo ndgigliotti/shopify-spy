@@ -1,14 +1,52 @@
 [project]
 name = "shopify-spy"
-version = "1.0.0"
+version = "0.1.0"
 description = "A Scrapy spider for scraping any Shopify store"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
+authors = [
+    { name = "Nick Gigliotti", email = "ndgigliotti@gmail.com" },
+]
+keywords = [
+    "shopify",
+    "scraper",
+    "scrapy",
+    "spider",
+    "ecommerce",
+    "web-scraping",
+    "product-data",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Framework :: Scrapy",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+]
 dependencies = [
     "scrapy>=2.11",
     "pillow>=10.0",
+    "typer>=0.15",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ndgigliotti/shopify-spy"
+Repository = "https://github.com/ndgigliotti/shopify-spy"
+"Bug Tracker" = "https://github.com/ndgigliotti/shopify-spy/issues"
+
+[project.scripts]
+shopify-spy = "shopify_spy.cli:app"
 
 [project.optional-dependencies]
 dev = [
