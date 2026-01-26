@@ -1,4 +1,4 @@
-<div align="center"><img src="resources/icon.png", width=150></div>
+<div align="center"><img src="assets/icon.png", width=150></div>
 
 # Shopify Spy
 
