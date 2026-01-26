@@ -73,6 +73,7 @@ shopify-spy scrape [URL] [OPTIONS]
 - `--products / --no-products` - Scrape products (default: yes)
 - `--collections / --no-collections` - Scrape collections (default: no)
 - `--images / --no-images` - Download images (default: no)
+- `--headless / --no-headless` - Use Playwright for headless/Hydrogen stores (default: no)
 - `--output, -o PATH` - Output directory (default: `./output`)
 - `--format, -F FORMAT` - Output format: `json`, `jsonl`, `csv`, `xml` (default: `jsonl`)
 - `--config, -c FILE` - Path to YAML config file
@@ -106,6 +107,7 @@ scrape:
   products: true      # Scrape product data
   collections: false  # Scrape collection data
   images: false       # Download product images
+  headless: false     # Use Playwright for headless Shopify stores
 
 output:
   dir: ./output       # Output directory for results
@@ -204,11 +206,23 @@ import polars as pl
 df = pl.read_ndjson("output/shopify_spider_2024-01-15.jsonl")
 ```
 
+## Headless Stores
+
+Most Shopify stores use Liquid themes and work with the default scraper. For headless stores built on [Hydrogen](https://hydrogen.shopify.dev/) or custom storefronts, use the `--headless` flag:
+
+```bash
+# Install with headless support
+pip install shopify-spy[headless]
+
+# Scrape a headless store
+shopify-spy scrape https://hydrogen-store.com --headless
+```
+
+The headless mode uses Playwright to render pages. It tries fast JSON endpoints first and only falls back to browser rendering when needed.
+
 ## Limitations
 
-**Standard Shopify stores only.** This tool works with standard Shopify stores using Liquid themes, which represent nearly all Shopify sites. The small number of headless stores built on [Hydrogen](https://hydrogen.shopify.dev/) or other custom storefronts are not supported, as they use the Storefront GraphQL API instead of the JSON endpoints this tool relies on.
-
-**Rate limiting.** Scraping very large stores may still result in temporary bans. Auto-throttling is enabled by default, but you can adjust the settings or disable it for faster scraping:
+**Rate limiting.** Scraping very large stores may result in temporary bans. Auto-throttling is enabled by default, but you can adjust the settings or disable it for faster scraping:
 
 ```bash
 # Disable throttling (faster but riskier)
