@@ -137,7 +137,7 @@ Results are saved as JSON lines files in the output directory:
 
 ```
 output/
-  shopify_spider_2024-01-15T10-30-00.json
+  shopify_spider_2024-01-15T10-30-00.jsonl
   images/
     full/
       <image files>
@@ -150,17 +150,17 @@ Each line in the JSON file contains a product or collection with full metadata f
 **With jq:**
 ```bash
 # Extract product titles
-cat output/*.json | jq '.product.title'
+cat output/*.jsonl | jq '.product.title'
 
 # Get prices
-cat output/*.json | jq '{title: .product.title, price: .product.variants[0].price}'
+cat output/*.jsonl | jq '{title: .product.title, price: .product.variants[0].price}'
 ```
 
 **With Python:**
 ```python
 import json
 
-with open("output/shopify_spider_2024-01-15.json") as f:
+with open("output/shopify_spider_2024-01-15.jsonl") as f:
     for line in f:
         item = json.loads(line)
         print(item["product"]["title"])
@@ -170,7 +170,7 @@ with open("output/shopify_spider_2024-01-15.json") as f:
 ```python
 import pandas as pd
 
-df = pd.read_json("output/shopify_spider_2024-01-15.json", lines=True)
+df = pd.read_json("output/shopify_spider_2024-01-15.jsonl", lines=True)
 products = pd.json_normalize(df["product"])
 ```
 
@@ -178,7 +178,7 @@ products = pd.json_normalize(df["product"])
 ```python
 import polars as pl
 
-df = pl.read_ndjson("output/shopify_spider_2024-01-15.json")
+df = pl.read_ndjson("output/shopify_spider_2024-01-15.jsonl")
 ```
 
 ## Limitations

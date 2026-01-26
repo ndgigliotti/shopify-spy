@@ -26,7 +26,7 @@ OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 OUTPUT_URI = OUTPUT_DIR.as_uri()
 
 FEEDS = {
-    f"{OUTPUT_URI}/%(name)s_%(time)s.json": {
+    f"{OUTPUT_URI}/%(name)s_%(time)s.jsonl": {
         "format": "jsonlines",
         "encoding": "utf8",
         "store_empty": False,

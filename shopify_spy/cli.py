@@ -246,7 +246,7 @@ def run_spider(urls: list[str], config: Config, log_level: str | None = None) ->
     settings.set(
         "FEEDS",
         {
-            f"{output_dir.as_uri()}/%(name)s_%(time)s.json": {
+            f"{output_dir.as_uri()}/%(name)s_%(time)s.jsonl": {
                 "format": "jsonlines",
                 "encoding": "utf8",
                 "store_empty": False,
