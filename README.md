@@ -53,7 +53,7 @@ shopify-spy scrape --url-file stores.txt
 shopify-spy scrape https://www.example.com --output ./my-data
 ```
 
-Results are saved as JSON lines in the output directory (default: `./output`).
+Results are saved as JSONL in the output directory (default: `./output`). Use `--format` to choose JSON, CSV, or XML instead.
 
 ## Commands
 
@@ -74,6 +74,7 @@ shopify-spy scrape [URL] [OPTIONS]
 - `--collections / --no-collections` - Scrape collections (default: no)
 - `--images / --no-images` - Download images (default: no)
 - `--output, -o PATH` - Output directory (default: `./output`)
+- `--format, -F FORMAT` - Output format: `json`, `jsonl`, `csv`, `xml` (default: `jsonl`)
 - `--config, -c FILE` - Path to YAML config file
 - `--concurrent INT` - Concurrent requests per domain (default: 16)
 - `--throttle / --no-throttle` - Auto-throttle requests (default: yes)
@@ -108,6 +109,7 @@ scrape:
 
 output:
   dir: ./output       # Output directory for results
+  format: jsonl       # Output format: json, jsonl, csv, xml
   images_subdir: images  # Subdirectory for downloaded images
 
 network:
@@ -133,7 +135,7 @@ CLI options override config file settings.
 
 ## Output
 
-Results are saved as JSON lines files in the output directory:
+Results are saved in the output directory (JSONL by default, configurable via `--format`):
 
 ```
 output/
