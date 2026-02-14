@@ -1,9 +1,18 @@
 """YAML configuration loading and Pydantic models."""
 
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field
+
+OUTPUT_FORMATS: dict[str, tuple[str, str]] = {
+    "json": ("json", ".json"),
+    "jsonl": ("jsonlines", ".jsonl"),
+    "csv": ("csv", ".csv"),
+    "xml": ("xml", ".xml"),
+}
+OutputFormat = Literal["json", "jsonl", "csv", "xml"]
 
 
 class ScrapeConfig(BaseModel):
@@ -18,6 +27,7 @@ class OutputConfig(BaseModel):
     """Configuration for output paths."""
 
     dir: Path = Field(default=Path("./output"))
+    format: OutputFormat = "jsonl"
     images_subdir: str = "images"
 
     @property
@@ -72,6 +82,7 @@ scrape:
 
 output:
   dir: ./output       # Output directory for results
+  format: jsonl       # Output format: json, jsonl, csv, xml
   images_subdir: images  # Subdirectory for downloaded images
 
 network:

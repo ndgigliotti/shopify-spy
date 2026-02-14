@@ -7,7 +7,13 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from shopify_spy.config import Config, create_default_config, load_config
+from shopify_spy.config import (
+    OUTPUT_FORMATS,
+    Config,
+    OutputFormat,
+    create_default_config,
+    load_config,
+)
 
 app = typer.Typer(
     name="shopify-spy",
@@ -74,6 +80,10 @@ def scrape(
         Path | None,
         typer.Option("--output", "-o", help="Output directory for results."),
     ] = None,
+    format: Annotated[
+        OutputFormat | None,
+        typer.Option("--format", "-F", help="Output format: json, jsonl, csv, xml."),
+    ] = None,
     config_path: Annotated[
         Path | None,
         typer.Option(
@@ -116,6 +126,7 @@ def scrape(
         collections=collections,
         images=images,
         output=output,
+        format=format,
         concurrent=concurrent,
         throttle=throttle,
         user_agent=user_agent,
@@ -169,6 +180,7 @@ def apply_cli_overrides(
     collections: bool | None,
     images: bool | None,
     output: Path | None,
+    format: OutputFormat | None,
     concurrent: int | None,
     throttle: bool | None,
     user_agent: str | None,
@@ -188,6 +200,8 @@ def apply_cli_overrides(
         scrape_dict["images"] = images
     if output is not None:
         output_dict["dir"] = output
+    if format is not None:
+        output_dict["format"] = format
     if concurrent is not None:
         network_dict["concurrent_requests"] = concurrent
     if user_agent is not None:
@@ -243,11 +257,12 @@ def run_spider(urls: list[str], config: Config, log_level: str | None = None) ->
     settings.set("RETRY_TIMES", config.network.retries)
     settings.set("ROBOTSTXT_OBEY", config.network.respect_robots_txt)
     settings.set("IMAGES_STORE", str(images_dir))
+    scrapy_format, file_ext = OUTPUT_FORMATS[config.output.format]
     settings.set(
         "FEEDS",
         {
-            f"{output_dir.as_uri()}/%(name)s_%(time)s.jsonl": {
-                "format": "jsonlines",
+            f"{output_dir.as_uri()}/%(name)s_%(time)s{file_ext}": {
+                "format": scrapy_format,
                 "encoding": "utf8",
                 "store_empty": False,
                 "item_export_kwargs": {"export_empty_fields": True},
@@ -276,6 +291,7 @@ def run_spider(urls: list[str], config: Config, log_level: str | None = None) ->
     console.print(f"  Products: {config.scrape.products}")
     console.print(f"  Collections: {config.scrape.collections}")
     console.print(f"  Images: {config.scrape.images}")
+    console.print(f"  Format: {config.output.format}")
     console.print(f"  Output: {output_dir}")
 
     process = CrawlerProcess(settings)
