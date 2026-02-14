@@ -9,7 +9,9 @@ from typer.testing import CliRunner
 
 from shopify_spy.cli import app, apply_cli_overrides, get_urls
 from shopify_spy.config import (
+    OUTPUT_FORMATS,
     Config,
+    OutputConfig,
     create_default_config,
     load_config,
     load_config_from_file,
@@ -447,6 +449,7 @@ def test_apply_cli_overrides():
         collections=True,
         images=None,  # should not override
         output=Path("/custom"),
+        format=None,
         concurrent=4,
         throttle=False,
         user_agent="MyBot/1.0",
@@ -469,6 +472,7 @@ def test_apply_cli_overrides_none_values():
         collections=None,
         images=None,
         output=None,
+        format=None,
         concurrent=None,
         throttle=None,
         user_agent=None,
@@ -501,3 +505,100 @@ def test_get_urls_empty():
     """Test that empty input returns empty list (non-interactive)."""
     urls = get_urls(None, None)
     assert urls == []
+
+
+# --- Output format tests ---
+
+
+def test_output_config_default_format():
+    """Default output format is jsonl."""
+    config = OutputConfig()
+    assert config.format == "jsonl"
+
+
+def test_output_config_valid_formats():
+    """All four format values are accepted."""
+    for fmt in ("json", "jsonl", "csv", "xml"):
+        config = OutputConfig(format=fmt)
+        assert config.format == fmt
+
+
+def test_output_config_invalid_format():
+    """Invalid format values are rejected."""
+    with pytest.raises(Exception):
+        OutputConfig(format="parquet")
+
+
+def test_load_config_with_format(tmp_path):
+    """YAML with explicit format loads correctly."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("output:\n  format: csv\n")
+    config = load_config_from_file(config_file)
+    assert config.output.format == "csv"
+
+
+def test_load_config_without_format(tmp_path):
+    """Missing format in YAML defaults to jsonl."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("output:\n  dir: ./data\n")
+    config = load_config_from_file(config_file)
+    assert config.output.format == "jsonl"
+
+
+def test_apply_cli_overrides_format():
+    """CLI format override is applied."""
+    config = Config()
+    overridden = apply_cli_overrides(
+        config,
+        products=None,
+        collections=None,
+        images=None,
+        output=None,
+        format="csv",
+        concurrent=None,
+        throttle=None,
+        user_agent=None,
+    )
+    assert overridden.output.format == "csv"
+
+
+def test_apply_cli_overrides_format_none():
+    """format=None preserves config default."""
+    config = Config()
+    overridden = apply_cli_overrides(
+        config,
+        products=None,
+        collections=None,
+        images=None,
+        output=None,
+        format=None,
+        concurrent=None,
+        throttle=None,
+        user_agent=None,
+    )
+    assert overridden.output.format == "jsonl"
+
+
+def test_output_formats_mapping():
+    """OUTPUT_FORMATS maps format names to (scrapy_format, file_ext) tuples."""
+    assert OUTPUT_FORMATS["json"] == ("json", ".json")
+    assert OUTPUT_FORMATS["jsonl"] == ("jsonlines", ".jsonl")
+    assert OUTPUT_FORMATS["csv"] == ("csv", ".csv")
+    assert OUTPUT_FORMATS["xml"] == ("xml", ".xml")
+
+
+def test_cli_scrape_help_shows_format():
+    """--format flag appears in scrape help."""
+    result = runner.invoke(app, ["scrape", "--help"])
+    assert result.exit_code == 0
+    output = strip_ansi(result.stdout)
+    assert "--format" in output
+    assert "-F" in output
+
+
+def test_default_config_includes_format(tmp_path):
+    """init output contains format: jsonl."""
+    config_file = tmp_path / "test-config.yaml"
+    runner.invoke(app, ["init", str(config_file)])
+    content = config_file.read_text()
+    assert "format: jsonl" in content

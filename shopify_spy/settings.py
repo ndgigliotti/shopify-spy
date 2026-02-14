@@ -25,6 +25,7 @@ TELNETCONSOLE_ENABLED = False
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 OUTPUT_URI = OUTPUT_DIR.as_uri()
 
+# Note: The CLI overrides FEEDS based on the configured output format.
 FEEDS = {
     f"{OUTPUT_URI}/%(name)s_%(time)s.jsonl": {
         "format": "jsonlines",
