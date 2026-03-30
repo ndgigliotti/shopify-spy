@@ -1,7 +1,16 @@
+import urllib.parse
 from collections.abc import Iterator
 from typing import Any
 
 import scrapy
+
+
+def normalize_url(url: str) -> urllib.parse.ParseResult:
+    """Parse a URL, assuming https if no scheme is provided."""
+    parsed = urllib.parse.urlparse(url)
+    if not parsed.scheme:
+        parsed = urllib.parse.urlparse(f"https://{url}")
+    return parsed
 
 
 def find_all_values(key: str, obj: Any) -> Iterator[Any]:

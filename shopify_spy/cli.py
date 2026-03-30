@@ -1,7 +1,6 @@
 """Command-line interface for Shopify Spy."""
 
 import sys
-from enum import Enum
 from pathlib import Path
 from typing import Annotated
 
@@ -12,15 +11,10 @@ from shopify_spy.config import (
     OUTPUT_FORMATS,
     Config,
     OutputFormat,
+    Platform,
     create_default_config,
     load_config,
 )
-
-
-class Platform(str, Enum):
-    shopify = "shopify"
-    woocommerce = "woocommerce"
-
 
 app = typer.Typer(
     name="shopify-spy",
@@ -214,7 +208,7 @@ def apply_cli_overrides(
     throttle_dict = config.throttle.model_dump()
 
     if platform is not None:
-        scrape_dict["platform"] = platform.value
+        scrape_dict["platform"] = platform
     if products is not None:
         scrape_dict["products"] = products
     if collections is not None:
@@ -270,7 +264,7 @@ def run_spider(
     from scrapy.crawler import CrawlerProcess
     from scrapy.utils.project import get_project_settings
 
-    if config.scrape.platform == "woocommerce":
+    if config.scrape.platform == Platform.woocommerce:
         from shopify_spy.spiders.woocommerce import WooCommerceSpider
 
         spider_cls = WooCommerceSpider
@@ -332,7 +326,7 @@ def run_spider(
 
     console.print(f"[bold]Scraping {len(urls)} store(s)...[/bold]")
     console.print(f"  Platform: {config.scrape.platform}")
-    if config.scrape.platform == "shopify":
+    if config.scrape.platform == Platform.shopify:
         console.print(f"  Products: {config.scrape.products}")
         console.print(f"  Collections: {config.scrape.collections}")
     console.print(f"  Images: {config.scrape.images}")
