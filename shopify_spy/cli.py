@@ -169,6 +169,20 @@ def scrape(
         raise typer.Exit(1)
     log_level = "DEBUG" if verbose else "WARNING" if quiet else None
 
+    if config.scrape.headless and config.scrape.collections:
+        console.print(
+            "[yellow]Warning: --collections is not supported in headless mode "
+            "(Shopify's collections JSON API is unavailable on headless stores) "
+            "and will be ignored.[/yellow]"
+        )
+
+    if config.scrape.headless and not config.scrape.products:
+        console.print(
+            "[red]Error: --no-products with --headless leaves nothing to scrape "
+            "(collections are not supported in headless mode).[/red]"
+        )
+        raise typer.Exit(1)
+
     # Run the spider
     run_spider(all_urls, config, log_level=log_level)
 

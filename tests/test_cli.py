@@ -1,6 +1,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from shopify_spy.cli import Platform, app, apply_cli_overrides, get_urls, run_spider
 from shopify_spy.config import Config, OutputConfig, ScrapeConfig
 
@@ -298,3 +300,39 @@ def test_run_spider_squarespace_passes_limit(tmp_path):
     _, kwargs = mock_process.crawl.call_args
     assert kwargs["limit"] == 3
     assert kwargs["images"] is False
+
+
+# --- CLI headless tests ---
+
+
+def test_cli_scrape_help_shows_headless():
+    result = runner.invoke(app, ["scrape", "--help"])
+    assert result.exit_code == 0
+    assert "--headless" in strip_ansi(result.stdout)
+
+
+@patch("shopify_spy.cli.run_spider")
+def test_cli_headless_flag(mock_run_spider):
+    """--headless sets headless=True in config passed to run_spider."""
+    result = runner.invoke(app, ["scrape", "https://example.com", "--headless"])
+    assert result.exit_code == 0
+    config = mock_run_spider.call_args[0][1]
+    assert config.scrape.headless is True
+
+
+@patch("shopify_spy.cli.run_spider")
+def test_cli_headless_collections_warning(mock_run_spider):
+    """--headless with --collections prints a warning explaining why."""
+    result = runner.invoke(app, ["scrape", "https://example.com", "--headless", "--collections"])
+    assert result.exit_code == 0
+    output = strip_ansi(result.stdout).lower()
+    assert "collections" in output
+    assert "not supported" in output
+
+
+def test_cli_headless_no_products_error():
+    """--headless with --no-products exits with an error since nothing can be scraped."""
+    result = runner.invoke(app, ["scrape", "https://example.com", "--headless", "--no-products"])
+    assert result.exit_code == 1
+    output = strip_ansi(result.stdout).lower()
+    assert "nothing to scrape" in output

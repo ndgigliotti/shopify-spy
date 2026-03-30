@@ -14,7 +14,7 @@ Usage:
 import json
 import re
 import urllib.parse
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from typing import Any
 
 import scrapy
@@ -36,6 +36,7 @@ class HeadlessSpider(scrapy.Spider):
         *args: Any,
         url: str | None = None,
         url_file: str | None = None,
+        products: bool = True,
         **kwargs: Any,
     ) -> None:
         """Initialize spider."""
@@ -49,11 +50,16 @@ class HeadlessSpider(scrapy.Spider):
         else:
             self.store_urls = []
 
+        self.products = products
+
         # Track which stores need Playwright (JSON failed)
         self._needs_playwright: set[str] = set()
 
-    def start_requests(self) -> Generator[scrapy.Request, None, None]:
-        """Try sitemap first, fall back to Playwright collection scraping."""
+    async def start(self) -> AsyncGenerator[scrapy.Request, None]:
+        """Try products.json first, fall back to Playwright collection scraping."""
+        if not self.products:
+            return
+
         for store_url in self.store_urls:
             parsed = urllib.parse.urlparse(store_url)
             base_url = f"{parsed.scheme}://{parsed.netloc}"
