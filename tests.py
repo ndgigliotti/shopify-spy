@@ -2,9 +2,10 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
+from scrapy.http import TextResponse
 from typer.testing import CliRunner
 
 from shopify_spy.cli import app, apply_cli_overrides, get_urls
@@ -16,6 +17,7 @@ from shopify_spy.config import (
     load_config,
     load_config_from_file,
 )
+from shopify_spy.spiders.headless import HeadlessSpider
 from shopify_spy.spiders.shopify import ShopifySpider, extract_data, get_sitemap_url
 from shopify_spy.utils import as_bool, find_all_values, uri_params
 
@@ -557,6 +559,7 @@ def test_apply_cli_overrides_format():
         products=None,
         collections=None,
         images=None,
+        headless=None,
         output=None,
         format="csv",
         concurrent=None,
@@ -574,6 +577,7 @@ def test_apply_cli_overrides_format_none():
         products=None,
         collections=None,
         images=None,
+        headless=None,
         output=None,
         format=None,
         concurrent=None,
@@ -606,3 +610,159 @@ def test_default_config_includes_format(tmp_path):
     runner.invoke(app, ["init", str(config_file)])
     content = config_file.read_text()
     assert "format: jsonl" in content
+
+
+# --- HeadlessSpider unit tests ---
+
+
+def make_response(url: str, html: str) -> TextResponse:
+    return TextResponse(url=url, body=html.encode(), encoding="utf-8")
+
+
+def make_spider() -> HeadlessSpider:
+    """Create a HeadlessSpider instance without running __init__."""
+    return HeadlessSpider.__new__(HeadlessSpider)
+
+
+def test_headless_extract_handle():
+    spider = make_spider()
+    assert spider._extract_handle("https://store.com/products/cool-shirt") == "cool-shirt"
+    assert spider._extract_handle("https://store.com/products/tee?variant=1") == "tee"
+    assert spider._extract_handle("https://store.com/collections/all") == ""
+
+
+def test_headless_extract_images_from_json():
+    spider = make_spider()
+    product = {
+        "images": [
+            {"src": "https://cdn.shopify.com/img1.jpg"},
+            {"src": "https://cdn.shopify.com/img2.jpg"},
+        ]
+    }
+    images = spider._extract_images_from_json(product)
+    assert images == ["https://cdn.shopify.com/img1.jpg", "https://cdn.shopify.com/img2.jpg"]
+
+
+def test_headless_extract_images_from_json_empty():
+    spider = make_spider()
+    assert spider._extract_images_from_json({}) == []
+    assert spider._extract_images_from_json({"images": []}) == []
+
+
+def test_headless_extract_jsonld():
+    spider = make_spider()
+    html = """
+    <html><head>
+    <script type="application/ld+json">
+    {"@type": "Product", "name": "Cool Shirt", "description": "A cool shirt",
+     "offers": {"price": "29.99", "priceCurrency": "USD"},
+     "brand": {"name": "BrandCo"}}
+    </script>
+    </head></html>
+    """
+    response = make_response("https://store.com/products/cool-shirt", html)
+    result = spider._extract_jsonld(response)
+    assert result is not None
+    assert result["product"]["title"] == "Cool Shirt"
+    assert result["product"]["vendor"] == "BrandCo"
+    assert result["product"]["price"] == "29.99"
+    assert result["product"]["currency"] == "USD"
+
+
+def test_headless_extract_jsonld_no_product():
+    spider = make_spider()
+    html = (
+        '<html><head><script type="application/ld+json">'
+        '{"@type": "WebSite", "name": "Store"}'
+        "</script></head></html>"
+    )
+    response = make_response("https://store.com", html)
+    assert spider._extract_jsonld(response) is None
+
+
+def test_headless_extract_jsonld_invalid_json():
+    spider = make_spider()
+    html = '<html><head><script type="application/ld+json">{invalid json}</script></head></html>'
+    response = make_response("https://store.com/products/shirt", html)
+    assert spider._extract_jsonld(response) is None
+
+
+def test_headless_extract_meta_tags():
+    spider = make_spider()
+    html = """
+    <html><head>
+    <meta property="og:title" content="Cool Shirt" />
+    <meta property="og:description" content="A cool shirt" />
+    <meta property="og:image" content="https://cdn.shopify.com/img1.jpg" />
+    <meta property="product:price:amount" content="29.99" />
+    <meta property="product:price:currency" content="USD" />
+    </head></html>
+    """
+    response = make_response("https://store.com/products/cool-shirt", html)
+    result = spider._extract_meta_tags(response)
+    assert result is not None
+    assert result["product"]["title"] == "Cool Shirt"
+    assert result["product"]["price"] == "29.99"
+    assert result["product"]["currency"] == "USD"
+    assert result["product"]["images"] == ["https://cdn.shopify.com/img1.jpg"]
+    assert result["product"]["handle"] == "cool-shirt"
+
+
+def test_headless_extract_meta_tags_no_title():
+    spider = make_spider()
+    html = "<html><head></head></html>"
+    response = make_response("https://store.com/products/shirt", html)
+    assert spider._extract_meta_tags(response) is None
+
+
+# --- CLI headless tests ---
+
+
+def test_cli_scrape_help_shows_headless():
+    result = runner.invoke(app, ["scrape", "--help"])
+    assert result.exit_code == 0
+    assert "--headless" in strip_ansi(result.stdout)
+
+
+@patch("shopify_spy.cli.run_spider")
+def test_cli_headless_flag(mock_run_spider):
+    """--headless sets headless=True in config passed to run_spider."""
+    result = runner.invoke(app, ["scrape", "https://example.com", "--headless"])
+    assert result.exit_code == 0
+    config = mock_run_spider.call_args[0][1]
+    assert config.scrape.headless is True
+
+
+@patch("shopify_spy.cli.run_spider")
+def test_cli_headless_collections_warning(mock_run_spider):
+    """--headless with --collections prints a warning explaining why."""
+    result = runner.invoke(app, ["scrape", "https://example.com", "--headless", "--collections"])
+    assert result.exit_code == 0
+    output = strip_ansi(result.stdout).lower()
+    assert "collections" in output
+    assert "not supported" in output
+
+
+def test_cli_headless_no_products_error():
+    """--headless with --no-products exits with an error since nothing can be scraped."""
+    result = runner.invoke(app, ["scrape", "https://example.com", "--headless", "--no-products"])
+    assert result.exit_code == 1
+    output = strip_ansi(result.stdout).lower()
+    assert "nothing to scrape" in output
+
+
+@pytest.mark.asyncio
+async def test_headless_spider_products_false():
+    """HeadlessSpider with products=False yields no requests."""
+    spider = HeadlessSpider(url="https://example.com", products=False)
+    requests = [r async for r in spider.start()]
+    assert requests == []
+
+
+@pytest.mark.asyncio
+async def test_headless_spider_products_true():
+    """HeadlessSpider with products=True (default) yields requests."""
+    spider = HeadlessSpider(url="https://example.com", products=True)
+    requests = [r async for r in spider.start()]
+    assert len(requests) == 1
+    assert "products.json" in requests[0].url

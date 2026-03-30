@@ -214,6 +214,9 @@ Most Shopify stores use Liquid themes and work with the default scraper. For hea
 # Install with headless support
 pip install shopify-spy[headless]
 
+# Install the Playwright browser (required once after install)
+playwright install chromium
+
 # Scrape a headless store
 shopify-spy scrape https://hydrogen-store.com --headless
 ```
