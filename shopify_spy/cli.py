@@ -1,6 +1,7 @@
 """Command-line interface for Shopify Spy."""
 
 import sys
+from enum import Enum
 from pathlib import Path
 from typing import Annotated
 
@@ -14,6 +15,12 @@ from shopify_spy.config import (
     create_default_config,
     load_config,
 )
+
+
+class Platform(str, Enum):
+    shopify = "shopify"
+    woocommerce = "woocommerce"
+
 
 app = typer.Typer(
     name="shopify-spy",
@@ -52,7 +59,7 @@ def main(
 def scrape(
     urls: Annotated[
         list[str] | None,
-        typer.Argument(help="Shopify store URL(s) to scrape."),
+        typer.Argument(help="Store URL(s) to scrape."),
     ] = None,
     url_file: Annotated[
         Path | None,
@@ -112,6 +119,10 @@ def scrape(
         str | None,
         typer.Option("--user-agent", "-A", help="Custom User-Agent header."),
     ] = None,
+    platform: Annotated[
+        Platform,
+        typer.Option("--platform", "-p", help="Ecommerce platform: shopify, woocommerce."),
+    ] = Platform.shopify,
     verbose: Annotated[
         bool,
         typer.Option("--verbose", "-v", help="Show debug output."),
@@ -121,7 +132,7 @@ def scrape(
         typer.Option("--quiet", "-q", help="Show only warnings and errors."),
     ] = False,
 ) -> None:
-    """Scrape products and collections from Shopify stores."""
+    """Scrape products and collections from Shopify and WooCommerce stores."""
     # Load config file (or defaults)
     config = load_config(config_path)
 
@@ -153,7 +164,7 @@ def scrape(
     log_level = "DEBUG" if verbose else "WARNING" if quiet else None
 
     # Run the spider
-    run_spider(all_urls, config, log_level=log_level)
+    run_spider(all_urls, config, log_level=log_level, platform=platform)
 
 
 @app.command()
@@ -245,13 +256,32 @@ def get_urls(urls: list[str] | None, url_file: Path | None) -> list[str]:
     return []
 
 
-def run_spider(urls: list[str], config: Config, log_level: str | None = None) -> None:
-    """Run the Shopify spider with the given configuration."""
+def run_spider(
+    urls: list[str],
+    config: Config,
+    log_level: str | None = None,
+    platform: Platform = Platform.shopify,
+) -> None:
+    """Run the appropriate spider with the given configuration."""
     # Deferred imports to avoid loading Scrapy until needed
     from scrapy.crawler import CrawlerProcess
     from scrapy.utils.project import get_project_settings
 
-    from shopify_spy.spiders.shopify import ShopifySpider
+    if platform == Platform.woocommerce:
+        from shopify_spy.spiders.woocommerce import WooCommerceSpider
+
+        spider_cls = WooCommerceSpider
+        spider_kwargs: dict = {"images": config.scrape.images}
+    else:
+        from shopify_spy.spiders.shopify import ShopifySpider
+
+        spider_cls = ShopifySpider
+        spider_kwargs = {
+            "products": config.scrape.products,
+            "collections": config.scrape.collections,
+            "images": config.scrape.images,
+            "limit": config.scrape.limit,
+        }
 
     settings = get_project_settings()
 
@@ -298,8 +328,10 @@ def run_spider(urls: list[str], config: Config, log_level: str | None = None) ->
         settings.set("ITEM_PIPELINES", {})
 
     console.print(f"[bold]Scraping {len(urls)} store(s)...[/bold]")
-    console.print(f"  Products: {config.scrape.products}")
-    console.print(f"  Collections: {config.scrape.collections}")
+    console.print(f"  Platform: {platform.value}")
+    if platform == Platform.shopify:
+        console.print(f"  Products: {config.scrape.products}")
+        console.print(f"  Collections: {config.scrape.collections}")
     console.print(f"  Images: {config.scrape.images}")
     console.print(f"  Format: {config.output.format}")
     console.print(f"  Output: {output_dir}")
@@ -308,14 +340,7 @@ def run_spider(urls: list[str], config: Config, log_level: str | None = None) ->
 
     # Crawl each URL
     for store_url in urls:
-        process.crawl(
-            ShopifySpider,
-            url=store_url,
-            products=config.scrape.products,
-            collections=config.scrape.collections,
-            images=config.scrape.images,
-            limit=config.scrape.limit,
-        )
+        process.crawl(spider_cls, url=store_url, **spider_kwargs)
 
     process.start()
     console.print("[green]Done![/green]")
