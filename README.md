@@ -85,6 +85,7 @@ shopify-spy scrape [URL] [OPTIONS]
 - `--collections / --no-collections` - Scrape collections (default: no; Shopify only)
 - `--images / --no-images` - Download images (default: no)
 - `--headless / --no-headless` - Use Playwright for headless/Hydrogen stores (default: no)
+- `--install-browser / --no-install-browser` - Auto-install Chromium if missing, headless mode only (default: yes)
 - `--output, -o PATH` - Output directory (default: `./output`)
 - `--format, -F FORMAT` - Output format: `json`, `jsonl`, `csv`, `xml` (default: `jsonl`)
 - `--config, -c FILE` - Path to YAML config file
