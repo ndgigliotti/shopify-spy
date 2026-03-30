@@ -13,11 +13,13 @@ OUTPUT_FORMATS: dict[str, tuple[str, str]] = {
     "xml": ("xml", ".xml"),
 }
 OutputFormat = Literal["json", "jsonl", "csv", "xml"]
+PlatformType = Literal["shopify", "woocommerce"]
 
 
 class ScrapeConfig(BaseModel):
     """Configuration for what to scrape."""
 
+    platform: PlatformType = "shopify"
     products: bool = True
     collections: bool = False
     images: bool = False
@@ -77,8 +79,9 @@ DEFAULT_CONFIG_YAML = """\
 # See https://github.com/ndgigliotti/shopify-spy for documentation
 
 scrape:
-  products: true      # Scrape product data
-  collections: false  # Scrape collection data
+  platform: shopify   # Platform: shopify, woocommerce
+  products: true      # Scrape product data (Shopify only)
+  collections: false  # Scrape collection data (Shopify only)
   images: false       # Download product images
 
 output:

@@ -10,7 +10,7 @@ import pytest
 import scrapy
 from typer.testing import CliRunner
 
-from shopify_spy.cli import app, apply_cli_overrides, get_urls, run_spider
+from shopify_spy.cli import Platform, app, apply_cli_overrides, get_urls, run_spider
 from shopify_spy.config import (
     OUTPUT_FORMATS,
     Config,
@@ -395,6 +395,7 @@ def test_cli_scrape_no_url():
 
 def test_config_defaults():
     config = Config()
+    assert config.scrape.platform == "shopify"
     assert config.scrape.products is True
     assert config.scrape.collections is False
     assert config.scrape.images is False
@@ -413,6 +414,7 @@ def test_load_config_from_file(tmp_path):
     config_file = tmp_path / "config.yaml"
     config_file.write_text("""
 scrape:
+  platform: woocommerce
   products: false
   collections: true
   images: false
@@ -422,6 +424,7 @@ network:
   concurrent_requests: 8
 """)
     config = load_config_from_file(config_file)
+    assert config.scrape.platform == "woocommerce"
     assert config.scrape.products is False
     assert config.scrape.collections is True
     assert config.scrape.images is False
@@ -465,6 +468,7 @@ def test_apply_cli_overrides():
     config = Config()
     overridden = apply_cli_overrides(
         config,
+        platform=Platform.woocommerce,
         products=False,
         collections=True,
         images=None,  # should not override
@@ -475,6 +479,7 @@ def test_apply_cli_overrides():
         limit=10,
         user_agent="MyBot/1.0",
     )
+    assert overridden.scrape.platform == "woocommerce"
     assert overridden.scrape.products is False
     assert overridden.scrape.collections is True
     assert overridden.scrape.images is False  # unchanged (default)
@@ -490,6 +495,7 @@ def test_apply_cli_overrides_none_values():
     config = Config()
     overridden = apply_cli_overrides(
         config,
+        platform=None,
         products=None,
         collections=None,
         images=None,
@@ -500,6 +506,7 @@ def test_apply_cli_overrides_none_values():
         limit=None,
         user_agent=None,
     )
+    assert overridden.scrape.platform == "shopify"  # default
     assert overridden.scrape.products is True
     assert overridden.scrape.collections is False
     assert overridden.scrape.limit is None
@@ -574,6 +581,7 @@ def test_apply_cli_overrides_format():
     config = Config()
     overridden = apply_cli_overrides(
         config,
+        platform=None,
         products=None,
         collections=None,
         images=None,
@@ -592,6 +600,7 @@ def test_apply_cli_overrides_format_none():
     config = Config()
     overridden = apply_cli_overrides(
         config,
+        platform=None,
         products=None,
         collections=None,
         images=None,

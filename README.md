@@ -7,7 +7,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Shopify Spy is a command-line tool for scraping product and collection data from any Shopify store. Built on [Scrapy](https://docs.scrapy.org/en/latest/index.html), it extracts detailed data including high-value information like vendor names and inventory levels.
+Shopify Spy is a command-line tool for scraping product and collection data from ecommerce stores. Built on [Scrapy](https://docs.scrapy.org/en/latest/index.html), it supports Shopify and WooCommerce stores out of the box.
 
 To find Shopify stores to scrape, try searching Google with `site:myshopify.com`.
 
@@ -34,8 +34,11 @@ Requires Python 3.10+.
 ## Quick Start
 
 ```bash
-# Scrape a single store
+# Scrape a Shopify store (default)
 shopify-spy scrape https://www.example.com
+
+# Scrape a WooCommerce store
+shopify-spy scrape --platform woocommerce https://www.example.com
 
 # Scrape multiple stores
 shopify-spy scrape https://store1.com https://store2.com https://store3.com
@@ -43,7 +46,7 @@ shopify-spy scrape https://store1.com https://store2.com https://store3.com
 # Download product images
 shopify-spy scrape https://www.example.com --images
 
-# Include collections
+# Include collections (Shopify only)
 shopify-spy scrape https://www.example.com --collections
 
 # Scrape multiple stores from a file
@@ -55,23 +58,31 @@ shopify-spy scrape https://www.example.com --output ./my-data
 
 Results are saved as JSONL in the output directory (default: `./output`). Use `--format` to choose JSON, CSV, or XML instead.
 
+## Supported Platforms
+
+| Platform | Mechanism | Notes |
+|---|---|---|
+| Shopify | `/sitemap.xml` + `.json` endpoints | Products and collections |
+| WooCommerce | `/wp-json/wc/store/v1/products` | No authentication required |
+
 ## Commands
 
 ### `scrape`
 
-Scrape products and collections from Shopify stores.
+Scrape products and collections from Shopify and WooCommerce stores.
 
 ```bash
 shopify-spy scrape [URL] [OPTIONS]
 ```
 
 **Arguments:**
-- `URL...` - One or more Shopify store URLs (optional if using `--url-file`)
+- `URL...` - One or more store URLs (optional if using `--url-file`)
 
 **Options:**
+- `--platform, -p PLATFORM` - Ecommerce platform: `shopify`, `woocommerce` (default: `shopify`)
 - `--url-file, -f FILE` - File containing URLs (one per line)
-- `--products / --no-products` - Scrape products (default: yes)
-- `--collections / --no-collections` - Scrape collections (default: no)
+- `--products / --no-products` - Scrape products (default: yes; Shopify only)
+- `--collections / --no-collections` - Scrape collections (default: no; Shopify only)
 - `--images / --no-images` - Download images (default: no)
 - `--output, -o PATH` - Output directory (default: `./output`)
 - `--format, -F FORMAT` - Output format: `json`, `jsonl`, `csv`, `xml` (default: `jsonl`)
@@ -103,8 +114,9 @@ Shopify Spy can be configured via YAML file. Create one with `shopify-spy init`:
 ```yaml
 # shopify-spy.yaml
 scrape:
-  products: true      # Scrape product data
-  collections: false  # Scrape collection data
+  platform: shopify   # Platform: shopify, woocommerce
+  products: true      # Scrape product data (Shopify only)
+  collections: false  # Scrape collection data (Shopify only)
   images: false       # Download product images
 
 output:
@@ -145,7 +157,38 @@ output/
       <image files>
 ```
 
-Each line in the JSON file contains a product or collection with full metadata from Shopify's JSON API.
+### Shopify output
+
+Each line contains the full product or collection JSON from Shopify's API, plus two added fields:
+
+```json
+{
+  "product": { "title": "...", "variants": [...], "images": [...], ... },
+  "url": "https://store.com/products/item.json",
+  "store": "store.com",
+  "image_urls": ["https://cdn.shopify.com/.../product.jpg"]
+}
+```
+
+### WooCommerce output
+
+Each line contains the full product JSON from the WooCommerce Store API, plus two added fields:
+
+```json
+{
+  "id": 123,
+  "name": "Product Name",
+  "slug": "product-name",
+  "permalink": "https://store.com/product/product-name/",
+  "sku": "SKU-001",
+  "prices": { "price": "5200", "currency_code": "USD", "currency_minor_unit": 2 },
+  "images": [{ "id": 1, "src": "https://..." }],
+  "store": "store.com",
+  "image_urls": ["https://..."]
+}
+```
+
+Note: WooCommerce prices are strings in minor currency units (divide by `10^currency_minor_unit` to get the decimal value).
 
 ### Image Metadata
 
@@ -161,8 +204,7 @@ When using `--images`, each item includes a `scraped_images` field with download
       "checksum": "d41d8cd98f00b204e9800998ecf8427e",
       "status": "downloaded"
     }
-  ],
-  "product": { ... }
+  ]
 }
 ```
 
@@ -172,11 +214,11 @@ The `path` is relative to the images directory (`output/images/` by default).
 
 **With jq:**
 ```bash
-# Extract product titles
+# Shopify: extract product titles
 cat output/*.jsonl | jq '.product.title'
 
-# Get prices
-cat output/*.jsonl | jq '{title: .product.title, price: .product.variants[0].price}'
+# WooCommerce: extract product names and prices
+cat output/*.jsonl | jq '{name: .name, price: .prices.price, currency: .prices.currency_code}'
 ```
 
 **With Python:**
@@ -186,7 +228,8 @@ import json
 with open("output/shopify_spider_2024-01-15.jsonl") as f:
     for line in f:
         item = json.loads(line)
-        print(item["product"]["title"])
+        print(item["product"]["title"])  # Shopify
+        # print(item["name"])            # WooCommerce
 ```
 
 **With pandas:**
@@ -194,7 +237,7 @@ with open("output/shopify_spider_2024-01-15.jsonl") as f:
 import pandas as pd
 
 df = pd.read_json("output/shopify_spider_2024-01-15.jsonl", lines=True)
-products = pd.json_normalize(df["product"])
+products = pd.json_normalize(df["product"])  # Shopify
 ```
 
 **With polars:**
@@ -207,6 +250,8 @@ df = pl.read_ndjson("output/shopify_spider_2024-01-15.jsonl")
 ## Limitations
 
 **Standard Shopify stores only.** This tool works with standard Shopify stores using Liquid themes, which represent nearly all Shopify sites. The small number of headless stores built on [Hydrogen](https://hydrogen.shopify.dev/) or other custom storefronts are not supported, as they use the Storefront GraphQL API instead of the JSON endpoints this tool relies on.
+
+**WooCommerce Store API required.** The WooCommerce spider uses the public Store API (`/wp-json/wc/store/v1/products`), available in WooCommerce 3.x and later. Stores that have disabled the REST API via security plugins, or that broadly block crawlers in `robots.txt`, will not be scrapeable.
 
 **Rate limiting.** Scraping very large stores may still result in temporary bans. Auto-throttling is enabled by default, but you can adjust the settings or disable it for faster scraping:
 
@@ -223,9 +268,16 @@ For advanced Scrapy configuration or custom pipelines, you can use Shopify Spy a
 from scrapy.crawler import CrawlerProcess
 from scrapy.utils.project import get_project_settings
 from shopify_spy.spiders.shopify import ShopifySpider
+from shopify_spy.spiders.woocommerce import WooCommerceSpider
 
 process = CrawlerProcess(get_project_settings())
+
+# Shopify
 process.crawl(ShopifySpider, url="https://example.com", products=True)
+
+# WooCommerce
+process.crawl(WooCommerceSpider, url="https://example.com")
+
 process.start()
 ```
 
