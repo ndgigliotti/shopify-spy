@@ -1,5 +1,6 @@
 """YAML configuration loading and Pydantic models."""
 
+from enum import Enum
 from pathlib import Path
 from typing import Literal
 
@@ -13,13 +14,17 @@ OUTPUT_FORMATS: dict[str, tuple[str, str]] = {
     "xml": ("xml", ".xml"),
 }
 OutputFormat = Literal["json", "jsonl", "csv", "xml"]
-PlatformType = Literal["shopify", "woocommerce"]
+
+
+class Platform(str, Enum):
+    shopify = "shopify"
+    woocommerce = "woocommerce"
 
 
 class ScrapeConfig(BaseModel):
     """Configuration for what to scrape."""
 
-    platform: PlatformType = "shopify"
+    platform: Platform = Platform.shopify
     products: bool = True
     collections: bool = False
     images: bool = False

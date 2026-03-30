@@ -8,7 +8,7 @@ import scrapy
 from scrapy.exceptions import CloseSpider
 from scrapy.http import Response
 
-from shopify_spy.utils import as_bool, find_all_values
+from shopify_spy.utils import as_bool, find_all_values, normalize_url
 
 
 class ShopifySpider(scrapy.spiders.SitemapSpider):
@@ -125,9 +125,5 @@ def extract_data(response: Response) -> dict[str, Any]:
 
 def get_sitemap_url(url: str) -> str:
     """Infer sitemap URL from given URL, normalizing if needed."""
-    parsed = urllib.parse.urlparse(url)
-    if not parsed.scheme:
-        # Assume https if no scheme provided
-        parsed = urllib.parse.urlparse(f"https://{url}")
-    sitemap_url = (parsed.scheme, parsed.netloc, "sitemap.xml", "", "", "")
-    return urllib.parse.urlunparse(sitemap_url)
+    parsed = normalize_url(url)
+    return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, "sitemap.xml", "", "", ""))

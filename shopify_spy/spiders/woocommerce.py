@@ -6,7 +6,7 @@ from typing import Any
 import scrapy
 from scrapy.http import Response
 
-from shopify_spy.utils import as_bool
+from shopify_spy.utils import as_bool, normalize_url
 
 
 class WooCommerceSpider(scrapy.Spider):
@@ -78,9 +78,7 @@ class WooCommerceSpider(scrapy.Spider):
 
 def get_api_url(store_url: str, page: int = 1) -> str:
     """Build WooCommerce Store API URL for the given store and page."""
-    parsed = urllib.parse.urlparse(store_url)
-    if not parsed.scheme:
-        parsed = urllib.parse.urlparse(f"https://{store_url}")
+    parsed = normalize_url(store_url)
     query = urllib.parse.urlencode({"per_page": 100, "page": page})
     return urllib.parse.urlunparse(
         (parsed.scheme, parsed.netloc, "/wp-json/wc/store/v1/products", "", query, "")
