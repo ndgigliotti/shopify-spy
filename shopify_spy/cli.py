@@ -102,6 +102,12 @@ def scrape(
         bool | None,
         typer.Option("--throttle/--no-throttle", help="Auto-throttle requests."),
     ] = None,
+    limit: Annotated[
+        int | None,
+        typer.Option(
+            "--limit", "-n", help="Stop after scraping N items. Useful for sampling or testing."
+        ),
+    ] = None,
     user_agent: Annotated[
         str | None,
         typer.Option("--user-agent", "-A", help="Custom User-Agent header."),
@@ -129,6 +135,7 @@ def scrape(
         format=format,
         concurrent=concurrent,
         throttle=throttle,
+        limit=limit,
         user_agent=user_agent,
     )
 
@@ -183,6 +190,7 @@ def apply_cli_overrides(
     format: OutputFormat | None,
     concurrent: int | None,
     throttle: bool | None,
+    limit: int | None,
     user_agent: str | None,
 ) -> Config:
     """Apply CLI argument overrides to config."""
@@ -198,6 +206,8 @@ def apply_cli_overrides(
         scrape_dict["collections"] = collections
     if images is not None:
         scrape_dict["images"] = images
+    if limit is not None:
+        scrape_dict["limit"] = limit
     if output is not None:
         output_dict["dir"] = output
     if format is not None:
@@ -304,6 +314,7 @@ def run_spider(urls: list[str], config: Config, log_level: str | None = None) ->
             products=config.scrape.products,
             collections=config.scrape.collections,
             images=config.scrape.images,
+            limit=config.scrape.limit,
         )
 
     process.start()

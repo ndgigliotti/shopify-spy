@@ -2,16 +2,17 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from typer.testing import CliRunner
 
-from shopify_spy.cli import app, apply_cli_overrides, get_urls
+from shopify_spy.cli import app, apply_cli_overrides, get_urls, run_spider
 from shopify_spy.config import (
     OUTPUT_FORMATS,
     Config,
     OutputConfig,
+    ScrapeConfig,
     create_default_config,
     load_config,
     load_config_from_file,
@@ -452,11 +453,13 @@ def test_apply_cli_overrides():
         format=None,
         concurrent=4,
         throttle=False,
+        limit=10,
         user_agent="MyBot/1.0",
     )
     assert overridden.scrape.products is False
     assert overridden.scrape.collections is True
     assert overridden.scrape.images is False  # unchanged (default)
+    assert overridden.scrape.limit == 10
     assert overridden.output.dir == Path("/custom")
     assert overridden.network.concurrent_requests == 4
     assert overridden.network.user_agent == "MyBot/1.0"
@@ -475,10 +478,12 @@ def test_apply_cli_overrides_none_values():
         format=None,
         concurrent=None,
         throttle=None,
+        limit=None,
         user_agent=None,
     )
     assert overridden.scrape.products is True
     assert overridden.scrape.collections is False
+    assert overridden.scrape.limit is None
     assert overridden.output.dir == Path("./output")
     assert overridden.throttle.enabled is True  # default is now True
     assert overridden.network.user_agent is None  # uses Scrapy default
@@ -557,6 +562,7 @@ def test_apply_cli_overrides_format():
         format="csv",
         concurrent=None,
         throttle=None,
+        limit=None,
         user_agent=None,
     )
     assert overridden.output.format == "csv"
@@ -574,6 +580,7 @@ def test_apply_cli_overrides_format_none():
         format=None,
         concurrent=None,
         throttle=None,
+        limit=None,
         user_agent=None,
     )
     assert overridden.output.format == "jsonl"
@@ -602,3 +609,115 @@ def test_default_config_includes_format(tmp_path):
     runner.invoke(app, ["init", str(config_file)])
     content = config_file.read_text()
     assert "format: jsonl" in content
+
+
+# --- Limit tests ---
+
+
+def test_scrape_config_limit_default():
+    """Default limit is None (no limit)."""
+    config = Config()
+    assert config.scrape.limit is None
+
+
+def test_scrape_config_limit_valid():
+    """Positive integer limit is accepted."""
+    from shopify_spy.config import ScrapeConfig
+
+    assert ScrapeConfig(limit=1).limit == 1
+    assert ScrapeConfig(limit=100).limit == 100
+
+
+def test_scrape_config_limit_invalid():
+    """Zero or negative limit is rejected."""
+    from pydantic import ValidationError
+
+    from shopify_spy.config import ScrapeConfig
+
+    with pytest.raises(ValidationError):
+        ScrapeConfig(limit=0)
+    with pytest.raises(ValidationError):
+        ScrapeConfig(limit=-5)
+
+
+def test_load_config_with_limit(tmp_path):
+    """YAML with limit loads correctly."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("scrape:\n  limit: 25\n")
+    config = load_config_from_file(config_file)
+    assert config.scrape.limit == 25
+
+
+def test_apply_cli_overrides_limit():
+    """--limit CLI value is applied."""
+    config = Config()
+    overridden = apply_cli_overrides(
+        config,
+        products=None,
+        collections=None,
+        images=None,
+        output=None,
+        format=None,
+        concurrent=None,
+        throttle=None,
+        limit=5,
+        user_agent=None,
+    )
+    assert overridden.scrape.limit == 5
+
+
+def test_cli_scrape_help_shows_limit():
+    """--limit flag appears in scrape help."""
+    result = runner.invoke(app, ["scrape", "--help"])
+    assert result.exit_code == 0
+    assert "--limit" in strip_ansi(result.stdout)
+
+
+def _make_response(i: int) -> Mock:
+    mock = Mock()
+    mock.text = f'{{"product": {{"title": "Product {i}"}}}}'
+    mock.request.url = f"https://www.example.com/products/p{i}.json"
+    return mock
+
+
+def test_spider_limit_exact_count():
+    """Spider yields exactly N items when limit is set."""
+    from scrapy.exceptions import CloseSpider
+
+    spider = ShopifySpider(url="https://www.example.com", limit=2)
+
+    assert len(list(spider.parse_product(_make_response(1)))) == 1
+    assert len(list(spider.parse_product(_make_response(2)))) == 1
+    with pytest.raises(CloseSpider):
+        list(spider.parse_product(_make_response(3)))
+
+
+def test_spider_limit_string_param():
+    """limit passed as a string (e.g. from scrapy CLI -a limit=3) is coerced to int."""
+    spider = ShopifySpider(url="https://www.example.com", limit="3")
+    assert spider.limit == 3
+
+
+def test_spider_no_limit():
+    """Spider yields all items when limit is None."""
+    spider = ShopifySpider(url="https://www.example.com", limit=None)
+
+    for i in range(20):
+        assert len(list(spider.parse_product(_make_response(i)))) == 1
+
+
+def test_run_spider_passes_limit_to_crawl(tmp_path):
+    """run_spider passes limit to the spider via process.crawl()."""
+    config = Config(scrape=ScrapeConfig(limit=5), output=OutputConfig(dir=tmp_path))
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_process_cls,
+    ):
+        mock_process = MagicMock()
+        mock_process_cls.return_value = mock_process
+        run_spider(["https://example.com"], config)
+
+    _, kwargs = mock_process.crawl.call_args
+    assert kwargs["limit"] == 5

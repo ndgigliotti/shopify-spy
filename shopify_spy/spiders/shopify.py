@@ -5,6 +5,7 @@ from collections.abc import Generator, Iterator
 from typing import Any
 
 import scrapy
+from scrapy.exceptions import CloseSpider
 from scrapy.http import Response
 
 from shopify_spy.utils import as_bool, find_all_values
@@ -28,6 +29,7 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         products: bool | str = True,
         collections: bool | str = False,
         images: bool | str = True,
+        limit: int | str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize spider by inferring sitemap URLs.
@@ -38,6 +40,7 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
             products: Whether to scrape products.
             collections: Whether to scrape collections.
             images: Whether to scrape images.
+            limit: Stop after yielding this many items total.
         """
         # Determine starting sitemap URLs
         if url:
@@ -55,6 +58,8 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         if as_bool(collections):
             self.sitemap_rules.append(("/collections/", "parse_collection"))
         self.images_enabled = as_bool(images)
+        self.limit = int(limit) if limit is not None else None
+        self._item_count = 0
 
         super().__init__(*args, **kwargs)
 
@@ -73,6 +78,9 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         @returns requests 0 0
         @scrapes product image_urls
         """
+        if self.limit is not None and self._item_count >= self.limit:
+            raise CloseSpider("item_limit")
+
         data = extract_data(response)
 
         if self.images_enabled:
@@ -81,6 +89,7 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
             image_urls = []
 
         data["image_urls"] = image_urls
+        self._item_count += 1
         yield data
 
     def parse_collection(self, response: Response) -> Generator[dict[str, Any]]:
@@ -91,6 +100,9 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         @returns requests 0 0
         @scrapes collection image_urls
         """
+        if self.limit is not None and self._item_count >= self.limit:
+            raise CloseSpider("item_limit")
+
         data = extract_data(response)
 
         if self.images_enabled:
@@ -99,6 +111,7 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
             image_urls = []
 
         data["image_urls"] = image_urls
+        self._item_count += 1
         yield data
 
 
