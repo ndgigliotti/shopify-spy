@@ -21,6 +21,7 @@ class ScrapeConfig(BaseModel):
     products: bool = True
     collections: bool = False
     images: bool = False
+    limit: int | None = Field(default=None, ge=1)
 
 
 class OutputConfig(BaseModel):

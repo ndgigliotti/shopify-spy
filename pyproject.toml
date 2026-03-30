@@ -1,6 +1,6 @@
 [project]
 name = "shopify-spy"
-version = "0.1.1"
+version = "0.1.2"
 description = "Simple CLI to scrape product data, images, and collections from Shopify stores"
 readme = "README.md"
 license = "MIT"
