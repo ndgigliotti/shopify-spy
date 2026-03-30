@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.10"
 
 [options]
-exclude-newer = "2026-03-23T17:32:20.411717152Z"
+exclude-newer = "2026-03-23T23:05:13.205302678Z"
 exclude-newer-span = "P1W"
 
 [[package]]
@@ -1345,7 +1345,7 @@ wheels = [
 
 [[package]]
 name = "shopify-spy"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "pillow" },
