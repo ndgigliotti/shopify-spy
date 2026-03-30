@@ -217,10 +217,6 @@ def _ensure_chromium(install: bool) -> None:
         return
 
     if not install:
-        console.print(
-            "[yellow]Warning: Chromium not found. "
-            "Run 'playwright install chromium' or omit --no-install-browser.[/yellow]"
-        )
         return
 
     console.print("[bold]Chromium not found. Installing now (~300MB)...[/bold]")
