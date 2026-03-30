@@ -257,11 +257,11 @@ Most Shopify stores use Liquid themes and work with the default scraper. For hea
 # Install with headless support
 pip install shopify-spy[headless]
 
-# Install the Playwright browser (required once after install)
-playwright install chromium
-
-# Scrape a headless store
+# Scrape a headless store (Chromium is installed automatically on first use, ~300MB)
 shopify-spy scrape https://hydrogen-store.com --headless
+
+# Skip the auto-install (e.g. in CI where Chromium is pre-installed)
+shopify-spy scrape https://hydrogen-store.com --headless --no-install-browser
 ```
 
 The headless mode uses Playwright to render pages. It tries fast JSON endpoints first and only falls back to browser rendering when needed.

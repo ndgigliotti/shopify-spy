@@ -1,5 +1,6 @@
 """Command-line interface for Shopify Spy."""
 
+import subprocess
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -127,6 +128,13 @@ def scrape(
             "--platform", "-p", help="Ecommerce platform: shopify, woocommerce, squarespace."
         ),
     ] = Platform.shopify,
+    install_browser: Annotated[
+        bool,
+        typer.Option(
+            "--install-browser/--no-install-browser",
+            help="Auto-install Playwright's Chromium browser if missing (headless mode only).",
+        ),
+    ] = True,
     verbose: Annotated[
         bool,
         typer.Option("--verbose", "-v", help="Show debug output."),
@@ -169,6 +177,9 @@ def scrape(
         raise typer.Exit(1)
     log_level = "DEBUG" if verbose else "WARNING" if quiet else None
 
+    if config.scrape.headless:
+        _ensure_chromium(install_browser)
+
     if config.scrape.headless and config.scrape.collections:
         console.print(
             "[yellow]Warning: --collections is not supported in headless mode "
@@ -209,6 +220,29 @@ def init(
 
     created = create_default_config(target)
     console.print(f"[green]Created config file: {created}[/green]")
+
+
+def _ensure_chromium(install: bool) -> None:
+    """Install Playwright's Chromium browser if not already installed."""
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            if Path(p.chromium.executable_path).exists():
+                return
+    except Exception:
+        return
+
+    if not install:
+        console.print(
+            "[yellow]Warning: Chromium not found. "
+            "Run 'playwright install chromium' or omit --no-install-browser.[/yellow]"
+        )
+        return
+
+    console.print("[bold]Chromium not found. Installing now (~300MB)...[/bold]")
+    subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+    console.print("[green]Chromium installed.[/green]")
 
 
 def apply_cli_overrides(
