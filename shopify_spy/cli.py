@@ -429,7 +429,8 @@ def run_spider(
         process.crawl(spider_cls, url=store_url, **spider_kwargs)
 
     process.start()
-    console.print("[green]Done![/green]")
+    total = sum(c.stats.get_value("item_scraped_count", 0) for c in process.crawlers)
+    console.print(f"[green]Done! Scraped {total} item(s).[/green]")
 
 
 if __name__ == "__main__":
