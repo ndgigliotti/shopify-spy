@@ -139,6 +139,7 @@ def scrape(
     # Apply CLI overrides
     config = apply_cli_overrides(
         config,
+        platform=platform,
         products=products,
         collections=collections,
         images=images,
@@ -164,7 +165,7 @@ def scrape(
     log_level = "DEBUG" if verbose else "WARNING" if quiet else None
 
     # Run the spider
-    run_spider(all_urls, config, log_level=log_level, platform=platform)
+    run_spider(all_urls, config, log_level=log_level)
 
 
 @app.command()
@@ -194,6 +195,7 @@ def init(
 def apply_cli_overrides(
     config: Config,
     *,
+    platform: Platform | None,
     products: bool | None,
     collections: bool | None,
     images: bool | None,
@@ -211,6 +213,8 @@ def apply_cli_overrides(
     network_dict = config.network.model_dump()
     throttle_dict = config.throttle.model_dump()
 
+    if platform is not None:
+        scrape_dict["platform"] = platform.value
     if products is not None:
         scrape_dict["products"] = products
     if collections is not None:
@@ -260,14 +264,13 @@ def run_spider(
     urls: list[str],
     config: Config,
     log_level: str | None = None,
-    platform: Platform = Platform.shopify,
 ) -> None:
     """Run the appropriate spider with the given configuration."""
     # Deferred imports to avoid loading Scrapy until needed
     from scrapy.crawler import CrawlerProcess
     from scrapy.utils.project import get_project_settings
 
-    if platform == Platform.woocommerce:
+    if config.scrape.platform == "woocommerce":
         from shopify_spy.spiders.woocommerce import WooCommerceSpider
 
         spider_cls = WooCommerceSpider
@@ -328,8 +331,8 @@ def run_spider(
         settings.set("ITEM_PIPELINES", {})
 
     console.print(f"[bold]Scraping {len(urls)} store(s)...[/bold]")
-    console.print(f"  Platform: {platform.value}")
-    if platform == Platform.shopify:
+    console.print(f"  Platform: {config.scrape.platform}")
+    if config.scrape.platform == "shopify":
         console.print(f"  Products: {config.scrape.products}")
         console.print(f"  Collections: {config.scrape.collections}")
     console.print(f"  Images: {config.scrape.images}")
