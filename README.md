@@ -49,6 +49,9 @@ shopify-spy scrape https://www.example.com --collections
 # Scrape multiple stores from a file
 shopify-spy scrape --url-file stores.txt
 
+# Sample a store (stop after 10 items)
+shopify-spy scrape https://www.example.com --limit 10
+
 # Specify output directory
 shopify-spy scrape https://www.example.com --output ./my-data
 ```
@@ -73,6 +76,7 @@ shopify-spy scrape [URL] [OPTIONS]
 - `--products / --no-products` - Scrape products (default: yes)
 - `--collections / --no-collections` - Scrape collections (default: no)
 - `--images / --no-images` - Download images (default: no)
+- `--limit, -n INT` - Stop after N items (useful for sampling or testing)
 - `--output, -o PATH` - Output directory (default: `./output`)
 - `--format, -F FORMAT` - Output format: `json`, `jsonl`, `csv`, `xml` (default: `jsonl`)
 - `--config, -c FILE` - Path to YAML config file
