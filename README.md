@@ -207,22 +207,22 @@ import polars as pl
 df = pl.read_ndjson("output/shopify_spider_2024-01-15.jsonl")
 ```
 
-## Headless Stores
+## Browser-Based Scraping
 
-Most Shopify stores use Liquid themes and work with the default scraper. For headless stores built on [Hydrogen](https://hydrogen.shopify.dev/) or custom storefronts, use the `--headless` flag:
+Some stores require a real browser to scrape -- for example, stores built on [Hydrogen](https://hydrogen.shopify.dev/) or those that block automated HTTP requests. Use the `--headless` flag to enable Playwright-based scraping:
 
 ```bash
-# Install with headless support
+# Install with browser-based scraping support
 pip install shopify-spy[headless]
 
-# Scrape a headless store (Chromium is installed automatically on first use, ~300MB)
-shopify-spy scrape https://hydrogen-store.com --headless
+# Scrape a store using browser rendering (Chromium is installed automatically on first use, ~300MB)
+shopify-spy scrape https://example.com --headless
 
 # Skip the auto-install (e.g. in CI where Chromium is pre-installed)
-shopify-spy scrape https://hydrogen-store.com --headless --no-install-browser
+shopify-spy scrape https://example.com --headless --no-install-browser
 ```
 
-The headless mode uses Playwright to render pages. It tries fast JSON endpoints first and only falls back to browser rendering when needed.
+Browser mode tries fast JSON endpoints first and only falls back to full page rendering when needed.
 
 ## Limitations
 
