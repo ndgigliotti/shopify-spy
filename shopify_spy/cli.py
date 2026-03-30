@@ -301,6 +301,7 @@ def run_spider(urls: list[str], config: Config, log_level: str | None = None) ->
     console.print(f"  Products: {config.scrape.products}")
     console.print(f"  Collections: {config.scrape.collections}")
     console.print(f"  Images: {config.scrape.images}")
+    console.print(f"  Limit: {config.scrape.limit or 'none'}")
     console.print(f"  Format: {config.output.format}")
     console.print(f"  Output: {output_dir}")
 

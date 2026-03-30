@@ -80,6 +80,7 @@ scrape:
   products: true      # Scrape product data
   collections: false  # Scrape collection data
   images: false       # Download product images
+  # limit: 50         # Stop after N items (useful for sampling or testing)
 
 output:
   dir: ./output       # Output directory for results

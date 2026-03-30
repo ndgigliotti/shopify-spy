@@ -63,6 +63,10 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
 
         super().__init__(*args, **kwargs)
 
+    def _check_limit(self) -> None:
+        if self.limit is not None and self._item_count >= self.limit:
+            raise CloseSpider("item_limit")
+
     def sitemap_filter(self, entries: Iterator[dict[str, Any]]) -> Generator[dict[str, Any]]:
         """Modify links to reach JSON data files."""
         for entry in entries:
@@ -78,8 +82,7 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         @returns requests 0 0
         @scrapes product image_urls
         """
-        if self.limit is not None and self._item_count >= self.limit:
-            raise CloseSpider("item_limit")
+        self._check_limit()
 
         data = extract_data(response)
 
@@ -100,8 +103,7 @@ class ShopifySpider(scrapy.spiders.SitemapSpider):
         @returns requests 0 0
         @scrapes collection image_urls
         """
-        if self.limit is not None and self._item_count >= self.limit:
-            raise CloseSpider("item_limit")
+        self._check_limit()
 
         data = extract_data(response)
 
