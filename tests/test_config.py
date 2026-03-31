@@ -102,7 +102,7 @@ def test_output_config_valid_formats():
 def test_output_config_invalid_format():
     """Invalid format values are rejected."""
     with pytest.raises(Exception):
-        OutputConfig(format="parquet")
+        OutputConfig(format="invalid_format")
 
 
 def test_load_config_with_format(tmp_path):
