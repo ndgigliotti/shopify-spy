@@ -1,8 +1,6 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from shopify_spy.cli import Platform, app, apply_cli_overrides, get_urls, run_spider
 from shopify_spy.config import Config, OutputConfig, ScrapeConfig
 
@@ -336,3 +334,14 @@ def test_cli_headless_no_products_error():
     assert result.exit_code == 1
     output = strip_ansi(result.stdout).lower()
     assert "nothing to scrape" in output
+
+
+def test_cli_headless_non_shopify_error():
+    """--headless with a non-Shopify platform exits with an error."""
+    result = runner.invoke(
+        app, ["scrape", "https://example.com", "--headless", "--platform", "woocommerce"]
+    )
+    assert result.exit_code == 1
+    output = strip_ansi(result.stdout).lower()
+    assert "only supported" in output
+    assert "shopify" in output
