@@ -421,12 +421,14 @@ def run_spider(
 
     process = CrawlerProcess(settings)
 
-    # Crawl each URL
+    # Crawl each URL; capture crawler refs before start() clears the set
+    crawlers = []
     for store_url in urls:
         process.crawl(spider_cls, url=store_url, **spider_kwargs)
+    crawlers = list(process.crawlers)
 
     process.start()
-    total = sum(c.stats.get_value("item_scraped_count", 0) for c in process.crawlers)
+    total = sum(c.stats.get_value("item_scraped_count", 0) for c in crawlers)
     console.print(f"[green]Done! Scraped {total} item(s).[/green]")
 
 
