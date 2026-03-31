@@ -90,9 +90,7 @@ def scrape(
     ] = None,
     format: Annotated[
         OutputFormat | None,
-        typer.Option(
-            "--format", "-F", help="Output format: json, jsonl, csv, xml, sqlite, parquet."
-        ),
+        typer.Option("--format", "-F", help="Output format: json, jsonl, csv, xml."),
     ] = None,
     config_path: Annotated[
         Path | None,

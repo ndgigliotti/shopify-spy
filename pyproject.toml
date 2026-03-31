@@ -1,6 +1,6 @@
 [project]
 name = "shopify-spy"
-version = "0.2.0"
+version = "0.2.1"
 description = "Simple CLI to scrape product data, images, and collections from Shopify and WooCommerce stores"
 readme = "README.md"
 license = "MIT"
@@ -50,9 +50,6 @@ Repository = "https://github.com/ndgigliotti/shopify-spy"
 shopify-spy = "shopify_spy.cli:app"
 
 [project.optional-dependencies]
-parquet = [
-    "pyarrow>=14.0",
-]
 headless = [
     "scrapy-playwright>=0.0.40",
 ]

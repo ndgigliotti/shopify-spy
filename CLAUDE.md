@@ -30,13 +30,8 @@ Three platform spiders plus a headless fallback. All use `load_store_urls()` fro
 
 **`headless.py`** -- Shopify-only hybrid spider using Playwright. Tries `/products.json` first, falls back to browser rendering with three extraction strategies (JSON-LD, embedded Shopify object, meta tags). Requires `scrapy-playwright` (`[headless]` extra).
 
-### Exporters (`shopify_spy/exporters.py`)
-Custom Scrapy `ItemExporter` subclasses for non-built-in output formats. Registered in `settings.py` via `FEED_EXPORTERS`. Two exporters:
-- `SqliteItemExporter` -- writes items to a SQLite database table (`items`). Columns are derived from the first item's keys. Dict/list values are JSON-serialized to text. Uses stdlib `sqlite3` (no extra dependencies).
-- `ParquetItemExporter` -- buffers items in memory and writes a single Parquet file on close. Dict/list values are JSON-serialized to string columns. Requires the optional `pyarrow` package (`pip install shopify-spy[parquet]`).
-
 ### Settings (`shopify_spy/settings.py`)
-Scrapy defaults: autothrottle on, 16 concurrent requests per domain, robots.txt respected, image pipeline enabled, JSONL feed output. `FEED_EXPORTERS` registers the custom SQLite and Parquet exporters. The CLI overrides feed settings at runtime via `get_project_settings()`.
+Scrapy defaults: autothrottle on, 16 concurrent requests per domain, robots.txt respected, image pipeline enabled, JSONL feed output. The CLI overrides feed settings at runtime via `get_project_settings()`.
 
 ### Utilities (`shopify_spy/utils.py`)
 `as_bool()` converts strings or bools to `bool`, handling values like `"yes"`, `"1"`, `"null"`. Used to coerce spider arguments that arrive as strings when called from the Scrapy CLI. `find_all_values(key, obj)` recursively searches nested dicts/lists and yields all matching values. `load_store_urls(url, url_file)` loads URLs from a single URL or a file, shared across all spiders. `normalize_url(url)` parses a URL, defaulting to https if no scheme.

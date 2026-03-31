@@ -56,7 +56,7 @@ shopify-spy scrape --url-file stores.txt
 shopify-spy scrape https://www.example.com --output ./my-data
 ```
 
-Results are saved as JSONL in the output directory (default: `./output`). Use `--format` to choose JSON, CSV, XML, SQLite, or Parquet.
+Results are saved as JSONL in the output directory (default: `./output`). Use `--format` to choose JSON, CSV, or XML instead.
 
 ## Supported Platforms
 
@@ -88,7 +88,7 @@ shopify-spy scrape [URL] [OPTIONS]
 - `--headless / --no-headless` - Use Playwright for headless/Hydrogen stores (default: no)
 - `--install-browser / --no-install-browser` - Auto-install Chromium if missing, headless mode only (default: yes)
 - `--output, -o PATH` - Output directory (default: `./output`)
-- `--format, -F FORMAT` - Output format: `json`, `jsonl`, `csv`, `xml`, `sqlite`, `parquet` (default: `jsonl`)
+- `--format, -F FORMAT` - Output format: `json`, `jsonl`, `csv`, `xml` (default: `jsonl`)
 - `--config, -c FILE` - Path to YAML config file
 - `--concurrent INT` - Concurrent requests per domain (default: 16)
 - `--throttle / --no-throttle` - Auto-throttle requests (default: yes)
@@ -125,7 +125,7 @@ scrape:
 
 output:
   dir: ./output       # Output directory for results
-  format: jsonl       # Output format: json, jsonl, csv, xml, sqlite, parquet
+  format: jsonl       # Output format: json, jsonl, csv, xml
   images_subdir: images  # Subdirectory for downloaded images
 
 network:
