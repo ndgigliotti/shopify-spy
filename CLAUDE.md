@@ -24,8 +24,14 @@ Pydantic models for YAML config with four sections: `scrape`, `output`, `network
 ### Spider (`shopify_spy/spiders/shopify.py`)
 Extends `SitemapSpider`. Input URLs are normalized to `https://<host>/sitemap.xml`. `sitemap_filter` appends `.json` to any sitemap entry whose path contains `/products/` or `/collections/`, then yields all entries; `sitemap_rules` routes the `.json` URLs to `parse_product` or `parse_collection` based on the same path patterns. Each yielded item contains the full Shopify JSON payload plus two added fields: `url` (request URL) and `store` (hostname). `image_urls` is always present; when images are enabled it contains every `src` value found anywhere in the JSON via `find_all_values`.
 
+### Exporters (`shopify_spy/exporters.py`)
+Custom Scrapy `ItemExporter` subclasses for non-built-in output formats. Registered in `settings.py` via `FEED_EXPORTERS`. Three exporters:
+- `TsvItemExporter` -- thin wrapper around `CsvItemExporter` with tab delimiter.
+- `SqliteItemExporter` -- writes items to a SQLite database table (`items`). Columns are derived from the first item's keys. Dict/list values are JSON-serialized to text. Uses stdlib `sqlite3` (no extra dependencies).
+- `ParquetItemExporter` -- buffers items in memory and writes a single Parquet file on close. Dict/list values are JSON-serialized to string columns. Requires the optional `pyarrow` package (`pip install shopify-spy[parquet]`).
+
 ### Settings (`shopify_spy/settings.py`)
-Scrapy defaults: autothrottle on, 16 concurrent requests per domain, robots.txt respected, image pipeline enabled, JSONL feed output. The CLI overrides these at runtime via `get_project_settings()`.
+Scrapy defaults: autothrottle on, 16 concurrent requests per domain, robots.txt respected, image pipeline enabled, JSONL feed output. `FEED_EXPORTERS` registers the custom TSV, SQLite, and Parquet exporters. The CLI overrides feed settings at runtime via `get_project_settings()`.
 
 ### Utilities (`shopify_spy/utils.py`)
 `as_bool()` converts strings or bools to `bool`, handling values like `"yes"`, `"1"`, `"null"`. Used to coerce spider arguments that arrive as strings when called from the Scrapy CLI. `find_all_values(key, obj)` recursively searches nested dicts/lists and yields all matching values.

@@ -12,8 +12,11 @@ OUTPUT_FORMATS: dict[str, tuple[str, str]] = {
     "jsonl": ("jsonlines", ".jsonl"),
     "csv": ("csv", ".csv"),
     "xml": ("xml", ".xml"),
+    "tsv": ("tsv", ".tsv"),
+    "sqlite": ("sqlite", ".db"),
+    "parquet": ("parquet", ".parquet"),
 }
-OutputFormat = Literal["json", "jsonl", "csv", "xml"]
+OutputFormat = Literal["json", "jsonl", "csv", "xml", "tsv", "sqlite", "parquet"]
 
 
 class Platform(str, Enum):
@@ -91,7 +94,7 @@ scrape:
 
 output:
   dir: ./output       # Output directory for results
-  format: jsonl       # Output format: json, jsonl, csv, xml
+  format: jsonl       # Output format: json, jsonl, csv, xml, tsv, sqlite, parquet
   images_subdir: images  # Subdirectory for downloaded images
 
 network:

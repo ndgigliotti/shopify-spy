@@ -36,6 +36,12 @@ FEEDS = {
     },
 }
 
+FEED_EXPORTERS = {
+    "tsv": "shopify_spy.exporters.TsvItemExporter",
+    "sqlite": "shopify_spy.exporters.SqliteItemExporter",
+    "parquet": "shopify_spy.exporters.ParquetItemExporter",
+}
+
 ITEM_PIPELINES = {"scrapy.pipelines.images.ImagesPipeline": 1}
 IMAGES_STORE = str(OUTPUT_DIR / "images")
 IMAGES_RESULT_FIELD = "scraped_images"
