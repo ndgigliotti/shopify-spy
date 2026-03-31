@@ -44,7 +44,7 @@ class SquarespaceSpider(scrapy.Spider):
             self._store_urls = [get_base_url(url)]
         elif url_file:
             with open(url_file) as f:
-                self._store_urls = [get_base_url(line.strip()) for line in f if line.strip()]
+                self._store_urls = [get_base_url(s) for line in f if (s := line.strip())]
         else:
             self._store_urls = []
 
@@ -65,7 +65,7 @@ class SquarespaceSpider(scrapy.Spider):
         """Parse collection JSON and yield a request for each product."""
         try:
             data = json.loads(response.text)
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError:
             return
 
         items = data.get("items")
@@ -85,7 +85,7 @@ class SquarespaceSpider(scrapy.Spider):
         """Yield product data."""
         try:
             data = json.loads(response.text)
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError:
             return
 
         if "item" not in data:
