@@ -277,7 +277,7 @@ def run_spider(
         from shopify_spy.spiders.squarespace import SquarespaceSpider
 
         spider_cls = SquarespaceSpider
-        spider_kwargs = {"images": config.scrape.images}
+        spider_kwargs = {"images": config.scrape.images, "limit": config.scrape.limit}
     else:
         from shopify_spy.spiders.shopify import ShopifySpider
 
