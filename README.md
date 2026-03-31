@@ -54,6 +54,9 @@ shopify-spy scrape --url-file stores.txt
 
 # Specify output directory
 shopify-spy scrape https://www.example.com --output ./my-data
+
+# Sample 10 items (useful for testing)
+shopify-spy scrape https://www.example.com --limit 10
 ```
 
 Results are saved as JSONL in the output directory (default: `./output`). Use `--format` to choose JSON, CSV, or XML instead.
@@ -259,6 +262,9 @@ Some stores require a real browser to scrape -- for example, stores built on [Hy
 # Install with browser-based scraping support
 pip install shopify-spy[headless]
 
+# or with uv
+uv tool install 'shopify-spy[headless]'
+
 # Scrape a store using browser rendering (Chromium is installed automatically on first use, ~300MB)
 shopify-spy scrape https://example.com --headless
 
@@ -270,7 +276,7 @@ Browser mode tries fast JSON endpoints first and only falls back to full page re
 
 ## Limitations
 
-**WooCommerce Store API required.** The WooCommerce spider uses the public Store API (`/wp-json/wc/store/v1/products`), available in WooCommerce 3.x and later. Stores that have disabled the REST API via security plugins, or that broadly block crawlers in `robots.txt`, will not be scrapeable.
+**WooCommerce Store API required.** The WooCommerce spider uses the public Store API (`/wp-json/wc/store/v1/products`), available in WooCommerce 3.x and later. Stores that have disabled the REST API via security plugins, return 403 responses, or broadly block crawlers in `robots.txt` will not be scrapeable.
 
 **Rate limiting.** Scraping very large stores may result in temporary bans. Auto-throttling is enabled by default, but you can adjust the settings or disable it for faster scraping:
 
@@ -288,6 +294,7 @@ from scrapy.crawler import CrawlerProcess
 from scrapy.utils.project import get_project_settings
 from shopify_spy.spiders.shopify import ShopifySpider
 from shopify_spy.spiders.woocommerce import WooCommerceSpider
+
 process = CrawlerProcess(get_project_settings())
 
 # Shopify
