@@ -916,6 +916,92 @@ def test_woocommerce_parse_empty_stops_pagination():
     assert results == []
 
 
+# --- WooCommerceSpider limit tests ---
+
+
+_THREE_PRODUCTS_JSON = json.dumps(
+    [{"id": i, "name": f"Product {i}", "images": []} for i in range(1, 4)]
+)
+
+
+def _woo_response(text: str, page: int = 1) -> Mock:
+    mock = Mock()
+    mock.text = text
+    mock.request.url = f"https://store.com/wp-json/wc/store/v1/products?per_page=100&page={page}"
+    return mock
+
+
+def test_woocommerce_limit_stops_after_n():
+    """WooCommerce spider yields exactly N items when limit is set."""
+    from scrapy.exceptions import CloseSpider
+
+    spider = WooCommerceSpider(url="https://store.com", limit=2)
+
+    items = []
+    with pytest.raises(CloseSpider):
+        for result in spider.parse(_woo_response(_THREE_PRODUCTS_JSON)):
+            if isinstance(result, dict):
+                items.append(result)
+
+    assert len(items) == 2
+    assert spider._item_count == 2
+
+
+def test_woocommerce_limit_raises_closespider():
+    """WooCommerce spider raises CloseSpider when limit is already exhausted."""
+    from scrapy.exceptions import CloseSpider
+
+    spider = WooCommerceSpider(url="https://store.com", limit=1)
+
+    items = []
+    with pytest.raises(CloseSpider):
+        for result in spider.parse(_woo_response(_THREE_PRODUCTS_JSON)):
+            if isinstance(result, dict):
+                items.append(result)
+    assert len(items) == 1
+
+    # Next call should raise immediately
+    with pytest.raises(CloseSpider):
+        list(spider.parse(_woo_response(_THREE_PRODUCTS_JSON)))
+
+
+def test_woocommerce_no_limit():
+    """WooCommerce spider yields all items when limit is None."""
+    spider = WooCommerceSpider(url="https://store.com", limit=None)
+
+    results = list(spider.parse(_woo_response(_THREE_PRODUCTS_JSON)))
+    items = [r for r in results if isinstance(r, dict)]
+
+    assert len(items) == 3
+    assert spider._item_count == 3
+
+
+def test_woocommerce_limit_string_param():
+    """limit passed as string (e.g. from scrapy CLI) is coerced to int."""
+    spider = WooCommerceSpider(url="https://store.com", limit="5")
+    assert spider.limit == 5
+
+
+def test_run_spider_passes_limit_to_woocommerce(tmp_path):
+    """run_spider passes limit to WooCommerce spider via process.crawl()."""
+    config = Config(
+        scrape=ScrapeConfig(platform="woocommerce", limit=10),
+        output=OutputConfig(dir=tmp_path),
+    )
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_process_cls,
+    ):
+        mock_process = MagicMock()
+        mock_process_cls.return_value = mock_process
+        run_spider(["https://store.com"], config)
+
+    _, kwargs = mock_process.crawl.call_args
+    assert kwargs["limit"] == 10
+
+
 def test_woocommerce_parse_product_no_images_field():
     spider = WooCommerceSpider(url="https://store.com", images=True)
 

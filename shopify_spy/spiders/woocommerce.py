@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator, Generator
 from typing import Any
 
 import scrapy
+from scrapy.exceptions import CloseSpider
 from scrapy.http import Response
 
 from shopify_spy.utils import as_bool, normalize_url
@@ -27,6 +28,7 @@ class WooCommerceSpider(scrapy.Spider):
         url: str | None = None,
         url_file: str | None = None,
         images: bool | str = True,
+        limit: int | str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize spider with store URL(s).
@@ -35,6 +37,7 @@ class WooCommerceSpider(scrapy.Spider):
             url: Complete URL of target WooCommerce store.
             url_file: Path to text file with one URL per line.
             images: Whether to collect image URLs.
+            limit: Stop after yielding this many items total.
         """
         if url:
             self._store_urls = [url]
@@ -45,6 +48,8 @@ class WooCommerceSpider(scrapy.Spider):
             self._store_urls = []
 
         self.images_enabled = as_bool(images)
+        self.limit = int(limit) if limit is not None else None
+        self._item_count = 0
         super().__init__(*args, **kwargs)
 
     async def start(self) -> AsyncGenerator[scrapy.Request]:
@@ -66,11 +71,15 @@ class WooCommerceSpider(scrapy.Spider):
         store = urllib.parse.urlparse(response.request.url).netloc
 
         for product in products:
+            if self.limit is not None and self._item_count >= self.limit:
+                raise CloseSpider("item_limit")
+
             product["store"] = store
             if self.images_enabled:
                 product["image_urls"] = [img["src"] for img in product.get("images", [])]
             else:
                 product["image_urls"] = []
+            self._item_count += 1
             yield product
 
         yield scrapy.Request(next_page_url(response.request.url), callback=self.parse)
