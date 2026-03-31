@@ -325,7 +325,7 @@ def run_spider(
         settings.set("ITEM_PIPELINES", {})
 
     console.print(f"[bold]Scraping {len(urls)} store(s)...[/bold]")
-    console.print(f"  Platform: {config.scrape.platform}")
+    console.print(f"  Platform: {config.scrape.platform.value}")
     if config.scrape.platform == Platform.shopify:
         console.print(f"  Products: {config.scrape.products}")
         console.print(f"  Collections: {config.scrape.collections}")
