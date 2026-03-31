@@ -1,17 +1,9 @@
-"""Custom Scrapy item exporters for TSV, SQLite, and Parquet formats."""
+"""Custom Scrapy item exporters for SQLite and Parquet formats."""
 
 import json
 import sqlite3
 
-from scrapy.exporters import BaseItemExporter, CsvItemExporter
-
-
-class TsvItemExporter(CsvItemExporter):
-    """Tab-separated values exporter. Delegates to CsvItemExporter with tab delimiter."""
-
-    def __init__(self, file, **kwargs):
-        kwargs.setdefault("delimiter", "\t")
-        super().__init__(file, **kwargs)
+from scrapy.exporters import BaseItemExporter
 
 
 class SqliteItemExporter(BaseItemExporter):

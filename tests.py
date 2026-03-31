@@ -549,7 +549,7 @@ def test_output_config_default_format():
 
 def test_output_config_valid_formats():
     """All format values are accepted."""
-    for fmt in ("json", "jsonl", "csv", "xml", "tsv", "sqlite", "parquet"):
+    for fmt in ("json", "jsonl", "csv", "xml", "sqlite", "parquet"):
         config = OutputConfig(format=fmt)
         assert config.format == fmt
 
@@ -620,7 +620,6 @@ def test_output_formats_mapping():
     assert OUTPUT_FORMATS["jsonl"] == ("jsonlines", ".jsonl")
     assert OUTPUT_FORMATS["csv"] == ("csv", ".csv")
     assert OUTPUT_FORMATS["xml"] == ("xml", ".xml")
-    assert OUTPUT_FORMATS["tsv"] == ("tsv", ".tsv")
     assert OUTPUT_FORMATS["sqlite"] == ("sqlite", ".db")
     assert OUTPUT_FORMATS["parquet"] == ("parquet", ".parquet")
 
@@ -1018,43 +1017,6 @@ def test_woocommerce_parse_product_no_images_field():
 
 
 # --- TSV exporter tests ---
-
-
-def test_tsv_exporter_tab_separated(tmp_path):
-    """TsvItemExporter writes tab-separated output with a header row."""
-    from shopify_spy.exporters import TsvItemExporter
-
-    output_file = tmp_path / "test.tsv"
-    with open(output_file, "wb") as f:
-        exporter = TsvItemExporter(f)
-        exporter.start_exporting()
-        exporter.export_item({"url": "https://example.com", "store": "example.com"})
-        exporter.finish_exporting()
-
-    content = output_file.read_text()
-    lines = content.strip().splitlines()
-    assert len(lines) == 2
-    assert lines[0] == "url\tstore"
-    assert lines[1] == "https://example.com\texample.com"
-
-
-def test_tsv_exporter_multiple_items(tmp_path):
-    """TsvItemExporter handles multiple items."""
-    from shopify_spy.exporters import TsvItemExporter
-
-    output_file = tmp_path / "test.tsv"
-    with open(output_file, "wb") as f:
-        exporter = TsvItemExporter(f)
-        exporter.start_exporting()
-        exporter.export_item({"a": "1", "b": "2"})
-        exporter.export_item({"a": "3", "b": "4"})
-        exporter.finish_exporting()
-
-    content = output_file.read_text()
-    lines = content.strip().splitlines()
-    assert len(lines) == 3
-    assert lines[1] == "1\t2"
-    assert lines[2] == "3\t4"
 
 
 # --- SQLite exporter tests ---

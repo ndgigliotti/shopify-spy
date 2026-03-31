@@ -37,7 +37,6 @@ FEEDS = {
 }
 
 FEED_EXPORTERS = {
-    "tsv": "shopify_spy.exporters.TsvItemExporter",
     "sqlite": "shopify_spy.exporters.SqliteItemExporter",
     "parquet": "shopify_spy.exporters.ParquetItemExporter",
 }
