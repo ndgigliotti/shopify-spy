@@ -7,7 +7,7 @@ import scrapy
 from scrapy.exceptions import CloseSpider
 from scrapy.http import Response
 
-from shopify_spy.utils import as_bool, find_all_values
+from shopify_spy.utils import as_bool, find_all_values, load_store_urls, normalize_url
 
 COMMON_COLLECTION_PATHS = ["shop", "store", "products", "collections"]
 
@@ -47,13 +47,7 @@ class SquarespaceSpider(scrapy.Spider):
             images: Whether to extract image URLs.
             limit: Stop after yielding this many items total.
         """
-        if url:
-            self._store_urls = [get_base_url(url)]
-        elif url_file:
-            with open(url_file) as f:
-                self._store_urls = [get_base_url(s) for line in f if (s := line.strip())]
-        else:
-            self._store_urls = []
+        self._store_urls = [get_base_url(u) for u in load_store_urls(url, url_file)]
 
         self._collection_path: str | None = collection_path.strip("/") if collection_path else None
         self.images_enabled = as_bool(images)
@@ -138,9 +132,7 @@ class SquarespaceSpider(scrapy.Spider):
 
 def get_base_url(url: str) -> str:
     """Return scheme + netloc of a URL, defaulting to https if no scheme."""
-    parsed = urllib.parse.urlparse(url)
-    if not parsed.scheme:
-        parsed = urllib.parse.urlparse(f"https://{url}")
+    parsed = normalize_url(url)
     return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
 
 

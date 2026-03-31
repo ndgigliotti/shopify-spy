@@ -30,6 +30,16 @@ def uri_params(params: dict[str, Any], spider: scrapy.Spider) -> dict[str, Any]:
     return {**params, "spider_name": spider.name}
 
 
+def load_store_urls(url: str | None, url_file: str | None) -> list[str]:
+    """Load store URLs from a single URL or a file of URLs (one per line)."""
+    if url:
+        return [url]
+    if url_file:
+        with open(url_file) as f:
+            return [line.strip() for line in f if line.strip()]
+    return []
+
+
 def as_bool(value: Any) -> bool:
     """Interpret a string representation of a truth value as True or False.
 

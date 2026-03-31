@@ -7,7 +7,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Shopify Spy is a command-line tool for scraping product and collection data from ecommerce stores. Built on [Scrapy](https://docs.scrapy.org/en/latest/index.html), it supports Shopify and WooCommerce stores out of the box.
+Shopify Spy is a command-line tool for scraping product and collection data from ecommerce stores. Built on [Scrapy](https://docs.scrapy.org/en/latest/index.html), it supports Shopify, WooCommerce, and Squarespace stores out of the box.
 
 To find Shopify stores to scrape, try searching Google with `site:myshopify.com`.
 
@@ -40,6 +40,9 @@ shopify-spy scrape https://www.example.com
 # Scrape a WooCommerce store
 shopify-spy scrape --platform woocommerce https://www.example.com
 
+# Scrape a Squarespace store
+shopify-spy scrape --platform squarespace https://www.example.com
+
 # Scrape multiple stores
 shopify-spy scrape https://store1.com https://store2.com https://store3.com
 
@@ -56,7 +59,7 @@ shopify-spy scrape --url-file stores.txt
 shopify-spy scrape https://www.example.com --output ./my-data
 ```
 
-Results are saved as JSONL in the output directory (default: `./output`). Use `--format` to choose JSON, CSV, or XML instead.
+Results are saved as JSONL in the output directory (default: `./output`). Use `--format` to choose JSON, CSV, XML, SQLite, or Parquet instead.
 
 ## Supported Platforms
 
@@ -64,12 +67,13 @@ Results are saved as JSONL in the output directory (default: `./output`). Use `-
 |---|---|---|
 | Shopify | `/sitemap.xml` + `.json` endpoints | Products and collections |
 | WooCommerce | `/wp-json/wc/store/v1/products` | No authentication required |
+| Squarespace | `?format=json` endpoints | Auto-discovers collection paths from site navigation |
 
 ## Commands
 
 ### `scrape`
 
-Scrape products and collections from Shopify and WooCommerce stores.
+Scrape products and collections from Shopify, WooCommerce, and Squarespace stores.
 
 ```bash
 shopify-spy scrape [URL] [OPTIONS]
@@ -79,7 +83,8 @@ shopify-spy scrape [URL] [OPTIONS]
 - `URL...` - One or more store URLs (optional if using `--url-file`)
 
 **Options:**
-- `--platform, -p PLATFORM` - Ecommerce platform: `shopify`, `woocommerce` (default: `shopify`)
+- `--platform, -p PLATFORM` - Ecommerce platform: `shopify`, `woocommerce`, `squarespace` (default: `shopify`)
+- `--limit, -n INT` - Stop after scraping N items (useful for sampling or testing)
 - `--url-file, -f FILE` - File containing URLs (one per line)
 - `--products / --no-products` - Scrape products (default: yes; Shopify only)
 - `--collections / --no-collections` - Scrape collections (default: no; Shopify only)
@@ -87,7 +92,7 @@ shopify-spy scrape [URL] [OPTIONS]
 - `--headless / --no-headless` - Use Playwright for headless/Hydrogen stores (default: no)
 - `--install-browser / --no-install-browser` - Auto-install Chromium if missing, headless mode only (default: yes)
 - `--output, -o PATH` - Output directory (default: `./output`)
-- `--format, -F FORMAT` - Output format: `json`, `jsonl`, `csv`, `xml` (default: `jsonl`)
+- `--format, -F FORMAT` - Output format: `json`, `jsonl`, `csv`, `xml`, `sqlite`, `parquet` (default: `jsonl`)
 - `--config, -c FILE` - Path to YAML config file
 - `--concurrent INT` - Concurrent requests per domain (default: 16)
 - `--throttle / --no-throttle` - Auto-throttle requests (default: yes)
@@ -116,7 +121,7 @@ Shopify Spy can be configured via YAML file. Create one with `shopify-spy init`:
 ```yaml
 # shopify-spy.yaml
 scrape:
-  platform: shopify   # Platform: shopify, woocommerce
+  platform: shopify   # Platform: shopify, woocommerce, squarespace
   products: true      # Scrape product data (Shopify only)
   collections: false  # Scrape collection data (Shopify only)
   images: false       # Download product images
@@ -124,7 +129,7 @@ scrape:
 
 output:
   dir: ./output       # Output directory for results
-  format: jsonl       # Output format: json, jsonl, csv, xml
+  format: jsonl       # Output format: json, jsonl, csv, xml, sqlite, parquet
   images_subdir: images  # Subdirectory for downloaded images
 
 network:
@@ -287,6 +292,7 @@ from scrapy.crawler import CrawlerProcess
 from scrapy.utils.project import get_project_settings
 from shopify_spy.spiders.shopify import ShopifySpider
 from shopify_spy.spiders.woocommerce import WooCommerceSpider
+from shopify_spy.spiders.squarespace import SquarespaceSpider
 
 process = CrawlerProcess(get_project_settings())
 
@@ -295,6 +301,9 @@ process.crawl(ShopifySpider, url="https://example.com", products=True)
 
 # WooCommerce
 process.crawl(WooCommerceSpider, url="https://example.com")
+
+# Squarespace
+process.crawl(SquarespaceSpider, url="https://example.com")
 
 process.start()
 ```

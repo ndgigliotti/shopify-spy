@@ -21,6 +21,11 @@ import scrapy
 from scrapy.http import Response
 from scrapy_playwright.page import PageMethod
 
+from shopify_spy.utils import load_store_urls
+
+_RE_META_PRODUCT = re.compile(r'var\s+meta\s*=\s*(\{.+?"product"\s*:.+?\});', re.DOTALL)
+_RE_INLINE_PRODUCT = re.compile(r'"product"\s*:\s*(\{"id":\d+.+?\})\s*[,}]', re.DOTALL)
+
 
 class HeadlessSpider(scrapy.Spider):
     """Hybrid spider: tries JSON first, falls back to Playwright."""
@@ -42,13 +47,7 @@ class HeadlessSpider(scrapy.Spider):
         """Initialize spider."""
         super().__init__(*args, **kwargs)
 
-        if url:
-            self.store_urls = [url]
-        elif url_file:
-            with open(url_file) as f:
-                self.store_urls = [line.strip() for line in f if line.strip()]
-        else:
-            self.store_urls = []
+        self.store_urls = load_store_urls(url, url_file)
 
         self.products = products
 
@@ -327,12 +326,8 @@ class HeadlessSpider(scrapy.Spider):
         """Extract from embedded Shopify product JSON."""
         for script in response.css("script::text").getall():
             # Look for product object in various formats
-            patterns = [
-                r'var\s+meta\s*=\s*(\{.+?"product"\s*:.+?\});',
-                r'"product"\s*:\s*(\{"id":\d+.+?\})\s*[,}]',
-            ]
-            for pattern in patterns:
-                match = re.search(pattern, script, re.DOTALL)
+            for pattern in (_RE_META_PRODUCT, _RE_INLINE_PRODUCT):
+                match = pattern.search(script)
                 if match:
                     try:
                         text = match.group(1)

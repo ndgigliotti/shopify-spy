@@ -7,7 +7,7 @@ import scrapy
 from scrapy.exceptions import CloseSpider
 from scrapy.http import Response
 
-from shopify_spy.utils import as_bool, normalize_url
+from shopify_spy.utils import as_bool, load_store_urls, normalize_url
 
 
 class WooCommerceSpider(scrapy.Spider):
@@ -39,13 +39,7 @@ class WooCommerceSpider(scrapy.Spider):
             images: Whether to collect image URLs.
             limit: Stop after yielding this many items total.
         """
-        if url:
-            self._store_urls = [url]
-        elif url_file:
-            with open(url_file) as f:
-                self._store_urls = [line.strip() for line in f if line.strip()]
-        else:
-            self._store_urls = []
+        self._store_urls = load_store_urls(url, url_file)
 
         self.images_enabled = as_bool(images)
         self.limit = int(limit) if limit is not None else None

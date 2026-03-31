@@ -22,13 +22,11 @@ class SqliteItemExporter(BaseItemExporter):
         self._columns = None
 
     def start_exporting(self):
-        import os
+        from pathlib import Path
 
-        try:
-            os.remove(self._db_path)
-        except OSError:
-            pass
+        Path(self._db_path).unlink(missing_ok=True)
         self._conn = sqlite3.connect(self._db_path)
+        self._placeholders = None
 
     def export_item(self, item):
         dict_item = dict(self._get_serialized_fields(item))
@@ -36,6 +34,7 @@ class SqliteItemExporter(BaseItemExporter):
             self._columns = list(dict_item.keys())
             cols_def = ", ".join(f'"{c}"' for c in self._columns)
             self._conn.execute(f"CREATE TABLE items ({cols_def})")
+            self._placeholders = ", ".join("?" for _ in self._columns)
 
         values = []
         for col in self._columns:
@@ -44,8 +43,7 @@ class SqliteItemExporter(BaseItemExporter):
                 val = json.dumps(val)
             values.append(val)
 
-        placeholders = ", ".join("?" for _ in self._columns)
-        self._conn.execute(f"INSERT INTO items VALUES ({placeholders})", values)
+        self._conn.execute(f"INSERT INTO items VALUES ({self._placeholders})", values)
         return item
 
     def finish_exporting(self):
@@ -72,7 +70,7 @@ class ParquetItemExporter(BaseItemExporter):
 
     def export_item(self, item):
         dict_item = dict(self._get_serialized_fields(item))
-        for key, val in list(dict_item.items()):
+        for key, val in dict_item.items():
             if isinstance(val, dict | list):
                 dict_item[key] = json.dumps(val)
         self._items.append(dict_item)

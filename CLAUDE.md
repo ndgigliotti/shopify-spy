@@ -14,15 +14,23 @@ uv run ruff check . && uv run ruff format .  # Lint and format
 ## Architecture
 
 ### CLI (`shopify_spy/cli.py`)
-Typer-based CLI wrapping Scrapy's `CrawlerProcess`. `scrape` accepts one or more URL arguments, a `--url-file`, or prompts interactively when stdin is a TTY. `init` creates a default YAML config. Scrapy imports are deferred until `run_spider()` to keep startup fast.
+Typer-based CLI wrapping Scrapy's `CrawlerProcess`. `scrape` accepts one or more URL arguments, a `--url-file`, or prompts interactively when stdin is a TTY. `init` creates a default YAML config. Scrapy imports are deferred until `run_spider()` to keep startup fast. Spider selection uses `--platform` as the primary axis (shopify/woocommerce/squarespace), with `--headless` as a Shopify-specific modifier.
 
 ### Config (`shopify_spy/config.py`)
 Pydantic models for YAML config with four sections: `scrape`, `output`, `network`, `throttle`. Precedence: defaults -> config file -> CLI args. Config file is auto-discovered at `./shopify-spy.yaml` then `~/.config/shopify-spy/config.yaml`. Notable non-default: `scrape.collections` is `False` and `scrape.images` is `False` by default; `throttle.enabled` is `True` by default.
 
 `scrape.limit` (int, optional) stops the spider after N items total across all parse methods.
 
-### Spider (`shopify_spy/spiders/shopify.py`)
-Extends `SitemapSpider`. Input URLs are normalized to `https://<host>/sitemap.xml`. `sitemap_filter` appends `.json` to any sitemap entry whose path contains `/products/` or `/collections/`, then yields all entries; `sitemap_rules` routes the `.json` URLs to `parse_product` or `parse_collection` based on the same path patterns. Each yielded item contains the full Shopify JSON payload plus two added fields: `url` (request URL) and `store` (hostname). `image_urls` is always present; when images are enabled it contains every `src` value found anywhere in the JSON via `find_all_values`.
+### Spiders (`shopify_spy/spiders/`)
+Three platform spiders plus a headless fallback. All use `load_store_urls()` from utils for URL init.
+
+**`shopify.py`** -- Extends `SitemapSpider`. Input URLs are normalized to `https://<host>/sitemap.xml`. `sitemap_filter` appends `.json` to any sitemap entry whose path contains `/products/` or `/collections/`, then yields all entries. Each yielded item contains the full Shopify JSON payload plus `url`, `store`, and `image_urls` fields.
+
+**`woocommerce.py`** -- Uses the public WooCommerce Store API (`/wp-json/wc/store/v1/products`), paginated with `per_page=100`. Supports `limit` to stop after N items.
+
+**`squarespace.py`** -- Uses `?format=json` endpoints. Auto-discovers collection paths from site navigation HTML; falls back to common paths (shop, store, products, collections). Supports `limit` and `collection_path` override.
+
+**`headless.py`** -- Shopify-only hybrid spider using Playwright. Tries `/products.json` first, falls back to browser rendering with three extraction strategies (JSON-LD, embedded Shopify object, meta tags). Requires `scrapy-playwright` (`[headless]` extra).
 
 ### Exporters (`shopify_spy/exporters.py`)
 Custom Scrapy `ItemExporter` subclasses for non-built-in output formats. Registered in `settings.py` via `FEED_EXPORTERS`. Two exporters:
@@ -33,7 +41,7 @@ Custom Scrapy `ItemExporter` subclasses for non-built-in output formats. Registe
 Scrapy defaults: autothrottle on, 16 concurrent requests per domain, robots.txt respected, image pipeline enabled, JSONL feed output. `FEED_EXPORTERS` registers the custom SQLite and Parquet exporters. The CLI overrides feed settings at runtime via `get_project_settings()`.
 
 ### Utilities (`shopify_spy/utils.py`)
-`as_bool()` converts strings or bools to `bool`, handling values like `"yes"`, `"1"`, `"null"`. Used to coerce spider arguments that arrive as strings when called from the Scrapy CLI. `find_all_values(key, obj)` recursively searches nested dicts/lists and yields all matching values.
+`as_bool()` converts strings or bools to `bool`, handling values like `"yes"`, `"1"`, `"null"`. Used to coerce spider arguments that arrive as strings when called from the Scrapy CLI. `find_all_values(key, obj)` recursively searches nested dicts/lists and yields all matching values. `load_store_urls(url, url_file)` loads URLs from a single URL or a file, shared across all spiders. `normalize_url(url)` parses a URL, defaulting to https if no scheme.
 
 ## Testing
 
