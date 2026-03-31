@@ -76,7 +76,7 @@ select = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests.py"]
+testpaths = ["tests"]
 filterwarnings = [
     "ignore::UserWarning",
     "ignore::DeprecationWarning",
