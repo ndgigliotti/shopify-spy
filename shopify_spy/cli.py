@@ -124,9 +124,7 @@ def scrape(
     ] = None,
     platform: Annotated[
         Platform,
-        typer.Option(
-            "--platform", "-p", help="Ecommerce platform: shopify, woocommerce, squarespace."
-        ),
+        typer.Option("--platform", "-p", help="Ecommerce platform: shopify, woocommerce."),
     ] = Platform.shopify,
     install_browser: Annotated[
         bool,
@@ -144,7 +142,7 @@ def scrape(
         typer.Option("--quiet", "-q", help="Show only warnings and errors."),
     ] = False,
 ) -> None:
-    """Scrape products and collections from Shopify, WooCommerce, and Squarespace stores."""
+    """Scrape products and collections from Shopify and WooCommerce stores."""
     # Load config file (or defaults)
     config = load_config(config_path)
 
@@ -376,11 +374,6 @@ def run_spider(
 
         spider_cls = WooCommerceSpider
         spider_kwargs: dict = {"images": config.scrape.images, "limit": config.scrape.limit}
-    elif config.scrape.platform == Platform.squarespace:
-        from shopify_spy.spiders.squarespace import SquarespaceSpider
-
-        spider_cls = SquarespaceSpider
-        spider_kwargs = {"images": config.scrape.images, "limit": config.scrape.limit}
     elif config.scrape.headless:
         try:
             from shopify_spy.spiders.headless import HeadlessSpider

@@ -37,7 +37,6 @@ def test_cli_scrape_help_platform_values():
     output = strip_ansi(result.stdout)
     assert "shopify" in output
     assert "woocommerce" in output
-    assert "squarespace" in output
 
 
 def test_cli_init_help():
@@ -277,27 +276,6 @@ def test_run_spider_passes_limit_to_crawl(tmp_path):
 
     _, kwargs = mock_process.crawl.call_args
     assert kwargs["limit"] == 5
-
-
-def test_run_spider_squarespace_passes_limit(tmp_path):
-    """run_spider passes limit for squarespace platform."""
-    config = Config(
-        scrape=ScrapeConfig(platform="squarespace", limit=3),
-        output=OutputConfig(dir=tmp_path),
-    )
-
-    mock_settings = MagicMock()
-    with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
-        patch("scrapy.crawler.CrawlerProcess") as mock_process_cls,
-    ):
-        mock_process = MagicMock()
-        mock_process_cls.return_value = mock_process
-        run_spider(["https://example.com"], config)
-
-    _, kwargs = mock_process.crawl.call_args
-    assert kwargs["limit"] == 3
-    assert kwargs["images"] is False
 
 
 # --- CLI headless tests ---
