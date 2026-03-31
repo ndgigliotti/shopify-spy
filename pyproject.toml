@@ -1,7 +1,7 @@
 [project]
 name = "shopify-spy"
 version = "0.2.0"
-description = "Simple CLI to scrape product data, images, and collections from Shopify stores"
+description = "Simple CLI to scrape product data, images, and collections from Shopify and WooCommerce stores"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -10,6 +10,7 @@ authors = [
 ]
 keywords = [
     "shopify",
+    "woocommerce",
     "scraper",
     "scrapy",
     "spider",
