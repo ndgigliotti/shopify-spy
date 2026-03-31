@@ -2,7 +2,6 @@ import json
 
 import pytest
 
-
 # --- SQLite exporter tests ---
 
 
