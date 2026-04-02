@@ -363,6 +363,11 @@ def run_spider(
 
     if config.network.user_agent:
         settings.set("USER_AGENT", config.network.user_agent)
+        # Disable our rotation middleware when user sets an explicit UA
+        middlewares = settings.getdict("DOWNLOADER_MIDDLEWARES", {}).copy()
+        middlewares["shopify_spy.middlewares.UserAgentMiddleware"] = None
+        middlewares["scrapy.downloadermiddlewares.useragent.UserAgentMiddleware"] = 400
+        settings.set("DOWNLOADER_MIDDLEWARES", middlewares)
 
     if log_level:
         settings.set("LOG_LEVEL", log_level)
@@ -439,7 +444,47 @@ def run_spider(
 
     process.start()
     total = sum(c.stats.get_value("item_scraped_count", 0) for c in crawlers)
-    console.print(f"[green]Done! Scraped {total} item(s).[/green]")
+
+    if total > 0:
+        console.print(f"[green]Done! Scraped {total} item(s).[/green]")
+        return
+
+    # Diagnose why nothing was scraped
+    http_403 = sum(c.stats.get_value("downloader/response_status_count/403", 0) for c in crawlers)
+    http_404 = sum(c.stats.get_value("downloader/response_status_count/404", 0) for c in crawlers)
+    response_count = sum(c.stats.get_value("downloader/response_count", 0) for c in crawlers)
+    robotstxt_blocked = any(
+        c.stats.get_value("downloader/response_count", 0)
+        == c.stats.get_value("robotstxt/response_count", 0)
+        and config.network.respect_robots_txt
+        for c in crawlers
+    )
+
+    console.print("[yellow]Warning: Scraped 0 items.[/yellow]")
+
+    if robotstxt_blocked and response_count <= len(crawlers):
+        console.print(
+            "  Likely blocked by robots.txt. "
+            "Retry with [bold]--ignore-robots[/bold] (-i) to bypass."
+        )
+    elif http_403 > 0:
+        console.print(
+            f"  Received {http_403} HTTP 403 (Forbidden) response(s). "
+            "The server is actively blocking scrapers."
+        )
+        if config.network.respect_robots_txt:
+            console.print("  Try [bold]--ignore-robots[/bold] (-i) to bypass robots.txt.")
+    elif http_404 > 0:
+        console.print(
+            f"  Received {http_404} HTTP 404 (Not Found) response(s). "
+            "Check the URL and --platform flag."
+        )
+    elif response_count == 0:
+        console.print("  No responses received. Check the URL and your network connection.")
+    else:
+        console.print("  The store may be empty or the endpoint returned no products.")
+
+    raise typer.Exit(1)
 
 
 if __name__ == "__main__":

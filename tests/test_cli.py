@@ -241,6 +241,17 @@ def test_get_urls_empty():
     assert urls == []
 
 
+def _mock_crawler_process(item_count=1):
+    """Create a mock CrawlerProcess whose crawlers report item_count items."""
+    mock_process = MagicMock()
+    mock_crawler = MagicMock()
+    mock_crawler.stats.get_value.side_effect = lambda key, default=0: (
+        item_count if key == "item_scraped_count" else default
+    )
+    mock_process.crawlers = [mock_crawler]
+    return mock_process
+
+
 def test_run_spider_passes_limit_to_woocommerce(tmp_path):
     """run_spider passes limit to WooCommerce spider via process.crawl()."""
     config = Config(
@@ -253,7 +264,7 @@ def test_run_spider_passes_limit_to_woocommerce(tmp_path):
         patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_process_cls,
     ):
-        mock_process = MagicMock()
+        mock_process = _mock_crawler_process()
         mock_process_cls.return_value = mock_process
         run_spider(["https://store.com"], config)
 
@@ -270,7 +281,7 @@ def test_run_spider_passes_limit_to_crawl(tmp_path):
         patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_process_cls,
     ):
-        mock_process = MagicMock()
+        mock_process = _mock_crawler_process()
         mock_process_cls.return_value = mock_process
         run_spider(["https://example.com"], config)
 

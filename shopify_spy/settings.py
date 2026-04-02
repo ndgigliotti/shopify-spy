@@ -13,11 +13,17 @@ TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
 SPIDER_MODULES = ["shopify_spy.spiders"]
 NEWSPIDER_MODULE = "shopify_spy.spiders"
 
-# Set a user agent that identifies your scraper
-# USER_AGENT = "MyCompany (+https://example.com)"
-
 ROBOTSTXT_OBEY = True
 CONCURRENT_REQUESTS_PER_DOMAIN = 16
+
+DOWNLOADER_MIDDLEWARES = {
+    # Disable Scrapy's built-in UA middleware; ours replaces it
+    "scrapy.downloadermiddlewares.useragent.UserAgentMiddleware": None,
+    "shopify_spy.middlewares.UserAgentMiddleware": 560,
+}
+
+# Retry on 403 so the UA swap middleware can try a different identity
+RETRY_HTTP_CODES = [500, 502, 503, 504, 522, 524, 408, 429, 403]
 LOG_LEVEL = "INFO"
 COOKIES_ENABLED = False
 TELNETCONSOLE_ENABLED = False

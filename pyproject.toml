@@ -77,6 +77,9 @@ select = [
     "UP",     # pyupgrade
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"shopify_spy/user_agents.py" = ["E501"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = [
