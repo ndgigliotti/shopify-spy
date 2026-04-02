@@ -124,6 +124,14 @@ def scrape(
         Platform,
         typer.Option("--platform", "-p", help="Ecommerce platform: shopify, woocommerce."),
     ] = Platform.shopify,
+    ignore_robots: Annotated[
+        bool,
+        typer.Option(
+            "--ignore-robots",
+            "-i",
+            help="Ignore robots.txt restrictions.",
+        ),
+    ] = False,
     install_browser: Annotated[
         bool,
         typer.Option(
@@ -158,6 +166,7 @@ def scrape(
         throttle=throttle,
         limit=limit,
         user_agent=user_agent,
+        ignore_robots=ignore_robots,
     )
 
     # Get URLs
@@ -255,6 +264,7 @@ def apply_cli_overrides(
     throttle: bool | None,
     limit: int | None,
     user_agent: str | None,
+    ignore_robots: bool = False,
 ) -> Config:
     """Apply CLI argument overrides to config."""
     # Create copies to avoid mutating original
@@ -283,6 +293,8 @@ def apply_cli_overrides(
         network_dict["concurrent_requests"] = concurrent
     if user_agent is not None:
         network_dict["user_agent"] = user_agent
+    if ignore_robots:
+        network_dict["respect_robots_txt"] = False
     if throttle is not None:
         throttle_dict["enabled"] = throttle
 
