@@ -29,7 +29,7 @@ class ScrapeConfig(BaseModel):
     collections: bool = False
     images: bool = False
     limit: int | None = Field(default=None, ge=1)
-    no_item_timeout: int = Field(default=20, ge=0)
+    bail: int = Field(default=20, ge=0)
 
 
 class OutputConfig(BaseModel):
@@ -89,7 +89,7 @@ scrape:
   products: true      # Scrape product data (Shopify only)
   collections: false  # Scrape collection data (Shopify only)
   images: false       # Download product images
-  no_item_timeout: 20 # Abort if no items scraped within N seconds (0 = off)
+  bail: 20 # Abort if no items scraped within N seconds (0 = off)
 
 output:
   dir: ./output       # Output directory for results
