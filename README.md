@@ -168,14 +168,16 @@ Results are saved in the output directory (JSONL by default, configurable via `-
 
 ```
 output/
-  shopify_spider_2024-01-15T10-30-00.jsonl
-  shopify_spider_2024-01-15T10-30-00_status.json
+  data/
+    shopify_spider_2024-01-15T10-30-00.jsonl
+  status/
+    shopify_spider_2024-01-15T10-30-00_status.json
   images/
     full/
       <image files>
 ```
 
-A `_status.json` file is written alongside each output file with run metadata:
+A status JSON file is written for each run with metadata:
 
 ```json
 {

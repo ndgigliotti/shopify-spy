@@ -410,10 +410,12 @@ def run_spider(
         )
     else:
         scrapy_format, file_ext = OUTPUT_FORMATS[config.output.format]
+        data_dir = output_dir / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
         settings.set(
             "FEEDS",
             {
-                f"{output_dir.as_uri()}/{name}_{timestamp}{file_ext}": {
+                f"{data_dir.as_uri()}/{name}_{timestamp}{file_ext}": {
                     "format": scrapy_format,
                     "encoding": "utf8",
                     "store_empty": False,
@@ -511,7 +513,9 @@ def run_spider(
 
     # Write status file (unless peek mode)
     if not peek:
-        status_path = output_dir / f"{name}_{timestamp}_status.json"
+        status_dir = output_dir / "status"
+        status_dir.mkdir(parents=True, exist_ok=True)
+        status_path = status_dir / f"{name}_{timestamp}_status.json"
         _write_status_file(status_path, crawlers, urls, config, duration, log_file, total)
 
     if total > 0:
@@ -520,6 +524,8 @@ def run_spider(
                 console.print("[green]Done![/green]")
             else:
                 console.print(f"[green]Done! Scraped {total} item(s).[/green]")
+            if log_file:
+                console.print(f"  Log: {log_file}")
             if multi:
                 for url, c in zip(urls, crawlers):
                     host = urllib.parse.urlparse(url).netloc or url
@@ -572,6 +578,9 @@ def run_spider(
         console.print("  No responses received. Check the URL and your network connection.")
     else:
         console.print("  The store may be empty or the endpoint returned no products.")
+
+    if log_file:
+        console.print(f"  Log: {log_file}")
 
     raise typer.Exit(1)
 

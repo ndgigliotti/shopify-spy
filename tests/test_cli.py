@@ -492,7 +492,7 @@ def test_status_file_written_on_success(tmp_path):
         mock_cls.return_value = _mock_multi_crawler_process(stats)
         run_spider(["https://store.com"], config)
 
-    status_files = list(tmp_path.glob("*_status.json"))
+    status_files = list(tmp_path.glob("status/*_status.json"))
     assert len(status_files) == 1
     data = json.loads(status_files[0].read_text())
     assert data["items_scraped"] == 12
@@ -520,7 +520,7 @@ def test_status_file_written_on_failure(tmp_path):
         with pytest.raises((SystemExit, typer.Exit)):
             run_spider(["https://blocked.com"], config)
 
-    status_files = list(tmp_path.glob("*_status.json"))
+    status_files = list(tmp_path.glob("status/*_status.json"))
     assert len(status_files) == 1
     data = json.loads(status_files[0].read_text())
     assert data["items_scraped"] == 0
@@ -545,7 +545,7 @@ def test_status_file_multi_url(tmp_path):
         mock_cls.return_value = _mock_multi_crawler_process(stats)
         run_spider(urls, config)
 
-    status_files = list(tmp_path.glob("*_status.json"))
+    status_files = list(tmp_path.glob("status/*_status.json"))
     data = json.loads(status_files[0].read_text())
     assert data["items_scraped"] == 10
     assert data["urls"][0]["status"] == "ok"
@@ -565,7 +565,7 @@ def test_no_status_file_in_peek_mode(tmp_path):
         mock_cls.return_value = _mock_multi_crawler_process([{"item_scraped_count": 1}])
         run_spider(["https://store.com"], config, peek=True, quiet=True)
 
-    status_files = list(tmp_path.glob("*_status.json"))
+    status_files = list(tmp_path.glob("status/*_status.json"))
     assert len(status_files) == 0
 
 
@@ -627,7 +627,7 @@ def test_status_file_log_path_matches(tmp_path):
     log_path = log_file_calls[0][0][1]
 
     # Get log_file from status JSON
-    status_files = list(tmp_path.glob("*_status.json"))
+    status_files = list(tmp_path.glob("status/*_status.json"))
     data = json.loads(status_files[0].read_text())
     assert data["log_file"] == log_path
 
