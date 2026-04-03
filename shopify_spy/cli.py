@@ -1,6 +1,7 @@
 """Command-line interface for Shopify Spy."""
 
 import sys
+import urllib.parse
 from pathlib import Path
 from typing import Annotated
 
@@ -398,10 +399,16 @@ def run_spider(
 
     process.start()
     total = sum(c.stats.get_value("item_scraped_count", 0) for c in crawlers)
+    multi = len(urls) > 1
 
     if total > 0:
         if not peek:
             console.print(f"[green]Done! Scraped {total} item(s).[/green]")
+            if multi:
+                for url, c in zip(urls, crawlers):
+                    host = urllib.parse.urlparse(url).netloc or url
+                    count = c.stats.get_value("item_scraped_count", 0)
+                    console.print(f"  {host}: {count} items")
         return
 
     # Diagnose why nothing was scraped
@@ -417,6 +424,11 @@ def run_spider(
     )
 
     console.print("[yellow]Warning: Scraped 0 items.[/yellow]")
+    if multi:
+        for url, c in zip(urls, crawlers):
+            host = urllib.parse.urlparse(url).netloc or url
+            status = _diagnose_crawler(c, config)
+            console.print(f"  {host}: {status}")
 
     if timed_out:
         console.print(
@@ -446,6 +458,28 @@ def run_spider(
         console.print("  The store may be empty or the endpoint returned no products.")
 
     raise typer.Exit(1)
+
+
+def _diagnose_crawler(crawler: object, config: Config) -> str:
+    """Return a short status string for a single crawler."""
+    items = crawler.stats.get_value("item_scraped_count", 0)
+    if items > 0:
+        return f"{items} items"
+    if crawler.stats.get_value("finish_reason") == "bail":
+        return "timed out"
+    h403 = crawler.stats.get_value("downloader/response_status_count/403", 0)
+    if h403 > 0:
+        return "403 Forbidden"
+    h404 = crawler.stats.get_value("downloader/response_status_count/404", 0)
+    if h404 > 0:
+        return "404 Not Found"
+    resp = crawler.stats.get_value("downloader/response_count", 0)
+    robots = crawler.stats.get_value("robotstxt/response_count", 0)
+    if resp > 0 and resp == robots and config.network.respect_robots_txt:
+        return "blocked by robots.txt"
+    if resp == 0:
+        return "no response"
+    return "0 items"
 
 
 if __name__ == "__main__":

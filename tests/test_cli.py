@@ -1,8 +1,18 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from shopify_spy.cli import Platform, app, apply_cli_overrides, get_urls, run_spider
-from shopify_spy.config import Config, OutputConfig, ScrapeConfig
+import pytest
+import typer
+
+from shopify_spy.cli import (
+    Platform,
+    _diagnose_crawler,
+    app,
+    apply_cli_overrides,
+    get_urls,
+    run_spider,
+)
+from shopify_spy.config import Config, NetworkConfig, OutputConfig, ScrapeConfig
 
 from .conftest import runner, strip_ansi
 
@@ -280,3 +290,142 @@ def test_run_spider_passes_limit_to_crawl(tmp_path):
 
     _, kwargs = mock_process.crawl.call_args
     assert kwargs["limit"] == 5
+
+
+def _make_crawler(stats_dict):
+    """Create a mock crawler with get_value backed by a dict."""
+    c = MagicMock()
+    c.stats.get_value.side_effect = lambda key, default=0: stats_dict.get(key, default)
+    return c
+
+
+def _mock_multi_crawler_process(stats_list):
+    """Create a mock CrawlerProcess with one crawler per entry in stats_list."""
+    proc = MagicMock()
+    proc.crawlers = [_make_crawler(s) for s in stats_list]
+    return proc
+
+
+# --- Per-URL breakdown tests (multi-URL) ---
+
+
+def test_multi_url_success_shows_per_url_counts(tmp_path, capsys):
+    """Success path prints per-URL item counts when multiple URLs are given."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    stats = [
+        {"item_scraped_count": 10},
+        {"item_scraped_count": 5},
+    ]
+    urls = ["https://store1.com", "https://store2.com"]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process(stats)
+        run_spider(urls, config)
+
+    output = capsys.readouterr().out
+    assert "15 item(s)" in output
+    assert "store1.com: 10 items" in output
+    assert "store2.com: 5 items" in output
+
+
+def test_single_url_success_no_per_url_breakdown(tmp_path, capsys):
+    """Single-URL success should NOT print a per-URL line."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process([{"item_scraped_count": 7}])
+        run_spider(["https://only-one.com"], config)
+
+    output = capsys.readouterr().out
+    assert "7 item(s)" in output
+    assert "only-one.com" not in output
+
+
+def test_multi_url_failure_shows_per_url_status(tmp_path, capsys):
+    """Failure path prints per-URL diagnostics when multiple URLs are given."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    stats = [
+        {"downloader/response_status_count/403": 1, "downloader/response_count": 1},
+        {"downloader/response_status_count/404": 1, "downloader/response_count": 1},
+    ]
+    urls = ["https://blocked.com", "https://missing.com"]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process(stats)
+        with pytest.raises((SystemExit, typer.Exit)):
+            run_spider(urls, config)
+
+    output = capsys.readouterr().out
+    assert "blocked.com: 403 Forbidden" in output
+    assert "missing.com: 404 Not Found" in output
+
+
+def test_single_url_failure_no_per_url_breakdown(tmp_path, capsys):
+    """Single-URL failure should NOT print a per-URL line."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    stats = [{"downloader/response_status_count/403": 1, "downloader/response_count": 1}]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process(stats)
+        with pytest.raises((SystemExit, typer.Exit)):
+            run_spider(["https://blocked.com"], config)
+
+    output = capsys.readouterr().out
+    assert "blocked.com: 403 Forbidden" not in output
+    # Aggregate message should still appear
+    assert "403" in output
+
+
+# --- _diagnose_crawler unit tests ---
+
+
+def test_diagnose_crawler_items():
+    c = _make_crawler({"item_scraped_count": 5})
+    assert _diagnose_crawler(c, Config()) == "5 items"
+
+
+def test_diagnose_crawler_403():
+    c = _make_crawler({"downloader/response_status_count/403": 2, "downloader/response_count": 2})
+    assert _diagnose_crawler(c, Config()) == "403 Forbidden"
+
+
+def test_diagnose_crawler_404():
+    c = _make_crawler({"downloader/response_status_count/404": 1, "downloader/response_count": 1})
+    assert _diagnose_crawler(c, Config()) == "404 Not Found"
+
+
+def test_diagnose_crawler_timed_out():
+    c = _make_crawler({"finish_reason": "bail"})
+    assert _diagnose_crawler(c, Config()) == "timed out"
+
+
+def test_diagnose_crawler_robots():
+    c = _make_crawler({"downloader/response_count": 1, "robotstxt/response_count": 1})
+    config = Config(network=NetworkConfig(respect_robots_txt=True))
+    assert _diagnose_crawler(c, config) == "blocked by robots.txt"
+
+
+def test_diagnose_crawler_no_response():
+    c = _make_crawler({})
+    assert _diagnose_crawler(c, Config()) == "no response"
+
+
+def test_diagnose_crawler_zero_items():
+    c = _make_crawler({"downloader/response_count": 5})
+    assert _diagnose_crawler(c, Config()) == "0 items"
