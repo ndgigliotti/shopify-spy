@@ -70,6 +70,17 @@ shopify-spy scrape --ignore-robots https://www.example.com
 
 Results are saved as JSONL in the output directory (default: `./output`). Use `--format` to choose JSON, CSV, or XML instead. A live item counter is displayed during scraping.
 
+## Features
+
+- **Automatic user-agent rotation.** Requests use a random browser user-agent. If a server responds with 403, the tool swaps to a different UA and retries.
+
+<div align="center"><img src="https://raw.githubusercontent.com/ndgigliotti/shopify-spy/master/assets/ua-rotation-neon.png" width="700"></div>
+
+- **Failure diagnostics.** When a scrape returns 0 items, the tool explains why (403, 404, robots.txt, timeout) and suggests flags to try.
+- **Log files.** Scrapy's verbose output goes to a log file, keeping the terminal clean. Use `--verbose` to also print to the terminal.
+- **Status JSON.** Each run writes a machine-readable status file with per-URL results, errors, and timing.
+- **Bail timeout.** Automatically aborts if no items are scraped within `--bail` seconds (default: 20).
+
 ## Supported Platforms
 
 | Platform | Mechanism | Notes |
@@ -286,10 +297,6 @@ df = pl.read_ndjson("output/shopify_spider_2024-01-15.jsonl")
 ## Limitations
 
 **WooCommerce Store API required.** The WooCommerce spider uses the public Store API (`/wp-json/wc/store/v1/products`), available in WooCommerce 3.x and later. Stores that have disabled the REST API via security plugins or broadly block crawlers may not be scrapeable. When a scrape returns 0 items, the tool prints a diagnostic message explaining the likely cause (403 Forbidden, 404 Not Found, robots.txt blocking, etc.) and exits with code 1.
-
-**User-agent rotation.** Requests use a random browser user-agent. If a server responds with 403 Forbidden, the tool swaps to a different UA and retries automatically.
-
-<div align="center"><img src="https://raw.githubusercontent.com/ndgigliotti/shopify-spy/master/assets/ua-rotation-neon.png" width="700"></div>
 
 **Rate limiting.** Scraping very large stores may result in temporary bans. Auto-throttling is enabled by default, but you can adjust the settings or disable it for faster scraping:
 
