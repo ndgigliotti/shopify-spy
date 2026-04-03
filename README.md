@@ -74,7 +74,7 @@ Results are saved as JSONL in the output directory (default: `./output`). Use `-
 
 - **Automatic user-agent rotation.** Requests use a random browser user-agent. If a server responds with 403, the tool swaps to a different UA and retries.
 
-<div align="center"><img src="https://raw.githubusercontent.com/ndgigliotti/shopify-spy/master/assets/ua-rotation-catppuccin.png" width="700"></div>
+<div align="center"><img src="https://raw.githubusercontent.com/ndgigliotti/shopify-spy/master/assets/ua-rotation-neon.png" width="700"></div>
 
 - **Failure diagnostics.** When a scrape returns 0 items, the tool explains why (403, 404, robots.txt, timeout) and suggests flags to try.
 - **Log files.** Scrapy's verbose output goes to a log file, keeping the terminal clean. Use `--verbose` to also print to the terminal.
