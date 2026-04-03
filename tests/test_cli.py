@@ -368,7 +368,7 @@ def test_multi_url_success_shows_per_url_counts(tmp_path, capsys):
         run_spider(urls, config)
 
     output = capsys.readouterr().out
-    assert "15 item(s)" in output
+    assert "Done!" in output
     assert "store1.com: 10 items" in output
     assert "store2.com: 5 items" in output
 
@@ -387,7 +387,7 @@ def test_single_url_success_no_per_url_breakdown(tmp_path, capsys):
         run_spider(["https://only-one.com"], config)
 
     output = capsys.readouterr().out
-    assert "7 item(s)" in output
+    assert "Done!" in output
     assert "only-one.com" not in output
 
 

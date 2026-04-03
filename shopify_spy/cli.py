@@ -516,7 +516,10 @@ def run_spider(
 
     if total > 0:
         if not peek:
-            console.print(f"[green]Done! Scraped {total} item(s).[/green]")
+            if show_counter:
+                console.print("[green]Done![/green]")
+            else:
+                console.print(f"[green]Done! Scraped {total} item(s).[/green]")
             if multi:
                 for url, c in zip(urls, crawlers):
                     host = urllib.parse.urlparse(url).netloc or url
