@@ -287,6 +287,10 @@ df = pl.read_ndjson("output/shopify_spider_2024-01-15.jsonl")
 
 **WooCommerce Store API required.** The WooCommerce spider uses the public Store API (`/wp-json/wc/store/v1/products`), available in WooCommerce 3.x and later. Stores that have disabled the REST API via security plugins or broadly block crawlers may not be scrapeable. When a scrape returns 0 items, the tool prints a diagnostic message explaining the likely cause (403 Forbidden, 404 Not Found, robots.txt blocking, etc.) and exits with code 1.
 
+**User-agent rotation.** Requests use a random browser user-agent. If a server responds with 403 Forbidden, the tool swaps to a different UA and retries automatically.
+
+<div align="center"><img src="https://raw.githubusercontent.com/ndgigliotti/shopify-spy/master/assets/ua-rotation-neon.png" width="700"></div>
+
 **Rate limiting.** Scraping very large stores may result in temporary bans. Auto-throttling is enabled by default, but you can adjust the settings or disable it for faster scraping:
 
 ```bash

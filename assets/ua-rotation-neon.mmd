@@ -1,0 +1,19 @@
+flowchart LR
+    A[Pick random\nbrowser UA] --> B[Send request]
+    B --> C{Status?}
+    C -->|200| D[Process items\nKeep current UA]
+    D --> B
+    C -->|403| E[Swap to\ndifferent UA]
+    E --> F{Retries\nleft?}
+    F -->|Yes| B
+    F -->|No| G[Report failure]
+
+    style A fill:#282a36,stroke:#6272a4,color:#f8f8f2
+    style B fill:#282a36,stroke:#6272a4,color:#f8f8f2
+    style E fill:#282a36,stroke:#6272a4,color:#f8f8f2
+    style C fill:#ff5555,stroke:#ff6e6e,color:#f8f8f2
+    style F fill:#ff5555,stroke:#ff6e6e,color:#f8f8f2
+    style D fill:#50fa7b,stroke:#69ff94,color:#282a36
+    style G fill:#44475a,stroke:#6272a4,color:#f8f8f2
+
+    linkStyle default stroke:#bd93f9,stroke-width:2px
