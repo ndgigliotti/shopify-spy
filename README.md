@@ -79,7 +79,7 @@ Results are saved as JSONL in the output directory (default: `./output`). Use `-
 - **Failure diagnostics.** When a scrape returns 0 items, the tool explains why (403, 404, robots.txt, timeout) and suggests flags to try.
 - **Log files.** Scrapy's verbose output goes to a log file, keeping the terminal clean. Use `--verbose` to also print to the terminal.
 - **Status JSON.** Each run writes a machine-readable status file with per-URL results, errors, and timing.
-- **Bail timeout.** Automatically aborts if no items are scraped within `--bail` seconds (default: 20).
+- **Bail timeout.** Automatically aborts if no items are scraped within `--bail` seconds (default: 30).
 - **Coding-agent friendly.** Designed for use by AI coding agents (Claude Code, Cursor, etc.):
   - `--peek` pipes a single item to stdout for quick schema inspection
   - Non-zero exit codes on failure with diagnostic messages explaining why
@@ -121,7 +121,7 @@ shopify-spy scrape [URL] [OPTIONS]
 - `--throttle / --no-throttle` - Auto-throttle requests (default: yes)
 - `--user-agent, -A TEXT` - Custom User-Agent header
 - `--ignore-robots, -i` - Ignore robots.txt restrictions
-- `--bail INT` - Abort if no items scraped within N seconds (default: 20, 0 to disable)
+- `--bail INT` - Abort if no items scraped within N seconds (default: 30, 0 to disable)
 - `--peek` - Print 1 item to stdout as JSONL and exit (no file output)
 - `--verbose, -v` - Show debug output (logs to both file and terminal)
 - `--quiet, -q` - Suppress the live item counter
@@ -151,7 +151,7 @@ scrape:
   products: true      # Scrape product data (Shopify only)
   collections: false  # Scrape collection data (Shopify only)
   images: false       # Download product images
-  bail: 20            # Abort if no items scraped within N seconds (0 = off)
+  bail: 30            # Abort if no items scraped within N seconds (0 = off)
 
 output:
   dir: ./output       # Output directory for results
