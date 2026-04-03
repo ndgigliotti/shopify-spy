@@ -24,6 +24,10 @@ DOWNLOADER_MIDDLEWARES = {
 
 # Retry on 403 so the UA swap middleware can try a different identity
 RETRY_HTTP_CODES = [500, 502, 503, 504, 522, 524, 408, 429, 403]
+
+EXTENSIONS = {
+    "shopify_spy.extensions.NoItemTimeout": 500,
+}
 LOG_LEVEL = "INFO"
 COOKIES_ENABLED = False
 TELNETCONSOLE_ENABLED = False

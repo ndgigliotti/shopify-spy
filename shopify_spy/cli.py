@@ -117,6 +117,13 @@ def scrape(
         Platform,
         typer.Option("--platform", "-p", help="Ecommerce platform: shopify, woocommerce."),
     ] = Platform.shopify,
+    no_item_timeout: Annotated[
+        int | None,
+        typer.Option(
+            "--no-item-timeout",
+            help="Abort if no items scraped within N seconds (0 = off).",
+        ),
+    ] = None,
     ignore_robots: Annotated[
         bool,
         typer.Option(
@@ -156,6 +163,7 @@ def scrape(
         limit=limit,
         user_agent=user_agent,
         ignore_robots=ignore_robots,
+        no_item_timeout=no_item_timeout,
     )
 
     # Get URLs
@@ -221,6 +229,7 @@ def apply_cli_overrides(
     limit: int | None,
     user_agent: str | None,
     ignore_robots: bool = False,
+    no_item_timeout: int | None = None,
 ) -> Config:
     """Apply CLI argument overrides to config."""
     # Create copies to avoid mutating original
@@ -239,6 +248,8 @@ def apply_cli_overrides(
         scrape_dict["images"] = images
     if limit is not None:
         scrape_dict["limit"] = limit
+    if no_item_timeout is not None:
+        scrape_dict["no_item_timeout"] = no_item_timeout
     if output is not None:
         output_dict["dir"] = output
     if format is not None:
@@ -302,6 +313,7 @@ def run_spider(
     settings.set("DOWNLOAD_TIMEOUT", config.network.timeout)
     settings.set("RETRY_TIMES", config.network.retries)
     settings.set("ROBOTSTXT_OBEY", config.network.respect_robots_txt)
+    settings.set("NO_ITEM_TIMEOUT", config.scrape.no_item_timeout)
     settings.set("IMAGES_STORE", str(images_dir))
     if peek:
         settings.set(
@@ -393,6 +405,7 @@ def run_spider(
         return
 
     # Diagnose why nothing was scraped
+    timed_out = any(c.stats.get_value("finish_reason") == "no_item_timeout" for c in crawlers)
     http_403 = sum(c.stats.get_value("downloader/response_status_count/403", 0) for c in crawlers)
     http_404 = sum(c.stats.get_value("downloader/response_status_count/404", 0) for c in crawlers)
     response_count = sum(c.stats.get_value("downloader/response_count", 0) for c in crawlers)
@@ -405,7 +418,12 @@ def run_spider(
 
     console.print("[yellow]Warning: Scraped 0 items.[/yellow]")
 
-    if robotstxt_blocked and response_count <= len(crawlers):
+    if timed_out:
+        console.print(
+            f"  Timed out after {config.scrape.no_item_timeout}s with no items. "
+            "Use [bold]--no-item-timeout 0[/bold] to disable."
+        )
+    elif robotstxt_blocked and response_count <= len(crawlers):
         console.print(
             "  Likely blocked by robots.txt. "
             "Retry with [bold]--ignore-robots[/bold] (-i) to bypass."
