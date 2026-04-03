@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.10"
 
 [options]
-exclude-newer = "2026-03-27T00:16:24.656244968Z"
+exclude-newer = "2026-03-27T01:49:02.856449908Z"
 exclude-newer-span = "P1W"
 
 [[package]]
@@ -1372,6 +1372,7 @@ version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "pillow" },
+    { name = "platformdirs" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "rich" },
@@ -1395,6 +1396,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "pillow", specifier = ">=10.0" },
+    { name = "platformdirs", specifier = ">=4.9.4" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },

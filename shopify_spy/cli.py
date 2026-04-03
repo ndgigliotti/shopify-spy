@@ -1,10 +1,15 @@
 """Command-line interface for Shopify Spy."""
 
+import json
+import logging
 import sys
+import time
 import urllib.parse
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
+import platformdirs
 import typer
 from rich.console import Console
 
@@ -187,7 +192,7 @@ def scrape(
         console.print("Provide a URL argument, --url-file, or run interactively.")
         raise typer.Exit(1)
 
-    # --peek implies limit=5, quiet logging, no images
+    # --peek implies limit=1, quiet logging, no images
     if peek:
         if config.scrape.limit is None:
             config = config.model_copy(
@@ -195,14 +200,13 @@ def scrape(
             )
         quiet = True
 
-    # Determine log level
+    # Validate flag combinations
     if verbose and quiet:
         console.print("[red]Error: Cannot use both --verbose and --quiet[/red]")
         raise typer.Exit(1)
-    log_level = "DEBUG" if verbose else "WARNING" if quiet else None
 
     # Run the spider
-    run_spider(all_urls, config, log_level=log_level, peek=peek)
+    run_spider(all_urls, config, peek=peek, verbose=verbose, quiet=quiet)
 
 
 @app.command()
@@ -303,11 +307,68 @@ def get_urls(urls: list[str] | None, url_file: Path | None) -> list[str]:
     return []
 
 
+def _log_dir() -> Path:
+    """Return the platform-appropriate log directory, creating it if needed."""
+    path = platformdirs.user_state_path("shopify-spy") / "logs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _spider_name(config: Config) -> str:
+    """Return the Scrapy spider name for the selected platform."""
+    return (
+        "woocommerce_spider" if config.scrape.platform == Platform.woocommerce else "shopify_spider"
+    )
+
+
+def _finish_reason(crawlers: list, config: Config) -> str:
+    """Derive an overall finish reason from a list of crawlers."""
+    reasons = [c.stats.get_value("finish_reason", "unknown") for c in crawlers]
+    if any(r == "no_item_timeout" for r in reasons):
+        return "bail"
+    limit = config.scrape.limit
+    if limit is not None:
+        total = sum(c.stats.get_value("item_scraped_count", 0) for c in crawlers)
+        if total >= limit:
+            return "item_limit"
+    if all(r == "finished" for r in reasons):
+        return "finished"
+    # Return the first non-"finished" reason
+    return next((r for r in reasons if r != "finished"), reasons[0])
+
+
+def _write_status_file(
+    status_path: Path,
+    crawlers: list,
+    urls: list[str],
+    config: Config,
+    duration: float,
+    log_file: Path | None,
+) -> None:
+    """Write a _status.json file alongside the output."""
+    total = sum(c.stats.get_value("item_scraped_count", 0) for c in crawlers)
+    url_entries = []
+    for url, crawler in zip(urls, crawlers):
+        items = crawler.stats.get_value("item_scraped_count", 0)
+        status = "ok" if items > 0 else _diagnose_crawler(crawler, config)
+        url_entries.append({"url": url, "items": items, "status": status})
+
+    data = {
+        "items_scraped": total,
+        "urls": url_entries,
+        "finish_reason": _finish_reason(crawlers, config),
+        "duration_seconds": round(duration, 1),
+        "log_file": str(log_file) if log_file else None,
+    }
+    status_path.write_text(json.dumps(data, indent=2) + "\n")
+
+
 def run_spider(
     urls: list[str],
     config: Config,
-    log_level: str | None = None,
     peek: bool = False,
+    verbose: bool = False,
+    quiet: bool = False,
 ) -> None:
     """Run the appropriate spider with the given configuration."""
     # Deferred imports to avoid loading Scrapy until needed
@@ -315,6 +376,10 @@ def run_spider(
     from scrapy.utils.project import get_project_settings
 
     settings = get_project_settings()
+
+    # Generate a timestamp used for log, output, and status file names
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S+00-00")
+    name = _spider_name(config)
 
     # Configure output directory
     output_dir = config.output.dir.expanduser().resolve()
@@ -329,6 +394,17 @@ def run_spider(
     settings.set("ROBOTSTXT_OBEY", config.network.respect_robots_txt)
     settings.set("NO_ITEM_TIMEOUT", config.scrape.bail)
     settings.set("IMAGES_STORE", str(images_dir))
+
+    # --- Logging setup ---
+    log_file: Path | None = None
+    if not peek:
+        log_file = _log_dir() / f"{name}_{timestamp}.log"
+        settings.set("LOG_FILE", str(log_file))
+
+    log_level = "DEBUG" if verbose else "WARNING" if quiet else "INFO"
+    settings.set("LOG_LEVEL", log_level)
+
+    # --- Feed output ---
     if peek:
         settings.set(
             "FEEDS",
@@ -344,7 +420,7 @@ def run_spider(
         settings.set(
             "FEEDS",
             {
-                f"{output_dir.as_uri()}/%(name)s_%(time)s{file_ext}": {
+                f"{output_dir.as_uri()}/{name}_{timestamp}{file_ext}": {
                     "format": scrapy_format,
                     "encoding": "utf8",
                     "store_empty": False,
@@ -361,9 +437,6 @@ def run_spider(
         middlewares["scrapy.downloadermiddlewares.useragent.UserAgentMiddleware"] = 400
         settings.set("DOWNLOADER_MIDDLEWARES", middlewares)
 
-    if log_level:
-        settings.set("LOG_LEVEL", log_level)
-
     # Configure auto-throttle
     if config.throttle.enabled:
         settings.set("AUTOTHROTTLE_ENABLED", True)
@@ -374,6 +447,16 @@ def run_spider(
     # Disable image pipeline if images are disabled
     if not config.scrape.images:
         settings.set("ITEM_PIPELINES", {})
+
+    # --- Live item counter (unless quiet or peek) ---
+    show_counter = not peek and not quiet
+    counter: list[int] = [0]
+    if show_counter:
+        settings.set("_ITEM_COUNTER", counter)
+        settings.set("_ITEM_COUNTER_CONSOLE", console)
+        extensions = settings.getdict("EXTENSIONS", {}).copy()
+        extensions["shopify_spy.extensions.LiveItemCounter"] = 501
+        settings.set("EXTENSIONS", extensions)
 
     # Select spider and build kwargs based on platform
     if config.scrape.platform == Platform.woocommerce:
@@ -404,15 +487,40 @@ def run_spider(
 
     process = CrawlerProcess(settings)
 
+    # In verbose mode, also log to stderr (Scrapy only logs to file when LOG_FILE is set)
+    stderr_handler: logging.Handler | None = None
+    if verbose and log_file:
+        stderr_handler = logging.StreamHandler(sys.stderr)
+        stderr_handler.setLevel(logging.DEBUG)
+        stderr_handler.setFormatter(
+            logging.Formatter("%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+        )
+        logging.getLogger().addHandler(stderr_handler)
+
     # Crawl each URL; capture crawler refs before start() clears the set
-    crawlers = []
     for store_url in urls:
         process.crawl(spider_cls, url=store_url, **spider_kwargs)
     crawlers = list(process.crawlers)
 
+    start = time.monotonic()
     process.start()
+    duration = time.monotonic() - start
+
+    # Clear the counter line
+    if show_counter and counter[0] > 0:
+        console.print(" " * 50, end="\r")
+
+    # Clean up the stderr handler added for verbose mode
+    if stderr_handler is not None:
+        logging.getLogger().removeHandler(stderr_handler)
+
     total = sum(c.stats.get_value("item_scraped_count", 0) for c in crawlers)
     multi = len(urls) > 1
+
+    # Write status file (unless peek mode)
+    if not peek:
+        status_path = output_dir / f"{name}_{timestamp}_status.json"
+        _write_status_file(status_path, crawlers, urls, config, duration, log_file)
 
     if total > 0:
         if not peek:
