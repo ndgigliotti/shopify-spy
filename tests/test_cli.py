@@ -86,6 +86,34 @@ def test_cli_scrape_no_url():
     assert "No URLs provided" in strip_ansi(result.stdout)
 
 
+def test_cli_scrape_warns_collections_woocommerce():
+    """--collections with --platform woocommerce warns about unsupported flag."""
+    result = runner.invoke(app, ["scrape", "--platform", "woocommerce", "--collections"])
+    output = strip_ansi(result.stdout)
+    assert "--collections has no effect with WooCommerce" in output
+
+
+def test_cli_scrape_warns_no_products_woocommerce():
+    """--no-products with --platform woocommerce warns about unsupported flag."""
+    result = runner.invoke(app, ["scrape", "--platform", "woocommerce", "--no-products"])
+    output = strip_ansi(result.stdout)
+    assert "--no-products has no effect with WooCommerce" in output
+
+
+def test_cli_scrape_no_warn_shopify_collections():
+    """--collections with shopify (default) should not produce a warning."""
+    result = runner.invoke(app, ["scrape", "--collections"])
+    output = strip_ansi(result.stdout)
+    assert "--collections has no effect" not in output
+
+
+def test_cli_scrape_no_warn_woocommerce_without_flags():
+    """--platform woocommerce without --collections/--no-products should not warn."""
+    result = runner.invoke(app, ["scrape", "--platform", "woocommerce"])
+    output = strip_ansi(result.stdout)
+    assert "has no effect" not in output
+
+
 def test_cli_scrape_help_shows_format():
     """--format flag appears in scrape help."""
     result = runner.invoke(app, ["scrape", "--help"])

@@ -167,6 +167,19 @@ def scrape(
         bail=bail,
     )
 
+    # Warn about Shopify-only flags used with WooCommerce
+    if platform == Platform.woocommerce:
+        if collections is True:
+            console.print(
+                "[yellow]Warning: --collections has no effect with WooCommerce "
+                "(collections are not supported).[/yellow]"
+            )
+        if products is False:
+            console.print(
+                "[yellow]Warning: --no-products has no effect with WooCommerce "
+                "(WooCommerce always scrapes products).[/yellow]"
+            )
+
     # Get URLs
     all_urls = get_urls(urls, url_file)
     if not all_urls:
