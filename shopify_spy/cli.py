@@ -125,6 +125,10 @@ def scrape(
             help="Ignore robots.txt restrictions.",
         ),
     ] = False,
+    peek: Annotated[
+        bool,
+        typer.Option("--peek", help="Print 1 item to stdout as JSONL and exit. No file output."),
+    ] = False,
     verbose: Annotated[
         bool,
         typer.Option("--verbose", "-v", help="Show debug output."),
@@ -161,6 +165,14 @@ def scrape(
         console.print("Provide a URL argument, --url-file, or run interactively.")
         raise typer.Exit(1)
 
+    # --peek implies limit=5, quiet logging, no images
+    if peek:
+        if config.scrape.limit is None:
+            config = config.model_copy(
+                update={"scrape": config.scrape.model_copy(update={"limit": 1})}
+            )
+        quiet = True
+
     # Determine log level
     if verbose and quiet:
         console.print("[red]Error: Cannot use both --verbose and --quiet[/red]")
@@ -168,7 +180,7 @@ def scrape(
     log_level = "DEBUG" if verbose else "WARNING" if quiet else None
 
     # Run the spider
-    run_spider(all_urls, config, log_level=log_level)
+    run_spider(all_urls, config, log_level=log_level, peek=peek)
 
 
 @app.command()
@@ -270,6 +282,7 @@ def run_spider(
     urls: list[str],
     config: Config,
     log_level: str | None = None,
+    peek: bool = False,
 ) -> None:
     """Run the appropriate spider with the given configuration."""
     # Deferred imports to avoid loading Scrapy until needed
@@ -290,18 +303,29 @@ def run_spider(
     settings.set("RETRY_TIMES", config.network.retries)
     settings.set("ROBOTSTXT_OBEY", config.network.respect_robots_txt)
     settings.set("IMAGES_STORE", str(images_dir))
-    scrapy_format, file_ext = OUTPUT_FORMATS[config.output.format]
-    settings.set(
-        "FEEDS",
-        {
-            f"{output_dir.as_uri()}/%(name)s_%(time)s{file_ext}": {
-                "format": scrapy_format,
-                "encoding": "utf8",
-                "store_empty": False,
-                "item_export_kwargs": {"export_empty_fields": True},
-            }
-        },
-    )
+    if peek:
+        settings.set(
+            "FEEDS",
+            {
+                "stdout://": {
+                    "format": "jsonlines",
+                    "encoding": "utf8",
+                }
+            },
+        )
+    else:
+        scrapy_format, file_ext = OUTPUT_FORMATS[config.output.format]
+        settings.set(
+            "FEEDS",
+            {
+                f"{output_dir.as_uri()}/%(name)s_%(time)s{file_ext}": {
+                    "format": scrapy_format,
+                    "encoding": "utf8",
+                    "store_empty": False,
+                    "item_export_kwargs": {"export_empty_fields": True},
+                }
+            },
+        )
 
     if config.network.user_agent:
         settings.set("USER_AGENT", config.network.user_agent)
@@ -342,14 +366,15 @@ def run_spider(
             "limit": config.scrape.limit,
         }
 
-    console.print(f"[bold]Scraping {len(urls)} store(s)...[/bold]")
-    console.print(f"  Platform: {config.scrape.platform.value}")
-    if config.scrape.platform == Platform.shopify:
-        console.print(f"  Products: {config.scrape.products}")
-        console.print(f"  Collections: {config.scrape.collections}")
-    console.print(f"  Images: {config.scrape.images}")
-    console.print(f"  Format: {config.output.format}")
-    console.print(f"  Output: {output_dir}")
+    if not peek:
+        console.print(f"[bold]Scraping {len(urls)} store(s)...[/bold]")
+        console.print(f"  Platform: {config.scrape.platform.value}")
+        if config.scrape.platform == Platform.shopify:
+            console.print(f"  Products: {config.scrape.products}")
+            console.print(f"  Collections: {config.scrape.collections}")
+        console.print(f"  Images: {config.scrape.images}")
+        console.print(f"  Format: {config.output.format}")
+        console.print(f"  Output: {output_dir}")
 
     process = CrawlerProcess(settings)
 
@@ -363,7 +388,8 @@ def run_spider(
     total = sum(c.stats.get_value("item_scraped_count", 0) for c in crawlers)
 
     if total > 0:
-        console.print(f"[green]Done! Scraped {total} item(s).[/green]")
+        if not peek:
+            console.print(f"[green]Done! Scraped {total} item(s).[/green]")
         return
 
     # Diagnose why nothing was scraped
