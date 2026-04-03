@@ -314,13 +314,6 @@ def _log_dir() -> Path:
     return path
 
 
-def _spider_name(config: Config) -> str:
-    """Return the Scrapy spider name for the selected platform."""
-    return (
-        "woocommerce_spider" if config.scrape.platform == Platform.woocommerce else "shopify_spider"
-    )
-
-
 def _finish_reason(crawlers: list, config: Config) -> str:
     """Derive an overall finish reason from a list of crawlers."""
     reasons = [c.stats.get_value("finish_reason", "unknown") for c in crawlers]
@@ -344,9 +337,9 @@ def _write_status_file(
     config: Config,
     duration: float,
     log_file: Path | None,
+    total: int,
 ) -> None:
     """Write a _status.json file alongside the output."""
-    total = sum(c.stats.get_value("item_scraped_count", 0) for c in crawlers)
     url_entries = []
     for url, crawler in zip(urls, crawlers):
         items = crawler.stats.get_value("item_scraped_count", 0)
@@ -379,7 +372,7 @@ def run_spider(
 
     # Generate a timestamp used for log, output, and status file names
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S+00-00")
-    name = _spider_name(config)
+    name = f"{config.scrape.platform.value}_spider"
 
     # Configure output directory
     output_dir = config.output.dir.expanduser().resolve()
@@ -520,7 +513,7 @@ def run_spider(
     # Write status file (unless peek mode)
     if not peek:
         status_path = output_dir / f"{name}_{timestamp}_status.json"
-        _write_status_file(status_path, crawlers, urls, config, duration, log_file)
+        _write_status_file(status_path, crawlers, urls, config, duration, log_file, total)
 
     if total > 0:
         if not peek:
@@ -533,7 +526,7 @@ def run_spider(
         return
 
     # Diagnose why nothing was scraped
-    timed_out = any(c.stats.get_value("finish_reason") == "bail" for c in crawlers)
+    timed_out = any(c.stats.get_value("finish_reason", "") == "bail" for c in crawlers)
     http_403 = sum(c.stats.get_value("downloader/response_status_count/403", 0) for c in crawlers)
     http_404 = sum(c.stats.get_value("downloader/response_status_count/404", 0) for c in crawlers)
     response_count = sum(c.stats.get_value("downloader/response_count", 0) for c in crawlers)
@@ -586,7 +579,7 @@ def _diagnose_crawler(crawler: object, config: Config) -> str:
     items = crawler.stats.get_value("item_scraped_count", 0)
     if items > 0:
         return f"{items} items"
-    if crawler.stats.get_value("finish_reason") == "bail":
+    if crawler.stats.get_value("finish_reason", "") == "bail":
         return "timed out"
     h403 = crawler.stats.get_value("downloader/response_status_count/403", 0)
     if h403 > 0:

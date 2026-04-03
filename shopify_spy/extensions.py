@@ -65,15 +65,9 @@ class NoItemTimeout:
 class LiveItemCounter:
     """Display a live item counter on the terminal during scraping.
 
-    Uses a shared mutable list ``_ITEM_COUNTER`` (passed via settings) so
-    that all crawler instances contribute to a single total.  The counter
-    is printed to stderr with a carriage return so that it overwrites itself
-    on each update.
-
-    Enable via settings::
-
-        _ITEM_COUNTER = [0]          # mutable counter; required
-        _ITEM_COUNTER_CONSOLE = ...  # optional rich.console.Console
+    Uses a shared mutable list via settings because Scrapy instantiates
+    extensions per crawler; the list lets all instances increment a single
+    total visible to the CLI after process.start() returns.
     """
 
     def __init__(self, counter, console):
@@ -92,4 +86,5 @@ class LiveItemCounter:
 
     def item_scraped(self, item, spider):
         self.counter[0] += 1
-        self.console.print(f"  Scraped {self.counter[0]} items...", end="\r")
+        if self.counter[0] % 10 == 1 or self.counter[0] < 10:
+            self.console.print(f"  Scraped {self.counter[0]} items...", end="\r")
