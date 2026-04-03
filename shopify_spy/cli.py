@@ -446,7 +446,6 @@ def run_spider(
     counter: list[int] = [0]
     if show_counter:
         settings.set("_ITEM_COUNTER", counter)
-        settings.set("_ITEM_COUNTER_CONSOLE", console)
         extensions = settings.getdict("EXTENSIONS", {}).copy()
         extensions["shopify_spy.extensions.LiveItemCounter"] = 501
         settings.set("EXTENSIONS", extensions)

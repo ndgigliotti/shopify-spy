@@ -1,10 +1,8 @@
 """Scrapy extensions."""
 
 import logging
-import sys
 import warnings
 
-from rich.console import Console
 from scrapy import signals
 from scrapy.exceptions import NotConfigured
 
@@ -70,21 +68,19 @@ class LiveItemCounter:
     total visible to the CLI after process.start() returns.
     """
 
-    def __init__(self, counter, console):
+    def __init__(self, counter):
         self.counter = counter
-        self.console = console
 
     @classmethod
     def from_crawler(cls, crawler):
         counter = crawler.settings.get("_ITEM_COUNTER")
         if counter is None:
             raise NotConfigured
-        console = crawler.settings.get("_ITEM_COUNTER_CONSOLE") or Console(file=sys.stderr)
-        ext = cls(counter, console)
+        ext = cls(counter)
         crawler.signals.connect(ext.item_scraped, signal=signals.item_scraped)
         return ext
 
     def item_scraped(self, item, spider):
         self.counter[0] += 1
         if self.counter[0] % 10 == 1 or self.counter[0] < 10:
-            self.console.print(f"  Scraped {self.counter[0]} items...", end="\r")
+            print(f"\r  Scraped {self.counter[0]} items...", end="", flush=True)
