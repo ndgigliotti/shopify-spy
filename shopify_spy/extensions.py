@@ -82,4 +82,6 @@ class LiveItemCounter:
 
     def item_scraped(self, item, spider):
         self.counter[0] += 1
-        print(f"\r  Scraped {self.counter[0]} items...", end="", flush=True)
+        n = self.counter[0]
+        if n < 10 or n % 10 == 0:
+            print(f"\r  Scraped {n} items...", end="", flush=True)
