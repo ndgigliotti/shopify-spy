@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 from unittest.mock import Mock
@@ -5,7 +6,13 @@ from unittest.mock import Mock
 import pytest
 from scrapy.exceptions import CloseSpider
 
-from shopify_spy.spiders.shopify import ShopifySpider, extract_data, get_sitemap_url
+from shopify_spy.spiders.shopify import (
+    ShopifySpider,
+    extract_data,
+    get_bulk_products_url,
+    get_sitemap_url,
+    next_bulk_page_url,
+)
 
 
 @pytest.mark.integration
@@ -195,3 +202,278 @@ def test_spider_no_limit():
 
     for i in range(20):
         assert len(list(spider.parse_product(_make_response(i)))) == 1
+
+
+# --- Bulk URL helper tests ---
+
+
+def test_get_bulk_products_url():
+    assert (
+        get_bulk_products_url("https://www.example.com")
+        == "https://www.example.com/products.json?limit=250&page=1"
+    )
+
+
+def test_get_bulk_products_url_page():
+    assert (
+        get_bulk_products_url("https://www.example.com", page=3)
+        == "https://www.example.com/products.json?limit=250&page=3"
+    )
+
+
+def test_get_bulk_products_url_no_scheme():
+    assert (
+        get_bulk_products_url("www.example.com")
+        == "https://www.example.com/products.json?limit=250&page=1"
+    )
+
+
+def test_next_bulk_page_url():
+    url = "https://www.example.com/products.json?limit=250&page=1"
+    assert next_bulk_page_url(url) == "https://www.example.com/products.json?limit=250&page=2"
+
+
+def test_next_bulk_page_url_preserves_limit():
+    url = "https://www.example.com/products.json?limit=250&page=5"
+    result = next_bulk_page_url(url)
+    assert "limit=250" in result
+    assert "page=6" in result
+
+
+# --- Bulk response helper ---
+
+
+def _make_bulk_response(products, page=1, store="www.example.com"):
+    """Create a mock response for the bulk /products.json endpoint."""
+    mock = Mock()
+    mock.text = json.dumps({"products": products})
+    mock.url = f"https://{store}/products.json?limit=250&page={page}"
+    mock.request.url = mock.url
+    return mock
+
+
+# --- parse_products_json tests ---
+
+
+def test_parse_products_json_yields_items():
+    spider = ShopifySpider(url="https://www.example.com")
+    products = [
+        {"handle": "item-1", "title": "Item 1", "images": [{"src": "http://img1.jpg"}]},
+        {"handle": "item-2", "title": "Item 2", "images": []},
+    ]
+    response = _make_bulk_response(products)
+
+    results = list(
+        spider.parse_products_json(response, sitemap_url="https://www.example.com/sitemap.xml")
+    )
+    items = [r for r in results if isinstance(r, dict)]
+
+    assert len(items) == 2
+    assert items[0]["product"]["title"] == "Item 1"
+    assert items[0]["url"] == "https://www.example.com/products/item-1.json"
+    assert items[0]["store"] == "www.example.com"
+    assert items[1]["product"]["handle"] == "item-2"
+
+
+def test_parse_products_json_images():
+    spider = ShopifySpider(url="https://www.example.com", images=True)
+    products = [{"handle": "p", "images": [{"src": "http://img.jpg"}]}]
+    response = _make_bulk_response(products)
+
+    items = [r for r in spider.parse_products_json(response, "x") if isinstance(r, dict)]
+    assert items[0]["image_urls"] == ["http://img.jpg"]
+
+
+def test_parse_products_json_no_images():
+    spider = ShopifySpider(url="https://www.example.com", images=False)
+    products = [{"handle": "p", "images": [{"src": "http://img.jpg"}]}]
+    response = _make_bulk_response(products)
+
+    items = [r for r in spider.parse_products_json(response, "x") if isinstance(r, dict)]
+    assert items[0]["image_urls"] == []
+
+
+def test_parse_products_json_pagination():
+    """250 products triggers a next-page request."""
+    spider = ShopifySpider(url="https://www.example.com")
+    products = [{"handle": f"p{i}"} for i in range(250)]
+    response = _make_bulk_response(products)
+
+    results = list(
+        spider.parse_products_json(response, sitemap_url="https://www.example.com/sitemap.xml")
+    )
+    requests = [r for r in results if not isinstance(r, dict)]
+
+    assert len(requests) == 1
+    assert "page=2" in requests[0].url
+
+
+def test_parse_products_json_no_pagination_partial():
+    """Fewer than 250 products means no next-page request."""
+    spider = ShopifySpider(url="https://www.example.com")
+    products = [{"handle": f"p{i}"} for i in range(10)]
+    response = _make_bulk_response(products)
+
+    results = list(
+        spider.parse_products_json(response, sitemap_url="https://www.example.com/sitemap.xml")
+    )
+    requests = [r for r in results if not isinstance(r, dict)]
+
+    assert len(requests) == 0
+
+
+def test_parse_products_json_collections_sitemap_after_last_page():
+    """When collections are enabled, sitemap is requested after the last bulk page."""
+    spider = ShopifySpider(url="https://www.example.com", collections=True)
+    products = [{"handle": "p1"}]
+    response = _make_bulk_response(products)
+    sitemap_url = "https://www.example.com/sitemap.xml"
+
+    results = list(spider.parse_products_json(response, sitemap_url=sitemap_url))
+    requests = [r for r in results if not isinstance(r, dict)]
+
+    assert len(requests) == 1
+    assert requests[0].url == sitemap_url
+
+
+def test_parse_products_json_json_error_fallback():
+    """Non-JSON response triggers sitemap fallback."""
+    spider = ShopifySpider(url="https://www.example.com")
+    response = Mock()
+    response.text = "<html>Not JSON</html>"
+    response.url = "https://www.example.com/products.json?limit=250&page=1"
+    sitemap_url = "https://www.example.com/sitemap.xml"
+
+    results = list(spider.parse_products_json(response, sitemap_url=sitemap_url))
+
+    assert len(results) == 1
+    assert results[0].url == sitemap_url
+
+
+def test_parse_products_json_empty_fallback():
+    """Empty products list triggers sitemap fallback."""
+    spider = ShopifySpider(url="https://www.example.com")
+    response = Mock()
+    response.text = '{"products": []}'
+    response.url = "https://www.example.com/products.json?limit=250&page=1"
+    sitemap_url = "https://www.example.com/sitemap.xml"
+
+    results = list(spider.parse_products_json(response, sitemap_url=sitemap_url))
+
+    assert len(results) == 1
+    assert results[0].url == sitemap_url
+
+
+def test_parse_products_json_limit():
+    """Bulk path respects item limit."""
+    spider = ShopifySpider(url="https://www.example.com", limit=2)
+    products = [{"handle": f"p{i}"} for i in range(5)]
+    response = _make_bulk_response(products)
+
+    results = []
+    with pytest.raises(CloseSpider):
+        for r in spider.parse_products_json(response, sitemap_url="x"):
+            results.append(r)
+
+    items = [r for r in results if isinstance(r, dict)]
+    assert len(items) == 2
+
+
+def test_parse_products_json_marks_store_bulk():
+    """Successful bulk marks the store in _bulk_product_stores."""
+    spider = ShopifySpider(url="https://www.example.com")
+    products = [{"handle": "p1"}]
+    response = _make_bulk_response(products)
+
+    list(spider.parse_products_json(response, sitemap_url="x"))
+
+    assert "www.example.com" in spider._bulk_product_stores
+
+
+# --- _bulk_errback tests ---
+
+
+def test_bulk_errback_yields_sitemap_request():
+    spider = ShopifySpider(url="https://www.example.com")
+    sitemap_url = "https://www.example.com/sitemap.xml"
+
+    failure = Mock()
+    failure.request.url = "https://www.example.com/products.json?limit=250&page=1"
+    failure.request.meta = {"sitemap_url": sitemap_url}
+
+    results = list(spider._bulk_errback(failure))
+
+    assert len(results) == 1
+    assert results[0].url == sitemap_url
+
+
+# --- start() tests ---
+
+
+async def _collect_start(spider):
+    """Collect all requests from the async start() generator."""
+    results = []
+    async for req in spider.start():
+        results.append(req)
+    return results
+
+
+async def test_start_products_only():
+    """Products enabled: yields bulk request, not sitemap."""
+    spider = ShopifySpider(url="https://www.example.com", products=True, collections=False)
+    requests = await _collect_start(spider)
+
+    assert len(requests) == 1
+    assert "/products.json" in requests[0].url
+
+
+async def test_start_collections_only():
+    """Collections only: yields sitemap request directly."""
+    spider = ShopifySpider(url="https://www.example.com", products=False, collections=True)
+    requests = await _collect_start(spider)
+
+    assert len(requests) == 1
+    assert "sitemap.xml" in requests[0].url
+
+
+async def test_start_products_and_collections():
+    """Both enabled: yields only bulk request (sitemap deferred to after bulk)."""
+    spider = ShopifySpider(url="https://www.example.com", products=True, collections=True)
+    requests = await _collect_start(spider)
+
+    assert len(requests) == 1
+    assert "/products.json" in requests[0].url
+
+
+# --- sitemap_filter with bulk stores ---
+
+
+def test_sitemap_filter_skips_bulk_products():
+    """Product entries for bulk-succeeded stores are skipped."""
+    spider = ShopifySpider(url="https://www.example.com")
+    spider._bulk_product_stores.add("www.example.com")
+
+    entries = [
+        {"loc": "https://www.example.com/products/item1"},
+        {"loc": "https://www.example.com/collections/sale"},
+        {"loc": "https://www.example.com/pages/about"},
+    ]
+
+    result = list(spider.sitemap_filter(iter(entries)))
+
+    locs = [e["loc"] for e in result]
+    assert "https://www.example.com/products/item1" not in locs
+    assert "https://www.example.com/products/item1.json" not in locs
+    assert "https://www.example.com/collections/sale.json" in locs
+    assert "https://www.example.com/pages/about" in locs
+
+
+def test_sitemap_filter_passes_products_for_non_bulk_store():
+    """Product entries for stores without bulk data pass through."""
+    spider = ShopifySpider(url="https://www.example.com")
+    # _bulk_product_stores is empty
+
+    entries = [{"loc": "https://www.example.com/products/item1"}]
+    result = list(spider.sitemap_filter(iter(entries)))
+
+    assert result[0]["loc"] == "https://www.example.com/products/item1.json"
