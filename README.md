@@ -57,15 +57,24 @@ shopify-spy scrape https://www.example.com --output ./my-data
 
 # Sample 10 items (useful for testing)
 shopify-spy scrape https://www.example.com --limit 10
+
+# Quick peek at a store (prints 1 item to stdout, no file output)
+shopify-spy scrape --peek https://www.example.com
+
+# Peek and pipe to jq
+shopify-spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
+
+# Bypass robots.txt restrictions
+shopify-spy scrape --ignore-robots https://www.example.com
 ```
 
-Results are saved as JSONL in the output directory (default: `./output`). Use `--format` to choose JSON, CSV, or XML instead.
+Results are saved as JSONL in the output directory (default: `./output`). Use `--format` to choose JSON, CSV, or XML instead. A live item counter is displayed during scraping.
 
 ## Supported Platforms
 
 | Platform | Mechanism | Notes |
 |---|---|---|
-| Shopify | `/sitemap.xml` + `.json` endpoints | Products and collections |
+| Shopify | `/products.json` bulk endpoint, sitemap fallback | Products and collections |
 | WooCommerce | `/wp-json/wc/store/v1/products` | No authentication required |
 
 ## Commands
@@ -94,8 +103,11 @@ shopify-spy scrape [URL] [OPTIONS]
 - `--concurrent INT` - Concurrent requests per domain (default: 16)
 - `--throttle / --no-throttle` - Auto-throttle requests (default: yes)
 - `--user-agent, -A TEXT` - Custom User-Agent header
-- `--verbose, -v` - Show debug output
-- `--quiet, -q` - Show only warnings and errors
+- `--ignore-robots, -i` - Ignore robots.txt restrictions
+- `--bail INT` - Abort if no items scraped within N seconds (default: 20, 0 to disable)
+- `--peek` - Print 1 item to stdout as JSONL and exit (no file output)
+- `--verbose, -v` - Show debug output (logs to both file and terminal)
+- `--quiet, -q` - Suppress the live item counter
 
 ### `init`
 
@@ -122,6 +134,7 @@ scrape:
   products: true      # Scrape product data (Shopify only)
   collections: false  # Scrape collection data (Shopify only)
   images: false       # Download product images
+  bail: 20            # Abort if no items scraped within N seconds (0 = off)
 
 output:
   dir: ./output       # Output directory for results
@@ -156,10 +169,27 @@ Results are saved in the output directory (JSONL by default, configurable via `-
 ```
 output/
   shopify_spider_2024-01-15T10-30-00.jsonl
+  shopify_spider_2024-01-15T10-30-00_status.json
   images/
     full/
       <image files>
 ```
+
+A `_status.json` file is written alongside each output file with run metadata:
+
+```json
+{
+  "items_scraped": 47,
+  "urls": [
+    {"url": "https://store.com", "items": 47, "status": "ok"}
+  ],
+  "finish_reason": "finished",
+  "duration_seconds": 12.3,
+  "log_file": "/home/user/.local/state/shopify-spy/logs/shopify_spider_2024-01-15T10-30-00.log"
+}
+```
+
+Scrapy's verbose log output is written to a log file (not the terminal). Log files are stored in the platform-appropriate state directory (e.g., `~/.local/state/shopify-spy/logs/` on Linux). Use `--verbose` to also print logs to the terminal.
 
 ### Shopify output
 
@@ -253,7 +283,7 @@ df = pl.read_ndjson("output/shopify_spider_2024-01-15.jsonl")
 
 ## Limitations
 
-**WooCommerce Store API required.** The WooCommerce spider uses the public Store API (`/wp-json/wc/store/v1/products`), available in WooCommerce 3.x and later. Stores that have disabled the REST API via security plugins, return 403 responses, or broadly block crawlers in `robots.txt` will not be scrapeable.
+**WooCommerce Store API required.** The WooCommerce spider uses the public Store API (`/wp-json/wc/store/v1/products`), available in WooCommerce 3.x and later. Stores that have disabled the REST API via security plugins or broadly block crawlers may not be scrapeable. When a scrape returns 0 items, the tool prints a diagnostic message explaining the likely cause (403 Forbidden, 404 Not Found, robots.txt blocking, etc.) and exits with code 1.
 
 **Rate limiting.** Scraping very large stores may result in temporary bans. Auto-throttling is enabled by default, but you can adjust the settings or disable it for faster scraping:
 

@@ -1,6 +1,6 @@
 ## Project Overview
 
-Shopify Spy is a CLI tool and Scrapy-based web scraper for extracting product and collection data from any Shopify store.
+Shopify Spy is a CLI tool and Scrapy-based web scraper for extracting product and collection data from Shopify and WooCommerce stores.
 
 ## Common Commands
 
@@ -24,12 +24,18 @@ Pydantic models for YAML config with four sections: `scrape`, `output`, `network
 ### Spiders (`shopify_spy/spiders/`)
 Two platform spiders. All use `load_store_urls()` from utils for URL init.
 
-**`shopify.py`** -- Extends `SitemapSpider`. Input URLs are normalized to `https://<host>/sitemap.xml`. `sitemap_filter` appends `.json` to any sitemap entry whose path contains `/products/` or `/collections/`, then yields all entries. Each yielded item contains the full Shopify JSON payload plus `url`, `store`, and `image_urls` fields.
+**`shopify.py`** -- Tries the bulk `/products.json` endpoint first (paginated), falls back to `SitemapSpider` if unavailable. Each yielded item contains the full Shopify JSON payload plus `url`, `store`, and `image_urls` fields.
 
 **`woocommerce.py`** -- Uses the public WooCommerce Store API (`/wp-json/wc/store/v1/products`), paginated with `per_page=100`. Supports `limit` to stop after N items.
 
+### Middlewares (`shopify_spy/middlewares.py`)
+`UserAgentMiddleware` picks a random browser user-agent at start and swaps to a different one when retrying a 403.
+
+### Extensions (`shopify_spy/extensions.py`)
+`NoItemTimeout` closes the spider if no items are scraped within `--bail` seconds. `LiveItemCounter` prints a live item count to stdout during scraping.
+
 ### Settings (`shopify_spy/settings.py`)
-Scrapy defaults: autothrottle on, 16 concurrent requests per domain, robots.txt respected, image pipeline enabled, JSONL feed output. The CLI overrides feed settings at runtime via `get_project_settings()`.
+Scrapy defaults: autothrottle on, 16 concurrent requests per domain, robots.txt respected, image pipeline enabled, JSONL feed output. Custom UA middleware replaces Scrapy's default. 403 is in RETRY_HTTP_CODES to trigger UA rotation. The CLI overrides feed settings at runtime via `get_project_settings()`. Scrapy logs are written to a file in the platform state directory (via `platformdirs`), not the terminal.
 
 ### Utilities (`shopify_spy/utils.py`)
 `as_bool()` converts strings or bools to `bool`, handling values like `"yes"`, `"1"`, `"null"`. Used to coerce spider arguments that arrive as strings when called from the Scrapy CLI. `find_all_values(key, obj)` recursively searches nested dicts/lists and yields all matching values. `load_store_urls(url, url_file)` loads URLs from a single URL or a file, shared across all spiders. `normalize_url(url)` parses a URL, defaulting to https if no scheme.
