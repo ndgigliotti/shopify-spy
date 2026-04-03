@@ -50,14 +50,10 @@ Repository = "https://github.com/ndgigliotti/shopify-spy"
 shopify-spy = "shopify_spy.cli:app"
 
 [project.optional-dependencies]
-headless = [
-    "scrapy-playwright>=0.0.40",
-]
 dev = [
     "pytest>=8.0",
     "ruff>=0.9",
     "pre-commit>=4.0",
-    "scrapy-playwright>=0.0.40",
 ]
 
 [build-system]

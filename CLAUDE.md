@@ -14,7 +14,7 @@ uv run ruff check . && uv run ruff format .  # Lint and format
 ## Architecture
 
 ### CLI (`shopify_spy/cli.py`)
-Typer-based CLI wrapping Scrapy's `CrawlerProcess`. `scrape` accepts one or more URL arguments, a `--url-file`, or prompts interactively when stdin is a TTY. `init` creates a default YAML config. Scrapy imports are deferred until `run_spider()` to keep startup fast. Spider selection uses `--platform` as the primary axis (shopify/woocommerce), with `--headless` as a Shopify-specific modifier.
+Typer-based CLI wrapping Scrapy's `CrawlerProcess`. `scrape` accepts one or more URL arguments, a `--url-file`, or prompts interactively when stdin is a TTY. `init` creates a default YAML config. Scrapy imports are deferred until `run_spider()` to keep startup fast. Spider selection uses `--platform` as the primary axis (shopify/woocommerce).
 
 ### Config (`shopify_spy/config.py`)
 Pydantic models for YAML config with four sections: `scrape`, `output`, `network`, `throttle`. Precedence: defaults -> config file -> CLI args. Config file is auto-discovered at `./shopify-spy.yaml` then `~/.config/shopify-spy/config.yaml`. Notable non-default: `scrape.collections` is `False` and `scrape.images` is `False` by default; `throttle.enabled` is `True` by default.
@@ -22,13 +22,11 @@ Pydantic models for YAML config with four sections: `scrape`, `output`, `network
 `scrape.limit` (int, optional) stops the spider after N items total across all parse methods.
 
 ### Spiders (`shopify_spy/spiders/`)
-Three platform spiders plus a headless fallback. All use `load_store_urls()` from utils for URL init.
+Two platform spiders. All use `load_store_urls()` from utils for URL init.
 
 **`shopify.py`** -- Extends `SitemapSpider`. Input URLs are normalized to `https://<host>/sitemap.xml`. `sitemap_filter` appends `.json` to any sitemap entry whose path contains `/products/` or `/collections/`, then yields all entries. Each yielded item contains the full Shopify JSON payload plus `url`, `store`, and `image_urls` fields.
 
 **`woocommerce.py`** -- Uses the public WooCommerce Store API (`/wp-json/wc/store/v1/products`), paginated with `per_page=100`. Supports `limit` to stop after N items.
-
-**`headless.py`** -- Shopify-only hybrid spider using Playwright. Tries `/products.json` first, falls back to browser rendering with three extraction strategies (JSON-LD, embedded Shopify object, meta tags). Requires `scrapy-playwright` (`[headless]` extra).
 
 ### Settings (`shopify_spy/settings.py`)
 Scrapy defaults: autothrottle on, 16 concurrent requests per domain, robots.txt respected, image pipeline enabled, JSONL feed output. The CLI overrides feed settings at runtime via `get_project_settings()`.

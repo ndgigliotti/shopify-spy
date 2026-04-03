@@ -111,7 +111,6 @@ def test_apply_cli_overrides():
         products=False,
         collections=True,
         images=None,  # should not override
-        headless=True,
         output=Path("/custom"),
         format=None,
         concurrent=4,
@@ -124,7 +123,6 @@ def test_apply_cli_overrides():
     assert overridden.scrape.collections is True
     assert overridden.scrape.images is False  # unchanged (default)
     assert overridden.scrape.limit == 10
-    assert overridden.scrape.headless is True
     assert overridden.output.dir == Path("/custom")
     assert overridden.network.concurrent_requests == 4
     assert overridden.network.user_agent == "MyBot/1.0"
@@ -140,7 +138,6 @@ def test_apply_cli_overrides_none_values():
         products=None,
         collections=None,
         images=None,
-        headless=None,
         output=None,
         format=None,
         concurrent=None,
@@ -152,7 +149,6 @@ def test_apply_cli_overrides_none_values():
     assert overridden.scrape.products is True
     assert overridden.scrape.collections is False
     assert overridden.scrape.limit is None
-    assert overridden.scrape.headless is False  # unchanged (default)
     assert overridden.output.dir == Path("./output")
     assert overridden.throttle.enabled is True  # default is now True
     assert overridden.network.user_agent is None  # uses Scrapy default
@@ -167,7 +163,6 @@ def test_apply_cli_overrides_format():
         products=None,
         collections=None,
         images=None,
-        headless=None,
         output=None,
         format="csv",
         concurrent=None,
@@ -187,7 +182,6 @@ def test_apply_cli_overrides_format_none():
         products=None,
         collections=None,
         images=None,
-        headless=None,
         output=None,
         format=None,
         concurrent=None,
@@ -207,7 +201,6 @@ def test_apply_cli_overrides_limit():
         products=None,
         collections=None,
         images=None,
-        headless=None,
         output=None,
         format=None,
         concurrent=None,
@@ -287,50 +280,3 @@ def test_run_spider_passes_limit_to_crawl(tmp_path):
 
     _, kwargs = mock_process.crawl.call_args
     assert kwargs["limit"] == 5
-
-
-# --- CLI headless tests ---
-
-
-def test_cli_scrape_help_shows_headless():
-    result = runner.invoke(app, ["scrape", "--help"])
-    assert result.exit_code == 0
-    assert "--headless" in strip_ansi(result.stdout)
-
-
-@patch("shopify_spy.cli.run_spider")
-def test_cli_headless_flag(mock_run_spider):
-    """--headless sets headless=True in config passed to run_spider."""
-    result = runner.invoke(app, ["scrape", "https://example.com", "--headless"])
-    assert result.exit_code == 0
-    config = mock_run_spider.call_args[0][1]
-    assert config.scrape.headless is True
-
-
-@patch("shopify_spy.cli.run_spider")
-def test_cli_headless_collections_warning(mock_run_spider):
-    """--headless with --collections prints a warning explaining why."""
-    result = runner.invoke(app, ["scrape", "https://example.com", "--headless", "--collections"])
-    assert result.exit_code == 0
-    output = strip_ansi(result.stdout).lower()
-    assert "collections" in output
-    assert "not supported" in output
-
-
-def test_cli_headless_no_products_error():
-    """--headless with --no-products exits with an error since nothing can be scraped."""
-    result = runner.invoke(app, ["scrape", "https://example.com", "--headless", "--no-products"])
-    assert result.exit_code == 1
-    output = strip_ansi(result.stdout).lower()
-    assert "nothing to scrape" in output
-
-
-def test_cli_headless_non_shopify_error():
-    """--headless with a non-Shopify platform exits with an error."""
-    result = runner.invoke(
-        app, ["scrape", "https://example.com", "--headless", "--platform", "woocommerce"]
-    )
-    assert result.exit_code == 1
-    output = strip_ansi(result.stdout).lower()
-    assert "only supported" in output
-    assert "shopify" in output

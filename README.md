@@ -88,8 +88,6 @@ shopify-spy scrape [URL] [OPTIONS]
 - `--products / --no-products` - Scrape products (default: yes; Shopify only)
 - `--collections / --no-collections` - Scrape collections (default: no; Shopify only)
 - `--images / --no-images` - Download images (default: no)
-- `--headless / --no-headless` - Use Playwright for headless/Hydrogen stores (default: no)
-- `--install-browser / --no-install-browser` - Auto-install Chromium if missing, headless mode only (default: yes)
 - `--output, -o PATH` - Output directory (default: `./output`)
 - `--format, -F FORMAT` - Output format: `json`, `jsonl`, `csv`, `xml` (default: `jsonl`)
 - `--config, -c FILE` - Path to YAML config file
@@ -124,7 +122,6 @@ scrape:
   products: true      # Scrape product data (Shopify only)
   collections: false  # Scrape collection data (Shopify only)
   images: false       # Download product images
-  headless: false     # Use Playwright for headless Shopify stores
 
 output:
   dir: ./output       # Output directory for results
@@ -253,26 +250,6 @@ import polars as pl
 
 df = pl.read_ndjson("output/shopify_spider_2024-01-15.jsonl")
 ```
-
-## Browser-Based Scraping
-
-Some stores require a real browser to scrape -- for example, stores built on [Hydrogen](https://hydrogen.shopify.dev/) or those that block automated HTTP requests. Use the `--headless` flag to enable Playwright-based scraping:
-
-```bash
-# Install with browser-based scraping support
-pip install shopify-spy[headless]
-
-# or with uv
-uv tool install 'shopify-spy[headless]'
-
-# Scrape a store using browser rendering (Chromium is installed automatically on first use, ~300MB)
-shopify-spy scrape https://example.com --headless
-
-# Skip the auto-install (e.g. in CI where Chromium is pre-installed)
-shopify-spy scrape https://example.com --headless --no-install-browser
-```
-
-Browser mode tries fast JSON endpoints first and only falls back to full page rendering when needed.
 
 ## Limitations
 

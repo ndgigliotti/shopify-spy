@@ -1,6 +1,5 @@
 """Command-line interface for Shopify Spy."""
 
-import subprocess
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -78,12 +77,6 @@ def scrape(
         bool | None,
         typer.Option("--images/--no-images", help="Download product images."),
     ] = None,
-    headless: Annotated[
-        bool | None,
-        typer.Option(
-            "--headless/--no-headless", help="Use Playwright for headless/Hydrogen stores."
-        ),
-    ] = None,
     output: Annotated[
         Path | None,
         typer.Option("--output", "-o", help="Output directory for results."),
@@ -132,13 +125,6 @@ def scrape(
             help="Ignore robots.txt restrictions.",
         ),
     ] = False,
-    install_browser: Annotated[
-        bool,
-        typer.Option(
-            "--install-browser/--no-install-browser",
-            help="Auto-install Playwright's Chromium browser if missing (headless mode only).",
-        ),
-    ] = True,
     verbose: Annotated[
         bool,
         typer.Option("--verbose", "-v", help="Show debug output."),
@@ -159,7 +145,6 @@ def scrape(
         products=products,
         collections=collections,
         images=images,
-        headless=headless,
         output=output,
         format=format,
         concurrent=concurrent,
@@ -181,27 +166,6 @@ def scrape(
         console.print("[red]Error: Cannot use both --verbose and --quiet[/red]")
         raise typer.Exit(1)
     log_level = "DEBUG" if verbose else "WARNING" if quiet else None
-
-    if config.scrape.headless:
-        if config.scrape.platform != Platform.shopify:
-            console.print("[red]Error: --headless is only supported with --platform shopify.[/red]")
-            raise typer.Exit(1)
-
-        _ensure_chromium(install_browser)
-
-        if config.scrape.collections:
-            console.print(
-                "[yellow]Warning: --collections is not supported in headless mode "
-                "(Shopify's collections JSON API is unavailable on headless stores) "
-                "and will be ignored.[/yellow]"
-            )
-
-        if not config.scrape.products:
-            console.print(
-                "[red]Error: --no-products with --headless leaves nothing to scrape "
-                "(collections are not supported in headless mode).[/red]"
-            )
-            raise typer.Exit(1)
 
     # Run the spider
     run_spider(all_urls, config, log_level=log_level)
@@ -231,25 +195,6 @@ def init(
     console.print(f"[green]Created config file: {created}[/green]")
 
 
-def _ensure_chromium(install: bool) -> None:
-    """Install Playwright's Chromium browser if not already installed."""
-    try:
-        from playwright.sync_api import sync_playwright
-
-        with sync_playwright() as p:
-            if Path(p.chromium.executable_path).exists():
-                return
-    except Exception:
-        return
-
-    if not install:
-        return
-
-    console.print("[bold]Chromium not found. Installing now (~300MB)...[/bold]")
-    subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
-    console.print("[green]Chromium installed.[/green]")
-
-
 def apply_cli_overrides(
     config: Config,
     *,
@@ -257,7 +202,6 @@ def apply_cli_overrides(
     products: bool | None,
     collections: bool | None,
     images: bool | None,
-    headless: bool | None,
     output: Path | None,
     format: OutputFormat | None,
     concurrent: int | None,
@@ -283,8 +227,6 @@ def apply_cli_overrides(
         scrape_dict["images"] = images
     if limit is not None:
         scrape_dict["limit"] = limit
-    if headless is not None:
-        scrape_dict["headless"] = headless
     if output is not None:
         output_dict["dir"] = output
     if format is not None:
@@ -383,35 +325,12 @@ def run_spider(
     if not config.scrape.images:
         settings.set("ITEM_PIPELINES", {})
 
-    # Select spider and build kwargs based on platform and headless mode
+    # Select spider and build kwargs based on platform
     if config.scrape.platform == Platform.woocommerce:
         from shopify_spy.spiders.woocommerce import WooCommerceSpider
 
         spider_cls = WooCommerceSpider
         spider_kwargs: dict = {"images": config.scrape.images, "limit": config.scrape.limit}
-    elif config.scrape.headless:
-        try:
-            from shopify_spy.spiders.headless import HeadlessSpider
-        except ImportError:
-            console.print("[red]Error: scrapy-playwright not installed.[/red]")
-            console.print("Install with: uv pip install 'shopify-spy\\[headless]'")
-            raise typer.Exit(1)
-
-        spider_cls = HeadlessSpider
-        spider_kwargs = {
-            "products": config.scrape.products,
-            "limit": config.scrape.limit,
-        }
-        settings.set("TWISTED_REACTOR", "twisted.internet.asyncioreactor.AsyncioSelectorReactor")
-        settings.set(
-            "DOWNLOAD_HANDLERS",
-            {
-                "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-                "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-            },
-        )
-        settings.set("PLAYWRIGHT_BROWSER_TYPE", "chromium")
-        settings.set("PLAYWRIGHT_LAUNCH_OPTIONS", {"headless": True})
     else:
         from shopify_spy.spiders.shopify import ShopifySpider
 
@@ -425,9 +344,7 @@ def run_spider(
 
     console.print(f"[bold]Scraping {len(urls)} store(s)...[/bold]")
     console.print(f"  Platform: {config.scrape.platform.value}")
-    if config.scrape.headless:
-        console.print("  Mode: headless (Playwright)")
-    elif config.scrape.platform == Platform.shopify:
+    if config.scrape.platform == Platform.shopify:
         console.print(f"  Products: {config.scrape.products}")
         console.print(f"  Collections: {config.scrape.collections}")
     console.print(f"  Images: {config.scrape.images}")
