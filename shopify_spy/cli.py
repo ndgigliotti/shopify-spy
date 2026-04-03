@@ -500,7 +500,7 @@ def run_spider(
 
     # Clear the counter line
     if show_counter and counter[0] > 0:
-        console.print(" " * 50, end="\r")
+        print("\r" + " " * 40 + "\r", end="", flush=True)
 
     # Clean up the stderr handler added for verbose mode
     if stderr_handler is not None:
