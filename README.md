@@ -80,6 +80,12 @@ Results are saved as JSONL in the output directory (default: `./output`). Use `-
 - **Log files.** Scrapy's verbose output goes to a log file, keeping the terminal clean. Use `--verbose` to also print to the terminal.
 - **Status JSON.** Each run writes a machine-readable status file with per-URL results, errors, and timing.
 - **Bail timeout.** Automatically aborts if no items are scraped within `--bail` seconds (default: 20).
+- **Coding-agent friendly.** Designed for use by AI coding agents (Claude Code, Cursor, etc.):
+  - `--peek` pipes a single item to stdout for quick schema inspection
+  - Non-zero exit codes on failure with diagnostic messages explaining why
+  - Status JSON with machine-readable per-URL results and error details
+  - `--bail` prevents dead runs from hanging indefinitely
+  - `--quiet` suppresses visual noise; log files capture full Scrapy output separately
 
 ## Supported Platforms
 
