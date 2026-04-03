@@ -120,7 +120,7 @@ def scrape(
     no_item_timeout: Annotated[
         int | None,
         typer.Option(
-            "--no-item-timeout",
+            "--bail",
             help="Abort if no items scraped within N seconds (0 = off).",
         ),
     ] = None,
@@ -421,7 +421,7 @@ def run_spider(
     if timed_out:
         console.print(
             f"  Timed out after {config.scrape.no_item_timeout}s with no items. "
-            "Use [bold]--no-item-timeout 0[/bold] to disable."
+            "Use [bold]--bail 0[/bold] to disable."
         )
     elif robotstxt_blocked and response_count <= len(crawlers):
         console.print(
