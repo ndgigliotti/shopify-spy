@@ -2,7 +2,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from shopify_spy.utils import as_bool, find_all_values, uri_params
+from shopify_spy.utils import as_bool, find_all_values, normalize_url, uri_params
 
 # --- as_bool tests ---
 
@@ -129,3 +129,18 @@ def test_find_all_values_mixed_types():
     assert list(find_all_values("float", data)) == [3.14]
     assert list(find_all_values("bool", data)) == [True]
     assert list(find_all_values("null", data)) == [None]
+
+
+@pytest.mark.parametrize(
+    ("url", "netloc"),
+    [
+        ("store.com", "store.com"),
+        ("store.com:8080", "store.com:8080"),
+        ("//store.com", "store.com"),
+        ("http://store.com", "store.com"),
+    ],
+)
+def test_normalize_url(url, netloc):
+    parsed = normalize_url(url)
+    assert parsed.netloc == netloc
+    assert parsed.scheme == ("http" if url.startswith("http://") else "https")

@@ -9,10 +9,11 @@ if TYPE_CHECKING:
 
 def normalize_url(url: str) -> urllib.parse.ParseResult:
     """Parse a URL, assuming https if no scheme is provided."""
-    parsed = urllib.parse.urlparse(url)
-    if not parsed.scheme:
-        parsed = urllib.parse.urlparse(f"https://{url}")
-    return parsed
+    # Check for "://" rather than parsed.scheme: urlparse reads "store.com:8080"
+    # as scheme "store.com"
+    if "://" not in url:
+        url = f"https://{url.lstrip('/')}"
+    return urllib.parse.urlparse(url)
 
 
 def find_all_values(key: str, obj: Any) -> Iterator[Any]:
