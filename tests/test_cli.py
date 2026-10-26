@@ -634,6 +634,7 @@ def test_timeout_shows_bail_hint(tmp_path, capsys):
     """A no-item timeout prints the --bail hint, not another diagnosis."""
     config = Config(output=OutputConfig(dir=tmp_path))
     stats = [{"finish_reason": "no_item_timeout", "downloader/response_count": 3}]
+    # 3 responses, none blocked or missing: nothing more specific than the timeout
 
     mock_settings = MagicMock()
     with (
@@ -647,6 +648,34 @@ def test_timeout_shows_bail_hint(tmp_path, capsys):
 
     output = capsys.readouterr().out
     assert "Timed out after" in output
+
+
+def test_timeout_does_not_hide_403(tmp_path, capsys):
+    """A store blocked with 403s until --bail fires is reported as blocked."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    stats = [
+        {"item_scraped_count": 0, "finish_reason": "finished"},
+        {
+            "finish_reason": "no_item_timeout",
+            "downloader/response_status_count/403": 5,
+            "downloader/response_count": 5,
+        },
+    ]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process(stats)
+        with pytest.raises((SystemExit, typer.Exit)):
+            run_spider(["https://empty.com", "https://blocked.com"], config)
+
+    output = capsys.readouterr().out
+    assert "blocked.com: 403 Forbidden" in output
+    assert "Received 5 HTTP 403" in output
+    assert "Timed out after" not in output
 
 
 def test_diagnose_crawler_robots():

@@ -6,6 +6,8 @@ import warnings
 from scrapy import signals
 from scrapy.exceptions import NotConfigured
 
+from shopify_spy.config import NO_ITEM_TIMEOUT_REASON
+
 logger = logging.getLogger(__name__)
 
 
@@ -57,7 +59,7 @@ class NoItemTimeout:
         logger.warning(f"No items scraped in {self.timeout}s, aborting")
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message=".*close_spider.*deprecated.*")
-            self.crawler.engine.close_spider(spider, reason="no_item_timeout")
+            self.crawler.engine.close_spider(spider, reason=NO_ITEM_TIMEOUT_REASON)
 
 
 class LiveItemCounter:
