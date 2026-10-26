@@ -284,6 +284,27 @@ def test_get_urls_empty():
     assert urls == []
 
 
+def test_cli_scrape_skips_invalid_urls():
+    """Malformed URLs are skipped with a warning; valid ones are still scraped."""
+    with patch("shopify_spy.cli.run_spider") as mock_run:
+        result = runner.invoke(app, ["scrape", "https://[bad", "https://", "store.com"])
+
+    output = strip_ansi(result.output)
+    assert "Skipping invalid URL: https://[bad" in output
+    assert "Skipping invalid URL: https://" in output
+    assert mock_run.call_args.args[0] == ["store.com"]
+
+
+def test_cli_scrape_all_urls_invalid():
+    """The run fails if every URL is malformed."""
+    with patch("shopify_spy.cli.run_spider") as mock_run:
+        result = runner.invoke(app, ["scrape", "https://[bad"])
+
+    assert result.exit_code == 1
+    assert "No valid URLs provided" in strip_ansi(result.output)
+    mock_run.assert_not_called()
+
+
 def _mock_crawler_process(item_count=1):
     """Create a mock CrawlerProcess whose crawlers report item_count items."""
     mock_process = MagicMock()
