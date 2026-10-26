@@ -550,7 +550,7 @@ def run_spider(
         return
 
     # Diagnose why nothing was scraped
-    timed_out = any(c.stats.get_value("finish_reason", "") == "bail" for c in crawlers)
+    timed_out = any(c.stats.get_value("finish_reason", "") == "no_item_timeout" for c in crawlers)
     http_403 = sum(c.stats.get_value("downloader/response_status_count/403", 0) for c in crawlers)
     http_404 = sum(c.stats.get_value("downloader/response_status_count/404", 0) for c in crawlers)
     response_count = sum(c.stats.get_value("downloader/response_count", 0) for c in crawlers)
@@ -636,7 +636,7 @@ def _diagnose_crawler(crawler: object, config: Config) -> str:
     items = crawler.stats.get_value("item_scraped_count", 0)
     if items > 0:
         return f"{items} items"
-    if crawler.stats.get_value("finish_reason", "") == "bail":
+    if crawler.stats.get_value("finish_reason", "") == "no_item_timeout":
         return "timed out"
     h403 = crawler.stats.get_value("downloader/response_status_count/403", 0)
     if h403 > 0:

@@ -626,8 +626,27 @@ def test_diagnose_crawler_404():
 
 
 def test_diagnose_crawler_timed_out():
-    c = _make_crawler({"finish_reason": "bail"})
+    c = _make_crawler({"finish_reason": "no_item_timeout"})
     assert _diagnose_crawler(c, Config()) == "timed out"
+
+
+def test_timeout_shows_bail_hint(tmp_path, capsys):
+    """A no-item timeout prints the --bail hint, not another diagnosis."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    stats = [{"finish_reason": "no_item_timeout", "downloader/response_count": 3}]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process(stats)
+        with pytest.raises((SystemExit, typer.Exit)):
+            run_spider(["https://slow.com"], config)
+
+    output = capsys.readouterr().out
+    assert "Timed out after" in output
 
 
 def test_diagnose_crawler_robots():
