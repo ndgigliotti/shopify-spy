@@ -491,10 +491,12 @@ def run_spider(
         )
         logging.getLogger().addHandler(stderr_handler)
 
-    # Crawl each URL; capture crawler refs before start() clears the set
+    # Crawl each URL; keep crawlers in URL order (process.crawlers is an unordered set)
+    crawlers = []
     for store_url in urls:
-        process.crawl(spider_cls, url=store_url, **spider_kwargs)
-    crawlers = list(process.crawlers)
+        crawler = process.create_crawler(spider_cls)
+        process.crawl(crawler, url=store_url, **spider_kwargs)
+        crawlers.append(crawler)
 
     start = time.monotonic()
     process.start()
@@ -507,6 +509,14 @@ def run_spider(
     # Clean up the stderr handler added for verbose mode
     if stderr_handler is not None:
         logging.getLogger().removeHandler(stderr_handler)
+
+    # A crawler whose spider failed to initialize never gets stats; give it
+    # empty ones so it is reported as a failed store instead of crashing
+    from scrapy.statscollectors import MemoryStatsCollector
+
+    for c in crawlers:
+        if c.stats is None:
+            c.stats = MemoryStatsCollector(c)
 
     total = sum(c.stats.get_value("item_scraped_count", 0) for c in crawlers)
     multi = len(urls) > 1
@@ -528,7 +538,7 @@ def run_spider(
                 console.print(f"  Log: {log_file}")
             if multi:
                 for url, c in zip(urls, crawlers):
-                    host = urllib.parse.urlparse(url).netloc or url
+                    host = _host(url)
                     count = c.stats.get_value("item_scraped_count", 0)
                     console.print(f"  {host}: {count} items")
         return
@@ -548,7 +558,7 @@ def run_spider(
     console.print("[yellow]Warning: Scraped 0 items.[/yellow]")
     if multi:
         for url, c in zip(urls, crawlers):
-            host = urllib.parse.urlparse(url).netloc or url
+            host = _host(url)
             status = _diagnose_crawler(c, config)
             console.print(f"  {host}: {status}")
 
@@ -583,6 +593,14 @@ def run_spider(
         console.print(f"  Log: {log_file}")
 
     raise typer.Exit(1)
+
+
+def _host(url: str) -> str:
+    """Return the URL's host for display, or the URL itself if it is malformed."""
+    try:
+        return urllib.parse.urlparse(url).netloc or url
+    except ValueError:
+        return url
 
 
 def _diagnose_crawler(crawler: object, config: Config) -> str:
