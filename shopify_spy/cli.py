@@ -4,7 +4,6 @@ import json
 import logging
 import sys
 import time
-import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
@@ -21,6 +20,7 @@ from shopify_spy.config import (
     create_default_config,
     load_config,
 )
+from shopify_spy.utils import normalize_url
 
 app = typer.Typer(
     name="shopify-spy",
@@ -28,6 +28,10 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+logger = logging.getLogger(__name__)
+
+# finish_reason recorded for a crawler whose spider failed to initialize
+FAILED_TO_START = "failed_to_start"
 
 
 def version_callback(value: bool) -> None:
@@ -495,7 +499,13 @@ def run_spider(
     crawlers = []
     for store_url in urls:
         crawler = process.create_crawler(spider_cls)
-        process.crawl(crawler, url=store_url, **spider_kwargs)
+        deferred = process.crawl(crawler, url=store_url, **spider_kwargs)
+        # Log startup failures to the log file instead of as unhandled Deferred tracebacks
+        deferred.addErrback(
+            lambda failure, url=store_url: logger.error(
+                "Spider failed for %s", url, exc_info=failure.value
+            )
+        )
         crawlers.append(crawler)
 
     start = time.monotonic()
@@ -511,12 +521,13 @@ def run_spider(
         logging.getLogger().removeHandler(stderr_handler)
 
     # A crawler whose spider failed to initialize never gets stats; give it
-    # empty ones so it is reported as a failed store instead of crashing
+    # empty ones marked as failed so it is reported instead of crashing
     from scrapy.statscollectors import MemoryStatsCollector
 
     for c in crawlers:
         if c.stats is None:
             c.stats = MemoryStatsCollector(c)
+            c.stats.set_value("finish_reason", FAILED_TO_START)
 
     total = sum(c.stats.get_value("item_scraped_count", 0) for c in crawlers)
     multi = len(urls) > 1
@@ -555,6 +566,10 @@ def run_spider(
         for c in crawlers
     )
 
+    failed_to_start = sum(
+        c.stats.get_value("finish_reason", "") == FAILED_TO_START for c in crawlers
+    )
+
     console.print("[yellow]Warning: Scraped 0 items.[/yellow]")
     if multi:
         for url, c in zip(urls, crawlers):
@@ -562,7 +577,11 @@ def run_spider(
             status = _diagnose_crawler(c, config)
             console.print(f"  {host}: {status}")
 
-    if timed_out:
+    if failed_to_start:
+        console.print(
+            f"  {failed_to_start} store(s) failed to start. Check the URLs; details are in the log."
+        )
+    elif timed_out:
         console.print(
             f"  Timed out after {config.scrape.bail}s with no items. "
             "Use [bold]--bail 0[/bold] to disable."
@@ -598,7 +617,7 @@ def run_spider(
 def _host(url: str) -> str:
     """Return the URL's host for display, or the URL itself if it is malformed."""
     try:
-        return urllib.parse.urlparse(url).netloc or url
+        return normalize_url(url).netloc or url
     except ValueError:
         return url
 
@@ -608,6 +627,8 @@ def _diagnose_crawler(crawler: object, config: Config) -> str:
     items = crawler.stats.get_value("item_scraped_count", 0)
     if items > 0:
         return f"{items} items"
+    if crawler.stats.get_value("finish_reason", "") == FAILED_TO_START:
+        return "failed to start"
     if crawler.stats.get_value("finish_reason", "") == "bail":
         return "timed out"
     h403 = crawler.stats.get_value("downloader/response_status_count/403", 0)

@@ -396,9 +396,13 @@ def test_multi_url_crawls_each_url_with_its_own_crawler(tmp_path):
 
 
 def test_multi_url_crawler_that_failed_to_start(tmp_path, capsys):
-    """A store whose spider failed to initialize is reported, not a crash."""
+    """A store whose spider failed to initialize is reported, not a crash.
+
+    Only a later crawler is realistic here: if the first one fails, Scrapy never
+    installs the reactor and every other crawler fails too (see #21).
+    """
     config = Config(output=OutputConfig(dir=tmp_path))
-    urls = ["https://[bad", "https://store2.com"]
+    urls = ["https://store1.com", "https://[bad"]
 
     mock_settings = MagicMock()
     with (
@@ -408,16 +412,37 @@ def test_multi_url_crawler_that_failed_to_start(tmp_path, capsys):
     ):
         failed = MagicMock(stats=None, settings=Settings())
         mock_cls.return_value.create_crawler.side_effect = [
-            failed,
             _make_crawler({"item_scraped_count": 4}),
+            failed,
         ]
         run_spider(urls, config)
 
     output = capsys.readouterr().out
-    assert "store2.com: 4 items" in output
+    assert "store1.com: 4 items" in output
     data = json.loads(next(tmp_path.glob("status/*_status.json")).read_text())
-    assert data["urls"][0] == {"url": "https://[bad", "items": 0, "status": "no response"}
-    assert data["urls"][1]["items"] == 4
+    assert data["urls"][0]["items"] == 4
+    assert data["urls"][1] == {"url": "https://[bad", "items": 0, "status": "failed to start"}
+
+
+def test_all_crawlers_failed_to_start(tmp_path, capsys):
+    """The zero-item summary blames startup, not robots.txt or the network."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value.create_crawler.side_effect = [
+            MagicMock(stats=None, settings=Settings()),
+        ]
+        with pytest.raises((SystemExit, typer.Exit)):
+            run_spider(["https://[bad"], config)
+
+    output = capsys.readouterr().out
+    assert "1 store(s) failed to start" in output
+    assert "robots.txt" not in output
 
 
 def test_single_url_success_no_per_url_breakdown(tmp_path, capsys):
