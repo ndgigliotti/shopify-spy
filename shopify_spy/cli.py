@@ -206,14 +206,16 @@ def scrape(
         raise typer.Exit(1)
 
     # Skip malformed URLs; a spider that fails to start stops the whole run
-    invalid = [u for u in all_urls if not _is_valid_url(u)]
-    if invalid:
-        for u in invalid:
-            console.print(f"[yellow]Warning: Skipping invalid URL: {u}[/yellow]")
-        all_urls = [u for u in all_urls if u not in invalid]
-        if not all_urls:
-            console.print("[red]Error: No valid URLs provided.[/red]")
-            raise typer.Exit(1)
+    valid_urls = []
+    for u in all_urls:
+        if _is_valid_url(u):
+            valid_urls.append(u)
+        else:
+            err_console.print(f"[yellow]Warning: Skipping invalid URL: {u}[/yellow]")
+    if not valid_urls:
+        err_console.print("[red]Error: No valid URLs provided.[/red]")
+        raise typer.Exit(1)
+    all_urls = valid_urls
 
     # --peek implies limit=1, quiet logging, no images
     if peek:
@@ -331,11 +333,17 @@ def get_urls(urls: list[str] | None, url_file: Path | None) -> list[str]:
 
 
 def _is_valid_url(url: str) -> bool:
-    """Return True if the URL parses and has a host."""
+    """Return True if the URL is an http(s) URL with a host and a valid port."""
     try:
-        return bool(normalize_url(url).netloc)
+        parsed = normalize_url(url)
+        parsed.port  # Raises ValueError for a non-numeric or out-of-range port
     except ValueError:
         return False
+    return (
+        parsed.scheme in ("http", "https")
+        and bool(parsed.hostname)
+        and not any(c.isspace() for c in url)
+    )
 
 
 def _log_dir() -> Path:

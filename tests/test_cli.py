@@ -11,6 +11,7 @@ from shopify_spy.cli import (
     Platform,
     _diagnose_crawler,
     _finish_reason,
+    _is_valid_url,
     app,
     apply_cli_overrides,
     get_urls,
@@ -289,10 +290,44 @@ def test_cli_scrape_skips_invalid_urls():
     with patch("shopify_spy.cli.run_spider") as mock_run:
         result = runner.invoke(app, ["scrape", "https://[bad", "https://", "store.com"])
 
-    output = strip_ansi(result.output)
-    assert "Skipping invalid URL: https://[bad" in output
-    assert "Skipping invalid URL: https://" in output
+    stderr = strip_ansi(result.stderr)
+    assert "Skipping invalid URL: https://[bad" in stderr
+    assert "Skipping invalid URL: https://" in stderr
+    assert "Skipping" not in result.stdout
     assert mock_run.call_args.args[0] == ["store.com"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "store.com",
+        "https://store.com",
+        "http://store.com/collections/all",
+        "store.com:8080",
+        "localhost:8080",
+        "//store.com",
+        "https://[::1]:8443",
+    ],
+)
+def test_is_valid_url_accepts(url):
+    assert _is_valid_url(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://[bad",
+        "https://",
+        "http://:80",
+        "://store.com",
+        "https://store.com:99999",
+        "https://store.com:abc",
+        "ftp://store.com",
+        "http://exa mple.com",
+    ],
+)
+def test_is_valid_url_rejects(url):
+    assert not _is_valid_url(url)
 
 
 def test_cli_scrape_all_urls_invalid():
@@ -301,7 +336,7 @@ def test_cli_scrape_all_urls_invalid():
         result = runner.invoke(app, ["scrape", "https://[bad"])
 
     assert result.exit_code == 1
-    assert "No valid URLs provided" in strip_ansi(result.output)
+    assert "No valid URLs provided" in strip_ansi(result.stderr)
     mock_run.assert_not_called()
 
 
