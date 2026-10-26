@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from shopify_spy.config import (
+    NO_ITEM_TIMEOUT_REASON,
     OUTPUT_FORMATS,
     Config,
     OutputFormat,
@@ -326,7 +327,7 @@ def _finish_reason(crawlers: list, config: Config) -> str:
     if any(c.stats.get_value(CRAWLER_FAILED_STAT, False) for c in crawlers):
         return "crawler_failed"
     reasons = [c.stats.get_value("finish_reason", "unknown") for c in crawlers]
-    if any(r == "no_item_timeout" for r in reasons):
+    if any(r == NO_ITEM_TIMEOUT_REASON for r in reasons):
         return "bail"
     limit = config.scrape.limit
     if limit is not None:
@@ -550,7 +551,9 @@ def run_spider(
         return
 
     # Diagnose why nothing was scraped
-    timed_out = any(c.stats.get_value("finish_reason", "") == "no_item_timeout" for c in crawlers)
+    timed_out = any(
+        c.stats.get_value("finish_reason", "") == NO_ITEM_TIMEOUT_REASON for c in crawlers
+    )
     http_403 = sum(c.stats.get_value("downloader/response_status_count/403", 0) for c in crawlers)
     http_404 = sum(c.stats.get_value("downloader/response_status_count/404", 0) for c in crawlers)
     response_count = sum(c.stats.get_value("downloader/response_count", 0) for c in crawlers)
@@ -570,11 +573,7 @@ def run_spider(
 
     if crawler_failures:
         console.print(f"  {crawler_failures} store(s) failed with an error.")
-    elif timed_out:
-        console.print(
-            f"  Timed out after {config.scrape.bail}s with no items. "
-            "Use [bold]--bail 0[/bold] to disable."
-        )
+    # Specific causes first: a blocked store often keeps retrying until --bail fires
     elif robotstxt_blocked and response_count <= len(crawlers):
         console.print(
             "  Likely blocked by robots.txt. "
@@ -591,6 +590,11 @@ def run_spider(
         console.print(
             f"  Received {http_404} HTTP 404 (Not Found) response(s). "
             "Check the URL and --platform flag."
+        )
+    elif timed_out:
+        console.print(
+            f"  Timed out after {config.scrape.bail}s with no items. "
+            "Use [bold]--bail 0[/bold] to disable."
         )
     elif response_count == 0:
         console.print("  No responses received. Check the URL and your network connection.")
@@ -636,8 +640,6 @@ def _diagnose_crawler(crawler: object, config: Config) -> str:
     items = crawler.stats.get_value("item_scraped_count", 0)
     if items > 0:
         return f"{items} items"
-    if crawler.stats.get_value("finish_reason", "") == "no_item_timeout":
-        return "timed out"
     h403 = crawler.stats.get_value("downloader/response_status_count/403", 0)
     if h403 > 0:
         return "403 Forbidden"
@@ -648,6 +650,8 @@ def _diagnose_crawler(crawler: object, config: Config) -> str:
     robots = crawler.stats.get_value("robotstxt/response_count", 0)
     if resp > 0 and resp == robots and config.network.respect_robots_txt:
         return "blocked by robots.txt"
+    if crawler.stats.get_value("finish_reason", "") == NO_ITEM_TIMEOUT_REASON:
+        return "timed out"
     if resp == 0:
         return "no response"
     return "0 items"
