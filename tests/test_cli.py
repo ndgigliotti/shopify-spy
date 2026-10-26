@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import typer
+from scrapy.settings import Settings
 
 from shopify_spy.cli import (
     Platform,
@@ -289,7 +290,7 @@ def _mock_crawler_process(item_count=1):
     mock_crawler.stats.get_value.side_effect = lambda key, default=0: (
         item_count if key == "item_scraped_count" else default
     )
-    mock_process.crawlers = [mock_crawler]
+    mock_process.create_crawler.return_value = mock_crawler
     return mock_process
 
 
@@ -342,7 +343,7 @@ def _make_crawler(stats_dict):
 def _mock_multi_crawler_process(stats_list):
     """Create a mock CrawlerProcess with one crawler per entry in stats_list."""
     proc = MagicMock()
-    proc.crawlers = [_make_crawler(s) for s in stats_list]
+    proc.create_crawler.side_effect = [_make_crawler(s) for s in stats_list]
     return proc
 
 
@@ -371,6 +372,52 @@ def test_multi_url_success_shows_per_url_counts(tmp_path, capsys):
     assert "Done!" in output
     assert "store1.com: 10 items" in output
     assert "store2.com: 5 items" in output
+
+
+def test_multi_url_crawls_each_url_with_its_own_crawler(tmp_path):
+    """Each URL is crawled with the crawler whose stats are reported for it."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    urls = ["https://store1.com", "https://store2.com", "https://store3.com"]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        crawlers = [_make_crawler({"item_scraped_count": 1}) for _ in urls]
+        proc = mock_cls.return_value
+        proc.create_crawler.side_effect = crawlers
+        run_spider(urls, config)
+
+    calls = proc.crawl.call_args_list
+    assert [c.args[0] for c in calls] == crawlers
+    assert [c.kwargs["url"] for c in calls] == urls
+
+
+def test_multi_url_crawler_that_failed_to_start(tmp_path, capsys):
+    """A store whose spider failed to initialize is reported, not a crash."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    urls = ["https://[bad", "https://store2.com"]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        failed = MagicMock(stats=None, settings=Settings())
+        mock_cls.return_value.create_crawler.side_effect = [
+            failed,
+            _make_crawler({"item_scraped_count": 4}),
+        ]
+        run_spider(urls, config)
+
+    output = capsys.readouterr().out
+    assert "store2.com: 4 items" in output
+    data = json.loads(next(tmp_path.glob("status/*_status.json")).read_text())
+    assert data["urls"][0] == {"url": "https://[bad", "items": 0, "status": "no response"}
+    assert data["urls"][1]["items"] == 4
 
 
 def test_single_url_success_no_per_url_breakdown(tmp_path, capsys):
