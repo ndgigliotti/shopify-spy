@@ -205,6 +205,16 @@ def scrape(
         console.print("Provide a URL argument, --url-file, or run interactively.")
         raise typer.Exit(1)
 
+    # Skip malformed URLs; a spider that fails to start stops the whole run
+    invalid = [u for u in all_urls if not _is_valid_url(u)]
+    if invalid:
+        for u in invalid:
+            console.print(f"[yellow]Warning: Skipping invalid URL: {u}[/yellow]")
+        all_urls = [u for u in all_urls if u not in invalid]
+        if not all_urls:
+            console.print("[red]Error: No valid URLs provided.[/red]")
+            raise typer.Exit(1)
+
     # --peek implies limit=1, quiet logging, no images
     if peek:
         if config.scrape.limit is None:
@@ -318,6 +328,14 @@ def get_urls(urls: list[str] | None, url_file: Path | None) -> list[str]:
             return [url]
 
     return []
+
+
+def _is_valid_url(url: str) -> bool:
+    """Return True if the URL parses and has a host."""
+    try:
+        return bool(normalize_url(url).netloc)
+    except ValueError:
+        return False
 
 
 def _log_dir() -> Path:
