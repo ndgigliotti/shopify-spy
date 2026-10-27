@@ -145,6 +145,10 @@ class ItemWriter:
 def _csv_value(value: Any) -> Any:
     if value is None:
         return ""
+    # Lists of strings are comma-joined, as Scrapy's CSV exporter did (image_urls);
+    # other nested values are JSON, where Scrapy wrote unparseable Python reprs
+    if isinstance(value, (list, tuple)) and all(isinstance(v, str) for v in value):
+        return ",".join(value)
     if isinstance(value, (dict, list, tuple)):
         return _dumps(value)
     return value

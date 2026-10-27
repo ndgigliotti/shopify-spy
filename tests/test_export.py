@@ -22,7 +22,7 @@ def test_matches_scrapy_exporter(tmp_path, fmt):
 
 
 def test_csv_matches_golden_file(tmp_path):
-    # D2: CSV deliberately differs from Scrapy's (nested values are JSON), so the
+    # D2: CSV deliberately differs from Scrapy's (nested objects are JSON), so the
     # golden file comes from this writer
     path = tmp_path / "out.csv"
     write_items(ITEMS, path)
@@ -36,7 +36,9 @@ def test_csv_encodes_nested_values_as_json(tmp_path):
     # Columns come from the first item, as with Scrapy
     assert list(rows[0]) == ["product", "url", "store", "image_urls"]
     assert json.loads(rows[0]["product"]) == ITEMS[0]["product"]
-    assert json.loads(rows[0]["image_urls"]) == ITEMS[0]["image_urls"]
+    # Lists of strings stay comma-joined, as Scrapy wrote them
+    assert rows[0]["image_urls"] == ",".join(ITEMS[0]["image_urls"])
+    assert rows[1]["image_urls"] == ""
     assert rows[1]["product"] == ""
 
 
