@@ -5,18 +5,19 @@ Run monthly or before a release: uv run python scripts/update_user_agents.py
 Browsers freeze most of their user agent (OS tokens, minor versions), so only
 major versions change, and this script updates only those, from official sources:
 
-- Chrome: Google's Version History API (two newest stable majors per platform)
+- Chrome: Google's Version History API. The newest major that most stable users
+  get (an early rollout to a few percent doesn't count) and the one before it.
 - Firefox: Mozilla's product-details (latest release and ESR)
 - Edge: Microsoft's Edge update API (newest stable major)
 
-Everything else is a template: the string formats below and SAFARI_VERSION (Apple
-has no machine-readable feed). The script can't tell when a vendor changes its
-format, so every run ends with a reminder to research that (an agent with web
-access, or by hand), update the templates here, and set "formats_verified" in the
-JSON to the date of that check.
+Everything else is hand-set: the string templates and SAFARI_VERSION (Apple has no
+machine-readable feed). The script can't tell when a vendor changes its format, so
+every run ends with a reminder to research that (an agent with web access, or by
+hand), update them here, and set "formats_verified" in the JSON to the date of that
+check.
 
 Exit status: 0 when the file is current or was updated (stdout says which); 2 when
-a generated string breaks a version-token rule real browsers follow (nothing is
+a generated string doesn't match a real browser's shape (SHAPES; nothing is
 written; the templates are wrong); 1 with a traceback when a feed is unreachable
 or has changed shape.
 """
@@ -34,16 +35,17 @@ from pathlib import Path
 SAFARI_VERSION = "27.0"
 
 OUTPUT = Path(__file__).resolve().parent.parent / "shopify_spy" / "user_agents.json"
+# Releases currently served on the stable channel, with the fraction of users each gets
 CHROME_API = (
     "https://versionhistory.googleapis.com/v1/chrome/platforms/{platform}/channels/stable/"
-    "versions?order_by=version%20desc&pageSize=200"
+    "versions/all/releases?filter=endtime=none"
 )
 FIREFOX_API = "https://product-details.mozilla.org/1.0/firefox_versions.json"
 EDGE_API = "https://edgeupdates.microsoft.com/api/products"
+MAJORITY = 0.5  # a Chrome major counts once a release of it serves this share of users
 
 # Frozen platform tokens, as each browser sends them whatever the real OS version
-# (Chrome: name -> (Version History platform id, token))
-CHROME = {
+CHROME = {  # name -> (Version History platform id, token)
     "Windows": ("win", "Windows NT 10.0; Win64; x64"),
     "macOS": ("mac", "Macintosh; Intel Mac OS X 10_15_7"),
     "Linux": ("linux", "X11; Linux x86_64"),
@@ -54,29 +56,44 @@ FIREFOX = {
     "Linux": ["X11; Linux x86_64", "X11; Ubuntu; Linux x86_64"],
 }
 
-# (marker, pattern a string containing the marker must match, problem) -- version
-# tokens a real browser always sends together
-TOKEN_RULES = [
-    (
-        "Chrome/",
-        re.compile(r"Chrome/\d+\.0\.0\.0 Safari/537\.36"),
-        "Chrome not in reduced 'Chrome/N.0.0.0 Safari/537.36' form",
+# Exact shapes of real browser UAs, on the platforms each browser reports; every
+# generated string must match one in full. Mirrors 0.2.x's tests/test_middlewares.py
+# _UA_SHAPES (master 1f1b501), which several reviews tightened.
+_V = r"[1-9]\d*"  # a major version, never zero-padded
+_CHROME_KIT = r"AppleWebKit/537\.36 \(KHTML, like Gecko\)"
+_SAFARI_KIT = r"AppleWebKit/605\.1\.15 \(KHTML, like Gecko\)"
+_SAFARI_VERSION = rf"Version/{_V}\.\d+(?:\.\d+)?"
+SHAPES = [
+    # Desktop Chrome and Edge (reduced UA: major version only, Edge's equal to Chrome's)
+    re.compile(
+        r"Mozilla/5\.0 \((?:Windows NT 10\.0; Win64; x64|Macintosh; Intel Mac OS X 10_15_7"
+        rf"|X11; Linux x86_64)\) {_CHROME_KIT} Chrome/(?P<v>{_V})\.0\.0\.0 Safari/537\.36"
+        r"(?: Edg/(?P=v)\.0\.0\.0)?"
     ),
-    (
-        "Edg/",
-        re.compile(r"Chrome/(\d+)\.0\.0\.0 Safari/537\.36 Edg/\1\.0\.0\.0$"),
-        "Edge major doesn't match its Chrome major",
+    # Android Chrome
+    re.compile(
+        rf"Mozilla/5\.0 \(Linux; Android {_V}; K\) {_CHROME_KIT} "
+        rf"Chrome/{_V}\.0\.0\.0 Mobile Safari/537\.36"
     ),
-    (
-        "Firefox/",
-        re.compile(r"rv:([\d.]+)\).*Firefox/\1$"),
-        "Firefox rv: doesn't equal its Firefox/ version",
+    # Android WebView (wv), which adds Version/4.0
+    re.compile(
+        rf"Mozilla/5\.0 \(Linux; Android {_V}; K; wv\) {_CHROME_KIT} "
+        rf"Version/4\.0 Chrome/{_V}\.0\.0\.0 Mobile Safari/537\.36"
     ),
-    (
-        # major.minor, sometimes with a patch (Version/26.0, Version/26.6.1); never bare
-        "Version/",
-        re.compile(r"Version/\d+\.\d+(\.\d+)? Safari/"),
-        "Safari Version/ isn't major.minor",
+    # Desktop Firefox: rv: equals the Firefox version
+    re.compile(
+        r"Mozilla/5\.0 \((?:Windows NT 10\.0; Win64; x64|Macintosh; Intel Mac OS X 10\.15"
+        rf"|X11; (?:Ubuntu; )?Linux x86_64); rv:(?P<v>{_V}\.\d+)\) Gecko/20100101 Firefox/(?P=v)"
+    ),
+    # Safari on macOS
+    re.compile(
+        rf"Mozilla/5\.0 \(Macintosh; Intel Mac OS X 10_15_7\) {_SAFARI_KIT} "
+        rf"{_SAFARI_VERSION} Safari/605\.1\.15"
+    ),
+    # Safari on iOS (iPhone sends "CPU iPhone OS") and iPadOS ("CPU OS")
+    re.compile(
+        rf"Mozilla/5\.0 \((?:iPhone; CPU iPhone OS|iPad; CPU OS) {_V}(?:_\d+)* like Mac OS X\) "
+        rf"{_SAFARI_KIT} {_SAFARI_VERSION} Mobile/\w+ Safari/604\.1"
     ),
 ]
 
@@ -87,10 +104,10 @@ of them changed: Safari's current version (Apple's Safari release notes), and
 announced user agent changes from Chrome (chromestatus.com), Firefox (MDN) and Edge.
 Compare against real user agents, e.g. useragents.me; informal lists like
 jnrbsn/user-agents are templated themselves (they drop Safari's minor version).
-If anything changed, edit the templates in scripts/update_user_agents.py; either way,
-set "formats_verified" in {output} to the date you checked."""
+If anything changed, edit scripts/update_user_agents.py (templates and SHAPES
+together); either way, set "formats_verified" in {output} to the date you checked."""
 
-Agents = dict[str, list[str]]  # group label -> user agents
+Agents = dict[str, dict[str, list[str]]]  # browser -> platform -> user agents
 
 
 def get_json(url: str) -> object:
@@ -103,16 +120,20 @@ def major(version: str) -> int:
 
 
 def chrome_majors() -> list[int]:
-    """The two newest majors released on every desktop platform.
+    """The newest major most stable users run on every platform, and the one before.
 
-    A major on only one platform is still rolling out (rare in real traffic), so
-    the same two majors are used everywhere.
+    Early stable rollouts reach a few percent of users first (157 at 0.5% on
+    Windows only, Oct 2026); a version that rare stands out, so it doesn't count.
     """
-    per_platform = [
-        {major(v["version"]) for v in get_json(CHROME_API.format(platform=p))["versions"]}
-        for p, _ in CHROME.values()
-    ]
-    return sorted(set.intersection(*per_platform))[-2:]
+    majority = []
+    for platform_id, _ in CHROME.values():
+        releases = get_json(CHROME_API.format(platform=platform_id))["releases"]
+        served = [major(r["version"]) for r in releases if r.get("fraction", 0) >= MAJORITY]
+        if not served:
+            raise RuntimeError(f"no Chrome release serves most {platform_id} users")
+        majority.append(max(served))
+    newest = min(majority)
+    return [newest - 1, newest]
 
 
 def firefox_majors() -> list[int]:
@@ -142,35 +163,39 @@ def chrome_ua(token: str, version: int) -> str:
 
 
 def build() -> Agents:
-    """User agents by group label, in the order they're listed."""
-    agents: Agents = {}
+    """User agents by browser and platform."""
     chrome = chrome_majors()
-    for name, (_, token) in CHROME.items():
-        agents[f"Chrome - {name}"] = [chrome_ua(token, m) for m in chrome]
     ff = firefox_majors()
-    for name, tokens in FIREFOX.items():
-        agents[f"Firefox - {name}"] = [
-            f"Mozilla/5.0 ({token}; rv:{m}.0) Gecko/20100101 Firefox/{m}.0"
-            for token in tokens
-            for m in ff
-        ]
-    agents["Safari - macOS"] = [
-        f"Mozilla/5.0 ({CHROME['macOS'][1]}) AppleWebKit/605.1.15 (KHTML, like Gecko) "
-        f"Version/{SAFARI_VERSION} Safari/605.1.15"
-    ]
     e = edge_major()
-    agents["Edge - Windows"] = [f"{chrome_ua(CHROME['Windows'][1], e)} Edg/{e}.0.0.0"]
-    return agents
+    return {
+        "Chrome": {
+            name: [chrome_ua(token, m) for m in chrome] for name, (_, token) in CHROME.items()
+        },
+        "Firefox": {
+            name: [
+                f"Mozilla/5.0 ({token}; rv:{m}.0) Gecko/20100101 Firefox/{m}.0"
+                for token in tokens
+                for m in ff
+            ]
+            for name, tokens in FIREFOX.items()
+        },
+        "Safari": {
+            "macOS": [
+                f"Mozilla/5.0 ({CHROME['macOS'][1]}) AppleWebKit/605.1.15 (KHTML, like Gecko) "
+                f"Version/{SAFARI_VERSION} Safari/605.1.15"
+            ]
+        },
+        "Edge": {"Windows": [f"{chrome_ua(CHROME['Windows'][1], e)} Edg/{e}.0.0.0"]},
+    }
 
 
-def consistency_errors(agents: list[str]) -> list[str]:
-    """Version tokens a real browser always sends together; a mismatch is a fake-UA tell."""
-    errors = []
-    for a in agents:
-        for marker, pattern, problem in TOKEN_RULES:
-            if marker in a and not pattern.search(a):
-                errors.append(f"{problem}: {a}")
-    return errors
+def flatten(agents: Agents) -> list[str]:
+    return [a for platforms in agents.values() for group in platforms.values() for a in group]
+
+
+def shape_errors(agents: list[str]) -> list[str]:
+    """User agents that don't match any real browser's shape in full."""
+    return [a for a in agents if not any(shape.fullmatch(a) for shape in SHAPES)]
 
 
 def load() -> dict:
@@ -182,22 +207,25 @@ def load() -> dict:
 
 def main() -> int:
     agents = build()
-    errors = consistency_errors([a for group in agents.values() for a in group])
+    errors = shape_errors(flatten(agents))
     if errors:
-        for error in errors:
-            print(f"ERROR {error}")
+        for agent in errors:
+            print(f"ERROR not a real browser's user agent shape: {agent}")
         print(f"Not writing {OUTPUT}: fix the templates in this script first")
         return 2
     current = load()
-    today = datetime.date.today().isoformat()
     # Only research sets this; never stamp a check that didn't happen
     verified = current.get("formats_verified")
-    # Leave the file (and its dates) alone unless the list changed, so a clean
+    # Leave the file (and its dates) alone unless something changed, so a clean
     # git diff means there's nothing to update
     if current.get("agents") == agents:
         print(f"Unchanged: {OUTPUT}")
     else:
-        data = {"generated": today, "formats_verified": verified, "agents": agents}
+        data = {
+            "generated": datetime.date.today().isoformat(),
+            "formats_verified": verified,
+            "agents": agents,
+        }
         OUTPUT.write_text(json.dumps(data, indent=2) + "\n", "utf-8")
         print(f"Wrote {OUTPUT}")
     print(REMINDER.format(safari=SAFARI_VERSION, verified=verified or "never", output=OUTPUT.name))

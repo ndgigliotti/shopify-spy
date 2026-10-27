@@ -7,14 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from shopify_spy._user_agents import _DATA as SHIPPED
-from shopify_spy._user_agents import USER_AGENTS
+from shopify_spy._policy import USER_AGENTS
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "update_user_agents.py"
 spec = importlib.util.spec_from_file_location("update_user_agents", SCRIPT)
 gen = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gen)
 
+SHIPPED = gen.load()
 # Deliberately calendar-based: they fail when the monthly update stops, which is the alarm
 MAX_AGE_DAYS = 120  # versions: the monthly job keeps them well under this
 MAX_FORMAT_CHECK_AGE_DAYS = 180  # formats: researched at least twice a year
@@ -35,10 +35,6 @@ def output(tmp_path, monkeypatch):
     return path
 
 
-def flat(agents):
-    return [agent for group in agents.values() for agent in group]
-
-
 def age_days(iso_date):
     return (datetime.date.today() - datetime.date.fromisoformat(iso_date)).days
 
@@ -47,14 +43,13 @@ def age_days(iso_date):
 
 
 def test_shipped_list_is_well_formed():
+    assert USER_AGENTS == gen.flatten(SHIPPED["agents"])
     assert len(USER_AGENTS) == len(set(USER_AGENTS))
-    assert all(a.startswith("Mozilla/5.0 (") for a in USER_AGENTS)
-    for browser in ("Chrome/", "Firefox/", "Edg/", "Version/"):
-        assert any(browser in a for a in USER_AGENTS), browser
+    assert set(SHIPPED["agents"]) == {"Chrome", "Edge", "Firefox", "Safari"}
 
 
-def test_shipped_list_version_tokens_are_consistent():
-    assert gen.consistency_errors(USER_AGENTS) == []
+def test_shipped_list_matches_real_browser_shapes():
+    assert gen.shape_errors(USER_AGENTS) == []
 
 
 def test_shipped_versions_are_recent():
@@ -71,32 +66,141 @@ def test_formats_were_researched_recently():
     )
 
 
-# --- Version-token rules --------------------------------------------------------------
+# --- Real browser shapes (cases from 0.2.x's test_browser_shape_check) -----------------
+
+_MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+_IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X)"
+_IPAD = "Mozilla/5.0 (iPad; CPU OS 18_6 like Mac OS X)"
+_WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+_WEBVIEW = "Mozilla/5.0 (Linux; Android 10; K; wv)"
+_SK = "AppleWebKit/605.1.15 (KHTML, like Gecko)"
+_CK = "AppleWebKit/537.36 (KHTML, like Gecko)"
+_FF = "Gecko/20100101 Firefox"
 
 
 @pytest.mark.parametrize(
-    "agent",
+    ("ua", "valid"),
     [
-        "Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 Version/27 Safari/605.1.15",
-        "Mozilla/5.0 (Windows NT 10.0; rv:153.0) Gecko/20100101 Firefox/158.0",
-        "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/156.0.0.0 Safari/537.36 "
-        "Edg/155.0.0.0",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/156.0.7600.12 Safari/537.36",
+        # Safari
+        pytest.param(f"{_MAC} {_SK} Version/27.0 Safari/605.1.15", True, id="safari"),
+        pytest.param(f"{_MAC} {_SK} Version/26.6.1 Safari/605.1.15", True, id="safari-patch"),
+        pytest.param(f"{_MAC} {_SK} Version/27 Safari/605.1.15", False, id="safari-bare-major"),
+        pytest.param(f"{_MAC} {_CK} Version/27.0 Safari/605.1.15", False, id="safari-wrong-kit"),
+        pytest.param(f"{_MAC} {_SK} Version/27.0 Safari/605.1", False, id="safari-short-build"),
+        pytest.param(f"{_MAC} {_SK} Safari/605.1.15", False, id="safari-no-version"),
+        pytest.param(
+            f"{_MAC} {_SK} Version/27.0 Mobile/15E148 Safari/605.1.15",
+            False,
+            id="safari-mobile-mac",
+        ),
+        pytest.param(f"{_IPHONE} {_SK} Version/26.0 Mobile/15E148 Safari/604.1", True, id="iphone"),
+        pytest.param(f"{_IPAD} {_SK} Version/26.0 Mobile/15E148 Safari/604.1", True, id="ipad"),
+        pytest.param(
+            f"Mozilla/5.0 (iPad; CPU iPhone OS 18_6 like Mac OS X) {_SK} "
+            "Version/26.0 Mobile/15E148 Safari/604.1",
+            False,
+            id="ipad-iphone-os",
+        ),
+        pytest.param(f"{_IPHONE} {_SK} Version/26.0 Safari/604.1", False, id="iphone-no-mobile"),
+        pytest.param(
+            f"{_IPHONE} {_SK} Version/26.0 Mobile/15E148 Safari/605.1.15",
+            False,
+            id="iphone-mac-build",
+        ),
+        # Chrome and Edge
+        pytest.param(f"{_WIN} {_CK} Chrome/156.0.0.0 Safari/537.36", True, id="chrome"),
+        pytest.param(f"{_WIN} {_CK} Chrome/156.0.7000.12 Safari/537.36", False, id="chrome-full"),
+        pytest.param(f"{_WIN} {_CK} Chrome/0156.0.0.0 Safari/537.36", False, id="chrome-zero-pad"),
+        pytest.param(f"{_WIN} {_CK} Chrom/156.0.0.0 Safari/537.36", False, id="chrome-typo"),
+        pytest.param(f"( ) {_CK} Chrome/156.0.0.0 Safari/537.36", False, id="chrome-no-platform"),
+        pytest.param(
+            f"{_WIN} {_CK} Chrome/156.0.0.0 Mobile Safari/537.36", False, id="chrome-mobile-win"
+        ),
+        pytest.param(f"{_WIN} {_CK} Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0", True, id="edge"),
+        pytest.param(
+            f"{_WIN} {_CK} Chrome/157.0.0.0 Safari/537.36 Edg/156.0.0.0", False, id="edge-mismatch"
+        ),
+        pytest.param(f"{_WIN} {_CK} Safari/537.36 Edg/156.0.0.0", False, id="edge-no-chrome"),
+        pytest.param(
+            f"{_WIN} {_CK} Chrome/156.0.0.0 Safari/537.36 Edg/156.0.3485.54", False, id="edge-full"
+        ),
+        pytest.param(
+            f"{_WEBVIEW} {_CK} Version/4.0 Chrome/156.0.0.0 Mobile Safari/537.36",
+            True,
+            id="webview",
+        ),
+        pytest.param(
+            f"{_WEBVIEW} {_CK} Version/4.0 Chrome/156.0.0.0 Mobile Safari/537.36 Edg/156.0.0.0",
+            False,
+            id="webview-edge",
+        ),
+        pytest.param(
+            f"{_WIN} {_CK} Version/4.0 Chrome/156.0.0.0 Safari/537.36",
+            False,
+            id="webview-token-win",
+        ),
+        # Firefox
+        pytest.param(
+            f"Mozilla/5.0 (X11; Linux x86_64; rv:158.0) {_FF}/158.0", True, id="firefox-linux"
+        ),
+        pytest.param(
+            f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:158.0) {_FF}/158.0",
+            True,
+            id="firefox-mac",
+        ),
+        pytest.param(
+            f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7; rv:158.0) {_FF}/158.0",
+            False,
+            id="firefox-chrome-mac-token",
+        ),
+        pytest.param(
+            f"Mozilla/5.0 (garbage; rv:158.0) {_FF}/158.0", False, id="firefox-bad-platform"
+        ),
+        pytest.param(
+            f"Mozilla/5.0 (X11; Linux x86_64; rv:153.0) {_FF}/153.01", False, id="firefox-overmatch"
+        ),
+        pytest.param(
+            f"Mozilla/5.0 (X11; Linux x86_64; rv:153.0) {_FF}/158.0",
+            False,
+            id="firefox-rv-mismatch",
+        ),
+        pytest.param(
+            "Mozilla/5.0 (X11; Linux x86_64; rv:158.0) Gecko/158.0 Firefox/158.0",
+            False,
+            id="firefox-android-gecko",
+        ),
+        pytest.param(
+            f"Mozilla/5.0 (X11; Linux x86_64; rv:158.0) {_FF}/158.0 Chrome/156.0.0.0 Safari/537.36",
+            False,
+            id="firefox-chrome-mix",
+        ),
     ],
-    ids=["safari-bare-major", "firefox-rv-mismatch", "edge-chrome-mismatch", "chrome-unreduced"],
 )
-def test_inconsistent_version_tokens_are_caught(agent):
-    assert gen.consistency_errors([agent])
+def test_browser_shape_check(ua, valid):
+    assert (gen.shape_errors([ua]) == []) is valid
 
 
-def test_safari_patch_versions_are_valid():
-    # Real Safari sends these too (useragents.me, 2026-10)
-    safari = "Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 Version/{} Safari/605.1.15"
-    assert gen.consistency_errors([safari.format("26.6.1"), safari.format("26.0")]) == []
+def test_generated_strings_match_real_browser_shapes(fixed_versions):
+    assert gen.shape_errors(gen.flatten(gen.build())) == []
 
 
-def test_generated_strings_follow_the_rules(fixed_versions):
-    assert gen.consistency_errors(flat(gen.build())) == []
+# --- Feeds ----------------------------------------------------------------------------
+
+
+def test_chrome_ignores_early_rollouts(monkeypatch):
+    # Oct 2026: 157 served to 0.5% of Windows users, 156 to everyone
+    releases = {
+        "win": [("156.0.8078.48", 1), ("157.0.8103.15", 0.005), ("156.0.8078.49", 0.005)],
+        "mac": [("156.0.8078.48", 1)],
+        "linux": [("156.0.8078.47", 1)],
+    }
+
+    def feed(url):
+        platform = url.split("/platforms/")[1].split("/")[0]
+        return {"releases": [{"version": v, "fraction": f} for v, f in releases[platform]]}
+
+    monkeypatch.setattr(gen, "get_json", feed)
+    assert gen.chrome_majors() == [155, 156]
 
 
 def test_unrecognized_edge_feed_fails_clearly(monkeypatch):
@@ -126,7 +230,11 @@ def test_main_never_stamps_an_unresearched_list(fixed_versions, output):
 
 
 def test_main_leaves_an_unchanged_file_alone(fixed_versions, output):
-    data = {"generated": "2020-01-01", "formats_verified": "2020-01-01", "agents": gen.build()}
+    data = {
+        "generated": "2020-01-01",
+        "formats_verified": "2020-01-01",
+        "agents": gen.build(),
+    }
     output.write_text(json.dumps(data))
     before = output.read_text()
     assert gen.main() == 0
@@ -144,4 +252,4 @@ def test_main_refuses_to_write_broken_templates(fixed_versions, output, monkeypa
 
 @pytest.mark.integration
 def test_live_feeds_produce_valid_strings():
-    assert gen.consistency_errors(flat(gen.build())) == []
+    assert gen.shape_errors(gen.flatten(gen.build())) == []
