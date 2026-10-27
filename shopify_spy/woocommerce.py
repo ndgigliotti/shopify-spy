@@ -46,18 +46,22 @@ async def run(ctx: StoreContext, emit: Emit) -> None:
             response = await ctx.session.get(url)
         except RequestFailed as exc:
             logger.info("Store API request failed: %s", exc)
+            ctx.truncated = not first
             return
         if response is None:
+            ctx.truncated = not first
             return
         if not 200 <= response.status < 300:
             logger.info("Store API returned %d for %s", response.status, url)
             if first and response.status == 404:
                 await _probe_shopify(ctx)
+            ctx.truncated = not first
             return
         try:
             products = json.loads(response.body)
         except ValueError:
             logger.warning("Store API returned non-JSON for %s", url)
+            ctx.truncated = not first
             return
         if not isinstance(products, list) or not products:
             return

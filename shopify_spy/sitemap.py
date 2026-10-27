@@ -62,10 +62,13 @@ def _host(url: str) -> str:
     return (urllib.parse.urlsplit(url).hostname or "").lower()
 
 
-async def iter_locs(session: StoreSession, sitemap_url: str) -> AsyncIterator[str]:
+async def iter_locs(
+    session: StoreSession, sitemap_url: str, found: dict[str, bool] | None = None
+) -> AsyncIterator[str]:
     """Yield page URLs from a sitemap, following sitemap indexes on the same host.
 
-    The store's host is the sitemap URL's host plus wherever it redirected to.
+    The store's host is the sitemap URL's host plus wherever it redirected to. If
+    ``found`` is given, ``found["root_ok"]`` is set when the top sitemap was read.
     """
     hosts = {_host(sitemap_url)}
     visited: set[str] = set()
@@ -81,9 +84,11 @@ async def iter_locs(session: StoreSession, sitemap_url: str) -> AsyncIterator[st
             return
         if response is None or not 200 <= response.status < 300:
             return
+        root, locs = parse(response.body)
         if depth == 0:
             hosts.add(_host(response.url))
-        root, locs = parse(response.body)
+            if found is not None and root is not None:
+                found["root_ok"] = True
         if root == "sitemapindex":
             for loc in locs:
                 if _host(loc) in hosts:

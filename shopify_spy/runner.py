@@ -97,7 +97,7 @@ class StoreState:
             platform=platform,
             items=self.items,
             status=status,
-            complete=reason == "finished" and not self.errored,
+            complete=reason == "finished" and not self.errored and not self.truncated,
             finish_reason=reason,
             hint=self.ctx.hint if self.ctx else None,
             responses_by_status=dict(stats.by_status) if stats else {},
@@ -162,6 +162,11 @@ class Runner:
         except asyncio.CancelledError:
             if asyncio.current_task() and asyncio.current_task().cancelling():
                 raise
+        finally:
+            # Nothing is delivered after a close; later reads just end
+            while not self.queue.empty():
+                self.queue.get_nowait()
+            self.queue.put_nowait(DONE)
 
     async def _drive(self) -> None:
         try:
@@ -259,8 +264,11 @@ class Runner:
             if config.images and config.images_dir is not None
             else None
         )
-        image_slots = asyncio.Semaphore(IMAGE_ITEMS_PER_STORE)
-        image_tasks: set[asyncio.Task[None]] = set()
+        # Each emitted item is handed to its own delivery task (image downloads, then
+        # the queue). A slot is taken *before* the item is counted, so cancelling an
+        # adapter task (item limit, shutdown) can never orphan a counted item.
+        delivery_slots = asyncio.Semaphore(IMAGE_ITEMS_PER_STORE if downloader else 1)
+        deliveries: set[asyncio.Task[None]] = set()
         loop = asyncio.get_running_loop()
         bail = config.bail if config.bail else None
         timeout_cm = asyncio.timeout(None)
@@ -269,30 +277,37 @@ class Runner:
         async def deliver(item: dict[str, Any]) -> None:
             try:
                 if downloader is not None:
-                    item = await downloader.process(item)
+                    try:
+                        item = await downloader.process(item)
+                    except Exception as exc:  # never lose the item over its images
+                        logger.error("Image processing failed for %s: %r", state.url, exc)
+                        state.errors.append(repr(exc))
+                        item.setdefault("scraped_images", [])
                 await self.queue.put(item)
             finally:
-                image_slots.release()
+                delivery_slots.release()
 
         async def emit(item: dict[str, Any]) -> None:
             if limit is not None and state.items >= limit:
                 raise StopStore("item_limit")
+            await delivery_slots.acquire()
+            if limit is not None and state.items >= limit:
+                delivery_slots.release()
+                raise StopStore("item_limit")
+            # No awaits from here on: counting and handing off happen together
             state.items += 1
             ctx.items = state.items
             if state.items == 1:
                 timeout_cm.reschedule(None)
                 session.bail_deadline = None
-            if downloader is not None:
-                await image_slots.acquire()
-                t = loop.create_task(deliver(item))
-                image_tasks.add(t)
-                t.add_done_callback(image_tasks.discard)
-            else:
-                await self.queue.put(item)
+            task = loop.create_task(deliver(item))
+            deliveries.add(task)
+            task.add_done_callback(deliveries.discard)
             if limit is not None and state.items >= limit:
                 raise StopStore("item_limit")
 
         adapter = ADAPTERS[config.platform]
+        logger.info("Store %s started (%s)", state.url, config.platform)
         try:
             try:
                 async with timeout_cm:
@@ -315,12 +330,13 @@ class Runner:
                 logger.error("Store %s failed: %r", state.url, exc)
                 state.errors.append("".join(traceback.format_exception(exc)))
         finally:
-            if image_tasks:
+            if deliveries:
                 if state.finish_reason in ("closed", None):
-                    for t in image_tasks:
+                    for t in deliveries:
                         t.cancel()
-                await asyncio.gather(*image_tasks, return_exceptions=True)
+                await asyncio.gather(*deliveries, return_exceptions=True)
             state.ended = time.monotonic()
+            state.truncated = ctx.truncated
             if state.finish_reason is None:
                 state.finish_reason = "shutdown" if self.shutdown.is_set() else "closed"
             logger.info(

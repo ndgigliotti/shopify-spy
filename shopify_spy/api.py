@@ -347,8 +347,10 @@ class AsyncScrapeRun(_BaseRun):
     async def aclose(self) -> None:
         """Stop the run now if it is still going; unfinished stores end as "closed"."""
         if self._runner is not None:
-            await self._runner.close()
-            self._finish()
+            try:
+                await self._runner.close()
+            finally:
+                self._finish()
 
     async def __aenter__(self) -> AsyncScrapeRun:
         return self
@@ -408,7 +410,7 @@ _SCRAPE_DOC = """
     Failures: a store fails when it is blocked (403, robots.txt), not found, times
     out, can't be reached, or errors; ``run.result.failed`` lists them with a
     status and, sometimes, a ``hint`` (e.g. a likely wrong ``platform``). An empty
-    store is not a failure. Invalid URLs raise ValueError at call time.
+    store is not a failure. Invalid URLs and options raise ValueError at call time.
 
     Nothing is written to disk unless ``images=True``, and no config file is read.
 """
@@ -423,8 +425,8 @@ def scrape(urls: str | Iterable[str], **options: Any) -> ScrapeRun:
         for item in spy.scrape("example.com", max_items_per_store=100):
             print(item["product"]["title"])
 
-    Raises RuntimeError when called inside a running event loop (Jupyter, async
-    code); use ``scrape_async`` there.
+    Iterating it inside a running event loop (Jupyter, async code) raises
+    RuntimeError; use ``scrape_async`` there.
     """
     stores, opts, backoff = _prepare(urls, options)
     return ScrapeRun(stores, opts, backoff)

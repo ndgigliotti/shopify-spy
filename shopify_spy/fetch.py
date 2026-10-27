@@ -9,8 +9,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import gzip
+import http.cookiejar
 import json
-import time
+import logging
 import zlib
 from collections import defaultdict
 from collections.abc import Callable, Mapping
@@ -21,6 +22,8 @@ from typing import Any, Protocol, Self
 import httpx
 
 from shopify_spy.utils import canonicalize_url
+
+logger = logging.getLogger("shopify_spy")
 
 # Abort downloads larger than this (decoded bytes); warn above WARN_SIZE
 MAX_SIZE = 1024 * 1024 * 1024
@@ -167,6 +170,12 @@ class HttpxFetcher:
             follow_redirects=False,
             headers={"Accept-Encoding": ACCEPT_ENCODING},
             timeout=None,  # a total deadline is enforced per fetch instead
+            # Never store cookies here: the client is shared by every store in a run.
+            # Sessions that want cookies pass them per request (Request.cookies).
+            # (a raw CookieJar: httpx copies a Cookies object into a default jar)
+            cookies=http.cookiejar.CookieJar(
+                http.cookiejar.DefaultCookiePolicy(allowed_domains=[])
+            ),
         )
         return self
 
@@ -188,7 +197,8 @@ class HttpxFetcher:
 
     async def _fetch(self, request: Request, headers: dict[str, str]) -> Response:
         assert self._client is not None
-        start = time.monotonic()
+        loop = asyncio.get_running_loop()
+        start = loop.time()  # the loop clock excludes time the sync API is paused
         req = self._client.build_request(
             request.method,
             request.url,
@@ -206,7 +216,7 @@ class HttpxFetcher:
             if isinstance(exc, httpx.RemoteProtocolError):
                 raise FetchIncomplete(str(exc) or repr(exc)) from exc
             raise FetchConnectionError(str(exc) or repr(exc)) from exc
-        latency = time.monotonic() - start
+        latency = loop.time() - start
         try:
             chunks = []
             size = 0
@@ -226,6 +236,8 @@ class HttpxFetcher:
             body = _decode(raw, resp.headers.get("content-encoding", ""))
         except zlib.error as exc:
             raise FetchIncomplete(f"corrupt compressed body: {exc}") from exc
+        if len(body) > WARN_SIZE:
+            logger.warning("Large response (%d bytes) from %s", len(body), request.url)
         return Response(
             url=str(resp.url),
             status=resp.status_code,
@@ -329,7 +341,7 @@ def load_corpus(path: str | Path) -> dict[str, list[dict[str, Any]]]:
 
 
 class ReplayFetcher:
-    """Serves responses from a recorded corpus (see shopify_spy._parity).
+    """Serves responses from a recorded corpus (tests/fixtures/corpus).
 
     Each key's outcomes are replayed in order; the last one repeats. Outcomes are
     raw as recorded, so bodies are decoded here like HttpxFetcher does.
