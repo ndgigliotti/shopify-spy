@@ -841,6 +841,23 @@ flags and config. The notes list what they'll notice:
   `--max-stores` (D3), wrong-platform hints, the Python library.
 - `--limit` is per store (help text corrected; behavior unchanged).
 
+### Milestone 0 measurements (2026-10-26)
+
+`scripts/measure_live.py` against 17 stores (12 Shopify, 5 WooCommerce), new
+engine, robots.txt respected, one item per store:
+
+| Result | Stores |
+|---|---|
+| ok | 10 |
+| timed out | 4 (Bombas is a headless store: `products.json` 404, product `.json` redirects to `/404`; one Snow Devil timeout was transient and passed on rerun) |
+| robots.txt blocks the Store API | 2 (woocommerce.com, woothemes.com) |
+| empty | 1 |
+| **TLS verification failures** | **0 of 17** |
+
+D14 (verify by default) stands. Explicit blocking (403) was not seen; the main
+gap is headless stores, which supports prioritizing §12 item 5 over stealth
+transports.
+
 ## 9. Deviations needing sign-off
 
 | ID | Deviation | Recommendation |
