@@ -91,15 +91,16 @@ def _woocommerce(item: dict[str, Any]) -> ItemSummary:
         return amount / unit if amount is not None else None
 
     price_range = prices.get("price_range") if isinstance(prices.get("price_range"), dict) else {}
-    low = money(price_range.get("min_amount")) or money(prices.get("price"))
-    high = money(price_range.get("max_amount")) or money(prices.get("price"))
+    price = money(prices.get("price"))
+    low = money(price_range.get("min_amount"))
+    high = money(price_range.get("max_amount"))
     return ItemSummary(
         kind="product",
         platform="woocommerce",
         id=item.get("id"),
         title=item.get("name"),
-        min_price=low,
-        max_price=high,
+        min_price=low if low is not None else price,
+        max_price=high if high is not None else price,
         currency=prices.get("currency_code"),
         html_url=item.get("permalink"),
         store=item.get("store"),

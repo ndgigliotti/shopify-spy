@@ -161,14 +161,18 @@ def diagnose(
     return StoreStatus.empty
 
 
-def run_finish_reason(stores: list[StoreResult], limit: int | None) -> str:
-    """Overall finish reason, derived like the CLI on master."""
+def run_finish_reason(stores: list[StoreResult]) -> str:
+    """Overall finish reason, in the CLI's priority order.
+
+    Unlike the Scrapy CLI, "item_limit" means some store actually hit its limit, not
+    that the run's total reached the per-store limit.
+    """
     if any(s.finish_reason == "error" for s in stores):
         return "crawler_failed"
     reasons = [s.finish_reason for s in stores]
     if "bail" in reasons:
         return "bail"
-    if limit is not None and sum(s.items for s in stores) >= limit:
+    if "item_limit" in reasons:
         return "item_limit"
     if all(r == "finished" for r in reasons):
         return "finished"

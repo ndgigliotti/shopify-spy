@@ -126,6 +126,9 @@ class Runner:
         self.shutdown = asyncio.Event()
         self.started = time.monotonic()
         self._driver: asyncio.Task[None] | None = None
+        self._all_finished = asyncio.Event()
+        self._store_tasks: list[asyncio.Task[None]] = []
+        self._unfinished = len(self.states)
 
     def start(self) -> None:
         self._driver = asyncio.get_running_loop().create_task(self._drive())
@@ -175,9 +178,13 @@ class Runner:
                 limit = self.config.max_concurrent_stores
                 run_slots = asyncio.Semaphore(limit) if limit else None
                 async with asyncio.TaskGroup() as tg:
+                    if not self.states:
+                        self._all_finished.set()
                     tg.create_task(self._watch_shutdown())
                     for state in self.states:
-                        tg.create_task(self._store(state, fetcher, registry, run_slots))
+                        self._store_tasks.append(
+                            tg.create_task(self._store(state, fetcher, registry, run_slots))
+                        )
         except asyncio.CancelledError:
             raise
         except BaseException as exc:  # a bug in the runner itself
@@ -192,24 +199,21 @@ class Runner:
 
     async def _watch_shutdown(self) -> None:
         """After a graceful shutdown request, cancel whatever is still running."""
-        if all(s.finish_reason for s in self.states):
-            return
-        waiter = asyncio.ensure_future(self.shutdown.wait())
+        shutdown = asyncio.ensure_future(self.shutdown.wait())
+        finished = asyncio.ensure_future(self._all_finished.wait())
         try:
-            while not all(s.finish_reason for s in self.states):
-                done, _ = await asyncio.wait({waiter}, timeout=0.2)
-                if done:
-                    break
-            else:
-                return
+            await asyncio.wait({shutdown, finished}, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            waiter.cancel()
-        await asyncio.sleep(SHUTDOWN_GRACE)
-        if not all(s.finish_reason for s in self.states):
+            shutdown.cancel()
+            finished.cancel()
+        if self._all_finished.is_set():
+            return
+        try:
+            await asyncio.wait_for(self._all_finished.wait(), SHUTDOWN_GRACE)
+        except TimeoutError:
             logger.warning("Shutdown grace period over; cancelling remaining requests")
-            for task in asyncio.all_tasks():
-                if getattr(task, "_shopify_spy_store", False):
-                    task.cancel()
+            for task in self._store_tasks:
+                task.cancel()
 
     async def _store(
         self,
@@ -218,14 +222,16 @@ class Runner:
         registry: HostRegistry,
         run_slots: asyncio.Semaphore | None,
     ) -> None:
-        task = asyncio.current_task()
-        if task is not None:
-            task._shopify_spy_store = True  # type: ignore[attr-defined]
-        if run_slots is not None:
-            async with run_slots:
+        try:
+            if run_slots is not None:
+                async with run_slots:
+                    await self._scrape_store(state, fetcher, registry)
+            else:
                 await self._scrape_store(state, fetcher, registry)
-        else:
-            await self._scrape_store(state, fetcher, registry)
+        finally:
+            self._unfinished -= 1
+            if self._unfinished == 0:
+                self._all_finished.set()
 
     async def _scrape_store(self, state: StoreState, fetcher: Any, registry: HostRegistry) -> None:
         config = self.config

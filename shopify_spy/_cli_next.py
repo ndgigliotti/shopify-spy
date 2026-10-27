@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import signal
 import sys
 import time
@@ -400,6 +401,14 @@ def _setup_logging(log_file: Path | None, verbose: bool, quiet: bool) -> list[lo
     return handlers
 
 
+def _restore_logging(handlers: list[logging.Handler], level: int, propagate: bool) -> None:
+    for handler in handlers:
+        logger.removeHandler(handler)
+        handler.close()
+    logger.setLevel(level)
+    logger.propagate = propagate
+
+
 def run_scrape(
     urls: list[str],
     config: Config,
@@ -451,6 +460,7 @@ def run_scrape(
         console.print(f"  Format: {config.output.format}")
         console.print(f"  Output: {output_dir}")
 
+    saved = (logger.level, logger.propagate)
     handlers = _setup_logging(log_file, verbose, quiet)
     show_counter = not peek and not quiet
     start = time.monotonic()
@@ -459,9 +469,7 @@ def run_scrape(
             _scrape(urls, kwargs, writer=writer, peek=peek, show_counter=show_counter)
         )
     finally:
-        for handler in handlers:
-            logger.removeHandler(handler)
-            handler.close()
+        _restore_logging(handlers, *saved)
     duration = time.monotonic() - start
 
     if show_counter and result.total_items > 0:
@@ -622,7 +630,9 @@ def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
         hints.append("The store may be empty or the endpoint returned no products.")
     for s in stores:
         if s.hint:
-            hints.append(f"{escape(_host(s.input_url))} {escape(s.hint)}.")
+            # The library phrases hints as Python arguments; the CLI's are flags
+            hint = re.sub(r"pass platform='(\w+)'", r"use --platform \1", s.hint)
+            hints.append(f"{escape(_host(s.input_url))} {escape(hint)}.")
     return hints
 
 
