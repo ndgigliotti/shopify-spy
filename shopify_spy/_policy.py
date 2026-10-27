@@ -53,7 +53,13 @@ class HostSlot:
 
     One request leaves the slot per gate pass; with a non-zero delay, passes are
     spaced by ``uniform(0.5, 1.5) * delay`` since the previous request.
+
+    Rate limits work like TCP congestion control: each episode doubles a delay
+    floor (multiplicative decrease of the rate), and each success lowers the floor
+    a little, so the host speeds up gradually until it pushes back again.
     """
+
+    FLOOR_DECAY = 0.98  # per successful response: the floor halves in ~34 of them
 
     def __init__(self, concurrency: int, throttle: ThrottleSettings) -> None:
         self.semaphore = asyncio.Semaphore(concurrency)
@@ -80,6 +86,8 @@ class HostSlot:
         """AutoThrottle: move the delay toward latency / target_concurrency."""
         if not self.throttle.enabled:
             return
+        if status == 200:
+            self.floor *= self.FLOOR_DECAY
         target = latency / self.throttle.target_concurrency
         new = max(target, (self.delay + target) / 2.0)
         new = min(max(new, self.floor), self.throttle.max_delay)
@@ -89,15 +97,17 @@ class HostSlot:
         self.delay = new
 
     def pause(self, seconds: float) -> None:
-        """Hold every request to this host for ``seconds`` and slow it for good.
+        """Hold every request to this host for ``seconds`` and slow it down.
 
         For a rate limit: otherwise only the limited request waits, while the host's
         other requests keep arriving and use up their own retries. The doubled delay
-        becomes the host's floor, so AutoThrottle can't speed back up to the rate
-        that was refused.
+        becomes the host's floor, so AutoThrottle can't jump straight back to the
+        rate that was refused. Rate limits arriving during a pause come from
+        requests sent before it, at the old rate, so they don't double it again.
         """
+        new_episode = now() >= self.paused_until
         self.paused_until = max(self.paused_until, now() + seconds)
-        if self.throttle.enabled:
+        if self.throttle.enabled and new_episode:
             doubled = max(self.delay * 2, self.throttle.start_delay)
             self.delay = self.floor = min(doubled, self.throttle.max_delay)
 
