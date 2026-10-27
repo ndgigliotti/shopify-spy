@@ -333,11 +333,17 @@ For advanced Scrapy configuration or custom pipelines, you can use Shopify Spy a
 
 ```python
 from scrapy.crawler import CrawlerProcess
-from scrapy.utils.project import get_project_settings
+from scrapy.settings import Settings
 from shopify_spy.spiders.shopify import ShopifySpider
 from shopify_spy.spiders.woocommerce import WooCommerceSpider
 
-process = CrawlerProcess(get_project_settings())
+# Load the package settings explicitly: get_project_settings() goes by scrapy.cfg and
+# SCRAPY_SETTINGS_MODULE, so it misses them outside a checkout of this repo and picks up
+# another Scrapy project's settings if those point elsewhere. Output goes to ./output.
+settings = Settings()
+settings.setmodule("shopify_spy.settings", priority="project")
+
+process = CrawlerProcess(settings)
 
 # Shopify
 process.crawl(ShopifySpider, url="https://example.com", products=True)
