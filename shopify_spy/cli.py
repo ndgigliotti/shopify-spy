@@ -21,7 +21,12 @@ from shopify_spy.config import (
     create_default_config,
     load_config,
 )
-from shopify_spy.constants import NO_ITEM_TIMEOUT_REASON, STORE_RESPONSE_STATUS_COUNT
+from shopify_spy.constants import (
+    NO_ITEM_TIMEOUT_REASON,
+    STORE_RESPONSE_COUNT,
+    STORE_RESPONSE_STATUS_COUNT,
+    STORE_SUCCESS_COUNT,
+)
 from shopify_spy.utils import normalize_url
 
 app = typer.Typer(
@@ -583,8 +588,6 @@ def _summary_hints(crawlers: list, statuses: list[str], config: Config) -> list[
             f"Received {total('403 Forbidden', 403)} HTTP 403 (Forbidden) response(s). "
             "The server is actively blocking scrapers."
         )
-        if config.network.respect_robots_txt:
-            hints.append("Try [bold]--ignore-robots[/bold] (-i) to bypass robots.txt.")
     if "404 Not Found" in present:
         hints.append(
             f"Received {total('404 Not Found', 404)} HTTP 404 (Not Found) response(s). "
@@ -649,9 +652,12 @@ def _diagnose_crawler(crawler: object, config: Config) -> str:
     items = crawler.stats.get_value("item_scraped_count", 0)
     if items > 0:
         return f"{items} items"
-    if _store_status_count(crawler, 403) > 0:
+    # A 403 the UA swap recovered from, or the products.json 404 that triggers the
+    # sitemap fallback, is not the reason a store that also got a 2xx came up empty
+    succeeded = crawler.stats.get_value(STORE_SUCCESS_COUNT, 0) > 0
+    if not succeeded and _store_status_count(crawler, 403) > 0:
         return "403 Forbidden"
-    if _store_status_count(crawler, 404) > 0:
+    if not succeeded and _store_status_count(crawler, 404) > 0:
         return "404 Not Found"
     resp = crawler.stats.get_value("downloader/response_count", 0)
     robots = crawler.stats.get_value("robotstxt/response_count", 0)
@@ -659,7 +665,7 @@ def _diagnose_crawler(crawler: object, config: Config) -> str:
         return "blocked by robots.txt"
     if crawler.stats.get_value("finish_reason", "") == NO_ITEM_TIMEOUT_REASON:
         return "timed out"
-    if resp == 0:
+    if crawler.stats.get_value(STORE_RESPONSE_COUNT, 0) == 0:
         return "no response"
     return "0 items"
 
