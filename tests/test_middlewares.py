@@ -32,26 +32,32 @@ def test_user_agents_look_like_browsers():
         assert ua.startswith("Mozilla/5.0"), f"Unexpected UA format: {ua}"
 
 
+# Exact shapes of real browser UAs; a UA must match one in full
+_UA_SHAPES = [
+    # Chrome and Edge (reduced UA: major version only); Android WebView adds Version/4.0
+    re.compile(
+        r"Mozilla/5\.0 \([^()]+\) AppleWebKit/537\.36 \(KHTML, like Gecko\) (?:Version/4\.0 )?"
+        r"Chrome/(?P<v>\d+)\.0\.0\.0 (?:Mobile )?Safari/537\.36(?: Edg/(?P=v)\.0\.0\.0)?"
+    ),
+    # Firefox: rv: matches the Firefox version
+    re.compile(r"Mozilla/5\.0 \([^()]+; rv:(?P<v>\d+\.\d+)\) Gecko/20100101 Firefox/(?P=v)"),
+    # Safari on macOS: Version/X.Y[.Z]
+    re.compile(
+        r"Mozilla/5\.0 \(Macintosh; Intel Mac OS X 10_15_7\) AppleWebKit/605\.1\.15 "
+        r"\(KHTML, like Gecko\) Version/\d+\.\d+(?:\.\d+)? Safari/605\.1\.15"
+    ),
+    # Safari on iOS/iPadOS
+    re.compile(
+        r"Mozilla/5\.0 \((?:iPhone|iPad); CPU (?:iPhone )?OS \d+(?:_\d+)* like Mac OS X\) "
+        r"AppleWebKit/605\.1\.15 \(KHTML, like Gecko\) Version/\d+\.\d+(?:\.\d+)? "
+        r"Mobile/\w+ Safari/604\.1"
+    ),
+]
+
+
 def _ua_tokens_consistent(ua: str) -> bool:
-    """Whether a UA's version tokens are formatted the way real browsers send them."""
-    if "Firefox/" in ua:
-        rv = re.search(r"rv:(\d+\.\d+)\)", ua)
-        if not rv or not re.search(rf"Firefox/{re.escape(rv.group(1))}(?![\d.])", ua):
-            return False
-    if "Chrome/" in ua:
-        # Reduced UA: Chrome sends only its major version
-        if not re.search(r"Chrome/\d+\.0\.0\.0 (?:Mobile )?Safari/537\.36", ua):
-            return False
-        edge = re.search(r"Edg/(\d+)\.", ua)
-        if edge and f"Chrome/{edge.group(1)}.0.0.0 " not in ua:
-            return False
-    elif "Version/" in ua:
-        # Safari: major.minor[.patch], WebKit 605.1.15
-        if "AppleWebKit/605.1.15" not in ua or not re.search(
-            r"Version/\d+\.\d+(?:\.\d+)? (?:Mobile/\w+ )?Safari/60[45]\.1", ua
-        ):
-            return False
-    return True
+    """Whether a UA is formatted the way a real browser sends it."""
+    return any(shape.fullmatch(ua) for shape in _UA_SHAPES)
 
 
 def test_user_agents_version_tokens_consistent():
@@ -59,31 +65,93 @@ def test_user_agents_version_tokens_consistent():
         assert _ua_tokens_consistent(ua), ua
 
 
-_WEBKIT = "AppleWebKit/605.1.15 (KHTML, like Gecko)"
-_MAC_SAFARI = f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) {_WEBKIT}"
-_IOS_SAFARI = f"Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) {_WEBKIT}"
-_WIN_CHROME = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
+_MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+_IOS = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X)"
+_WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+_SAFARI_KIT = "AppleWebKit/605.1.15 (KHTML, like Gecko)"
+_CHROME_KIT = "AppleWebKit/537.36 (KHTML, like Gecko)"
 
 
 @pytest.mark.parametrize(
     ("ua", "valid"),
     [
-        (f"{_MAC_SAFARI} Version/27.0 Safari/605.1.15", True),
-        (f"{_MAC_SAFARI} Version/26.6.1 Safari/605.1.15", True),
-        (f"{_IOS_SAFARI} Version/26.0 Mobile/15E148 Safari/604.1", True),
-        (f"{_MAC_SAFARI} Version/27 Safari/605.1.15", False),
-        (f"{_WIN_CHROME} Version/27.0 Safari/537.36", False),
-        (f"{_WIN_CHROME} Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0", True),
-        (f"{_WIN_CHROME} Chrome/157.0.0.0 Safari/537.36 Edg/156.0.0.0", False),
-        (f"{_WIN_CHROME} Chrome/156.0.7000.12 Safari/537.36", False),
-        (
-            "Mozilla/5.0 (Linux; Android 10; K; wv) AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Version/4.0 Chrome/156.0.0.0 Mobile Safari/537.36",
-            True,
+        pytest.param(f"{_MAC} {_SAFARI_KIT} Version/27.0 Safari/605.1.15", True, id="safari"),
+        pytest.param(
+            f"{_MAC} {_SAFARI_KIT} Version/26.6.1 Safari/605.1.15", True, id="safari-patch"
         ),
-        ("Mozilla/5.0 (X11; Linux x86_64; rv:158.0) Gecko/20100101 Firefox/158.0", True),
-        ("Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.01", False),
-        ("Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/158.0", False),
+        pytest.param(
+            f"{_IOS} {_SAFARI_KIT} Version/26.0 Mobile/15E148 Safari/604.1", True, id="ios-safari"
+        ),
+        pytest.param(
+            f"{_MAC} {_SAFARI_KIT} Version/27 Safari/605.1.15", False, id="safari-bare-major"
+        ),
+        pytest.param(
+            f"{_MAC} {_CHROME_KIT} Version/27.0 Safari/605.1.15", False, id="safari-wrong-webkit"
+        ),
+        pytest.param(
+            f"{_MAC} {_SAFARI_KIT} Version/27.0 Safari/605.1", False, id="safari-truncated-build"
+        ),
+        pytest.param(
+            f"{_MAC} {_SAFARI_KIT} Version/27.0 Mobile/15E148 Safari/605.1.15",
+            False,
+            id="safari-mobile-on-mac",
+        ),
+        pytest.param(f"{_MAC} {_SAFARI_KIT} Safari/605.1.15", False, id="safari-no-version"),
+        pytest.param(f"{_WIN} {_CHROME_KIT} Chrome/156.0.0.0 Safari/537.36", True, id="chrome"),
+        pytest.param(
+            f"{_WIN} {_CHROME_KIT} Chrome/156.0.7000.12 Safari/537.36", False, id="chrome-unreduced"
+        ),
+        pytest.param(
+            f"{_WIN} {_CHROME_KIT} Chrom/156.0.0.0 Safari/537.36", False, id="chrome-typo"
+        ),
+        pytest.param(
+            f"{_WIN} AppleWebKit/999 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+            False,
+            id="chrome-wrong-webkit",
+        ),
+        pytest.param(
+            f"{_WIN} {_CHROME_KIT} Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0", True, id="edge"
+        ),
+        pytest.param(
+            f"{_WIN} {_CHROME_KIT} Chrome/157.0.0.0 Safari/537.36 Edg/156.0.0.0",
+            False,
+            id="edge-chrome-mismatch",
+        ),
+        pytest.param(
+            f"{_WIN} {_CHROME_KIT} Safari/537.36 Edg/156.0.0.0", False, id="edge-no-chrome"
+        ),
+        pytest.param(
+            f"{_WIN} {_CHROME_KIT} Chrome/156.0.0.0 Safari/537.36 Edg/156.0.3485.54",
+            False,
+            id="edge-unreduced",
+        ),
+        pytest.param(
+            "Mozilla/5.0 (Linux; Android 10; K; wv) "
+            f"{_CHROME_KIT} Version/4.0 Chrome/156.0.0.0 Mobile Safari/537.36",
+            True,
+            id="android-webview",
+        ),
+        pytest.param(
+            "Mozilla/5.0 (X11; Linux x86_64; rv:158.0) Gecko/20100101 Firefox/158.0",
+            True,
+            id="firefox",
+        ),
+        pytest.param(
+            "Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.01",
+            False,
+            id="firefox-version-overmatch",
+        ),
+        pytest.param(
+            "Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/158.0",
+            False,
+            id="firefox-rv-mismatch",
+        ),
+        pytest.param(
+            "Mozilla/5.0 (X11; Linux x86_64; rv:158.0) Gecko/20100101 Firefox/158.0 "
+            "Chrome/156.0.0.0 Safari/537.36",
+            False,
+            id="firefox-chrome-mix",
+        ),
     ],
 )
 def test_ua_tokens_consistent_check(ua, valid):
