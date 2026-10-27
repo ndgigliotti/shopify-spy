@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import os
 import sys
 import time
 import warnings
 import weakref
-from collections.abc import Callable, Generator, Iterable, Iterator
+from collections.abc import AsyncIterator, Callable, Generator, Iterable, Iterator
 from pathlib import Path
 from typing import Any, Literal
 
@@ -205,12 +206,32 @@ class _BaseRun:
         except ScrapeFailed as exc:
             if self._opts.on_failure == "raise":
                 raise
-            warnings.warn(str(exc), ScrapeWarning, stacklevel=4)
+            warnings.warn(str(exc), ScrapeWarning, stacklevel=_caller_stacklevel())
 
     def _claim(self) -> None:
         if self._iterated:
             raise RuntimeError("a run can only be iterated once; call scrape() again")
         self._iterated = True
+
+
+_PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _caller_stacklevel() -> int:
+    """``stacklevel`` for a warning raised by our caller, pointing at user code.
+
+    Skips frames in this package and in asyncio, so the warning names the line that
+    iterated the run, whichever API (sync, async, collect, write_items) it used.
+    """
+    frame = sys._getframe(1)  # the function that calls warnings.warn (stacklevel 1)
+    level = 1
+    while frame is not None:
+        filename = os.path.abspath(frame.f_code.co_filename)
+        if not (filename.startswith(_PACKAGE_DIR) or f"{os.sep}asyncio{os.sep}" in filename):
+            return level
+        frame = frame.f_back
+        level += 1
+    return level
 
 
 class _PausedClockLoop(
@@ -325,20 +346,30 @@ class ScrapeRun(_BaseRun):
 
 
 class AsyncScrapeRun(_BaseRun):
-    """A scrape in progress (async). ``async for``, ``async with``, or ``await`` it."""
+    """A scrape in progress (async). ``async for``, ``async with``, or ``await`` it.
 
-    def __aiter__(self) -> AsyncScrapeRun:
+    Leaving ``async for`` early stops the run once the iterator is cleaned up;
+    ``async with`` (or ``aclose()``) stops it right away.
+    """
+
+    def __aiter__(self) -> AsyncIterator[dict[str, Any]]:
         self._claim()
-        return self
+        return self._iterate()
 
-    async def __anext__(self) -> dict[str, Any]:
+    async def _iterate(self) -> AsyncIterator[dict[str, Any]]:
+        # An async generator, so a bare `break` gets cleaned up by the event loop's
+        # async-generator finalizer, like the sync run's generator
         runner = self._runner or self._start_runner()
         try:
-            return await runner.next()
-        except StopAsyncIteration:
-            self._finish()
-            self._check_failure()
-            raise
+            while True:
+                try:
+                    item = await runner.next()
+                except StopAsyncIteration:
+                    break
+                yield item
+        finally:
+            await self.aclose()
+        self._check_failure()
 
     async def aclose(self) -> None:
         """Stop the run now if it is still going; unfinished stores end as "closed"."""

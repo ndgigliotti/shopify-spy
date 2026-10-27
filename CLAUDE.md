@@ -15,8 +15,8 @@ uv run ruff check . && uv run ruff format .  # Lint and format
 Layers, top to bottom; lower layers never import higher ones, and only the CLI imports `typer`, `rich` or `yaml`.
 
 - **CLI** (`cli.py`, `config.py`): Typer app built on `scrape_async`. YAML config precedence: defaults -> config file -> CLI args; `Config.to_kwargs()` maps config to library options. `FETCHER_FACTORY` is the test hook for a fake transport.
-- **Public API** (`api.py`, `results.py`, `export.py`, `summary.py`, `types.py`): `scrape()` (sync; steps a private event loop whose clock excludes paused time) and `scrape_async()`; `StoreResult`/`StoreStatus`/`RunResult`; `on_failure` raises `ScrapeFailed` by default. Writers match the old Scrapy exporters byte for byte (JSONL/JSON/XML).
-- **Runner** (`runner.py`): one driver task owns all store tasks and feeds a bounded queue; per-store error isolation, `max_items_per_store`, bail, graceful shutdown. Never hold a TaskGroup or timeout across a `yield`.
+- **Public API** (`api.py`, `export.py`, `summary.py`, `types.py`): `scrape()` (sync; steps a private event loop whose clock excludes paused time) and `scrape_async()`; `on_failure` raises `ScrapeFailed` by default. Writers match the old Scrapy exporters byte for byte (JSONL/JSON/XML).
+- **Runner** (`runner.py`, `results.py`): one driver task owns all store tasks and feeds a bounded queue; per-store error isolation, `max_items_per_store`, bail, graceful shutdown; `StoreResult`/`StoreStatus`/`RunResult`. Never hold a TaskGroup or timeout across a `yield`.
 - **Adapters** (`shopify.py`, `woocommerce.py`, `sitemap.py`, `images.py`): `run(ctx, emit)` coroutines. Shopify tries bulk `/products.json`, falls back to the sitemap; WooCommerce pages the Store API.
 - **Session** (`session.py`, `policy.py`): per-store `StoreSession` (dedupe, robots.txt, retries with UA rotation on 403, hop-by-hop redirects, stats) over a run-wide `HostRegistry` (robots cache, concurrency and AutoThrottle slots keyed by origin).
 - **Transport** (`fetch.py`): `Fetcher` protocol; `HttpxFetcher`, plus `FakeFetcher`/`ReplayFetcher` for tests.

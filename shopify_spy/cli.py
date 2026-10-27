@@ -607,6 +607,8 @@ def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
         hints.append("No responses received. Check the URL and your network connection.")
     if StoreStatus.empty in present:
         hints.append("The store may be empty or the endpoint returned no products.")
+    if StoreStatus.stopped in present:
+        hints.append("Stopped before every store finished.")
     for s in stores:
         if s.suggested_platform:
             name = _PLATFORM_NAMES.get(s.suggested_platform, s.suggested_platform)

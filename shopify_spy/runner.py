@@ -231,9 +231,7 @@ class Runner:
         session = StoreSession(
             fetcher=fetcher,
             registry=registry,
-            retry=retry_policy_for(
-                fetcher.capabilities, config.retries, config.backoff, config.throttle.max_delay
-            ),
+            retry=retry_policy_for(fetcher.capabilities, config.retries, config.backoff),
             identity=IdentityPool(user_agent=config.user_agent),
             request_timeout=config.request_timeout,
         )
@@ -256,7 +254,7 @@ class Runner:
         delivery_slots = asyncio.Semaphore(IMAGE_ITEMS_PER_STORE if downloader else 1)
         deliveries: set[asyncio.Task[None]] = set()
         loop = asyncio.get_running_loop()
-        timeout_cm = asyncio.timeout(None)
+        first_item = asyncio.Event()
         limit = config.max_items_per_store
 
         async def deliver(item: dict[str, Any]) -> None:
@@ -280,7 +278,7 @@ class Runner:
             # No awaits from here on: counting and handing off happen together
             ctx.items += 1
             if ctx.items == 1:
-                timeout_cm.reschedule(None)
+                first_item.set()
                 session.bail_deadline = None
             task = loop.create_task(deliver(item))
             deliveries.add(task)
@@ -290,21 +288,19 @@ class Runner:
 
         adapter = ADAPTERS[config.platform]
         logger.info("Store %s started (%s)", state.url, config.platform)
+        # The adapter runs as its own task so the bail watchdog below can cancel it
+        # without racing an item that arrives at the deadline
+        adapter_task = loop.create_task(adapter(ctx, emit))
         try:
-            try:
-                async with timeout_cm:
-                    if config.bail is not None:
-                        deadline = loop.time() + config.bail
-                        timeout_cm.reschedule(deadline)
-                        session.bail_deadline = deadline
-                    complete = await adapter(ctx, emit)
-                state.truncated = not complete and ctx.items > 0
-                state.finish_reason = "shutdown" if self.shutdown.is_set() else "finished"
-            except TimeoutError:
-                if not timeout_cm.expired():
-                    raise
+            if config.bail is not None and not await self._first_item_in_time(
+                adapter_task, first_item, session, config.bail
+            ):
                 logger.warning("No items scraped from %s in %ss, aborting", state.url, config.bail)
                 state.finish_reason = "bail"
+            else:
+                complete = await adapter_task
+                state.truncated = not complete and ctx.items > 0
+                state.finish_reason = "shutdown" if self.shutdown.is_set() else "finished"
         except* StopStore as group:
             state.finish_reason = group.exceptions[0].reason  # type: ignore[attr-defined]
         except* ShutdownRequested:
@@ -316,6 +312,9 @@ class Runner:
                 logger.error("Store %s failed: %r", state.url, exc)
                 state.errors.append("".join(traceback.format_exception(exc)))
         finally:
+            if not adapter_task.done():
+                adapter_task.cancel()
+                await asyncio.gather(adapter_task, return_exceptions=True)
             if deliveries:
                 if state.finish_reason is None:  # being cancelled: the run was closed
                     for t in deliveries:
@@ -327,6 +326,29 @@ class Runner:
             logger.info(
                 "Store %s finished: %d items (%s)", state.url, ctx.items, state.finish_reason
             )
+
+    @staticmethod
+    async def _first_item_in_time(
+        adapter_task: asyncio.Task[bool],
+        first_item: asyncio.Event,
+        session: StoreSession,
+        bail: float,
+    ) -> bool:
+        """Wait until the store's first item (or its end); False if bail ran out first.
+
+        On a bail the adapter task is cancelled and awaited.
+        """
+        session.bail_deadline = asyncio.get_running_loop().time() + bail
+        waiter = asyncio.ensure_future(first_item.wait())
+        try:
+            await asyncio.wait({adapter_task, waiter}, timeout=bail, return_when="FIRST_COMPLETED")
+        finally:
+            waiter.cancel()
+        if adapter_task.done() or first_item.is_set():
+            return True
+        adapter_task.cancel()
+        await asyncio.gather(adapter_task, return_exceptions=True)
+        return False
 
     def results(self) -> list[StoreResult]:
         return [s.result(self.config.platform) for s in self.states]

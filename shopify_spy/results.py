@@ -23,6 +23,7 @@ class StoreStatus(StrEnum):
     tls_error = "tls_error"  # certificate verification failed
     no_response = "no_response"  # DNS or connection failures only
     error = "error"  # unexpected exception while scraping this store
+    stopped = "stopped"  # closed or shut down before it produced anything
 
     @property
     def is_failure(self) -> bool:
@@ -30,7 +31,12 @@ class StoreStatus(StrEnum):
 
         ``partial`` isn't a failure by default; ``strict=True`` counts it.
         """
-        return self not in (StoreStatus.ok, StoreStatus.partial, StoreStatus.empty)
+        return self not in (
+            StoreStatus.ok,
+            StoreStatus.partial,
+            StoreStatus.empty,
+            StoreStatus.stopped,
+        )
 
     @property
     def label(self) -> str:
@@ -51,6 +57,7 @@ _LABELS = {
     StoreStatus.tls_error: "TLS error",
     StoreStatus.no_response: "no response",
     StoreStatus.error: "failed",
+    StoreStatus.stopped: "stopped",
 }
 
 
@@ -169,6 +176,9 @@ def diagnose(
             return StoreStatus.not_found
     if finish_reason == "bail":
         return StoreStatus.timed_out
+    if finish_reason in ("closed", "shutdown"):
+        # Stopped by the caller (break, close(), Ctrl-C), possibly before it started
+        return StoreStatus.stopped
     if stats.responses == 0:
         return StoreStatus.tls_error if stats.tls_errors > 0 else StoreStatus.no_response
     return StoreStatus.empty

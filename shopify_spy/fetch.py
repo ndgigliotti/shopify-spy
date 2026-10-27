@@ -12,6 +12,7 @@ import gzip
 import http.cookiejar
 import json
 import logging
+import ssl
 import zlib
 from collections import defaultdict
 from collections.abc import Callable, Mapping
@@ -51,7 +52,6 @@ class Request:
     timeout: float
     headers: Mapping[str, str] = field(default_factory=dict)
     body: bytes | None = None
-    cookies: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -61,7 +61,6 @@ class Response:
     headers: Mapping[str, str]
     body: bytes
     latency: float = 0.0  # seconds to response headers
-    set_cookies: Mapping[str, str] = field(default_factory=dict)
 
     @property
     def text(self) -> str:
@@ -117,8 +116,8 @@ class FetchIncomplete(FetchError):
     """The connection closed before the body was complete."""
 
 
-class FetchBadEncoding(FetchError):
-    """The response used a Content-Encoding that wasn't requested."""
+class FetchInvalidURL(FetchError):
+    """The URL can't be requested (control characters, a bad host, ...)."""
 
 
 class Fetcher(Protocol):
@@ -135,32 +134,56 @@ FetcherFactory = Callable[[], Fetcher]
 
 
 def decompress(body: bytes, wbits: int, max_size: int = MAX_SIZE) -> bytes:
-    """Inflate zlib/gzip/raw-deflate data, refusing output larger than max_size."""
-    d = zlib.decompressobj(wbits)
-    out = d.decompress(body, max_size + 1)
-    if len(out) > max_size or d.unconsumed_tail:
-        raise FetchTooLarge(f"decompressed body exceeded {max_size} bytes")
-    return out
+    """Inflate zlib/gzip/raw-deflate data, refusing output larger than max_size.
+
+    Concatenated gzip members (allowed by RFC 1952) are all decoded.
+    """
+    out = bytearray()
+    data = body
+    while True:
+        d = zlib.decompressobj(wbits)
+        out += d.decompress(data, max_size + 1 - len(out))
+        if len(out) > max_size or d.unconsumed_tail:
+            raise FetchTooLarge(f"decompressed body exceeded {max_size} bytes")
+        data = d.unused_data
+        if not (d.eof and wbits & 16 and data.strip(b"\0")):
+            return bytes(out)
 
 
 def _decode(body: bytes, encoding: str) -> bytes:
-    """Decode a gzip/deflate body; raise FetchBadEncoding for anything else."""
-    encoding = encoding.strip().lower()
-    if encoding in ("", "identity"):
-        return body
-    if encoding in ("gzip", "x-gzip"):
-        return decompress(body, zlib.MAX_WBITS | 16)
-    if encoding == "deflate":
-        try:
-            return decompress(body, zlib.MAX_WBITS)
-        except zlib.error:
-            return decompress(body, -zlib.MAX_WBITS)
-    raise FetchBadEncoding(f"unsupported Content-Encoding: {encoding}")
+    """Undo a Content-Encoding (a comma-separated list, applied in order).
+
+    gzip and deflate are decoded; at the first other token (servers send things
+    like "utf-8") the body is returned as it is at that point, as Scrapy did.
+    """
+    for token in reversed([t.strip().lower() for t in encoding.split(",") if t.strip()]):
+        if token in ("gzip", "x-gzip"):
+            body = decompress(body, zlib.MAX_WBITS | 16)
+        elif token == "deflate":
+            try:
+                body = decompress(body, zlib.MAX_WBITS)
+            except zlib.error:
+                body = decompress(body, -zlib.MAX_WBITS)
+        elif token != "identity":
+            logger.debug("Leaving body undecoded: unknown Content-Encoding %r", token)
+            return body
+    return body
 
 
-def _is_tls_error(exc: BaseException) -> bool:
-    text = repr(exc).lower()
-    return "certificate" in text or "ssl" in text
+def _is_cert_error(exc: BaseException) -> bool:
+    """True if certificate verification failed somewhere in the exception's causes.
+
+    Other TLS failures (handshake resets, protocol mismatches) are ordinary
+    connection errors and get retried.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, ssl.SSLCertVerificationError):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 class HttpxFetcher:
@@ -184,8 +207,7 @@ class HttpxFetcher:
             follow_redirects=False,
             headers={"Accept-Encoding": ACCEPT_ENCODING},
             timeout=None,  # a total deadline is enforced per fetch instead
-            # Never store cookies here: the client is shared by every store in a run.
-            # Sessions that want cookies pass them per request (Request.cookies).
+            # Never store cookies: the client is shared by every store in a run
             # (a raw CookieJar: httpx copies a Cookies object into a default jar)
             cookies=http.cookiejar.CookieJar(
                 http.cookiejar.DefaultCookiePolicy(allowed_domains=[])
@@ -215,19 +237,18 @@ class HttpxFetcher:
         assert self._client is not None
         loop = asyncio.get_running_loop()
         start = loop.time()  # the loop clock excludes time the sync API is paused
-        req = self._client.build_request(
-            request.method,
-            request.url,
-            headers=headers,
-            content=request.body,
-            cookies=dict(request.cookies) or None,
-        )
+        try:
+            req = self._client.build_request(
+                request.method, request.url, headers=headers, content=request.body
+            )
+        except (httpx.InvalidURL, UnicodeError, ValueError) as exc:
+            raise FetchInvalidURL(f"{request.url!r}: {exc}") from exc
         try:
             resp = await self._client.send(req, stream=True)
         except httpx.TimeoutException as exc:
             raise FetchTimeout(str(exc) or "timeout") from exc
         except httpx.TransportError as exc:
-            if _is_tls_error(exc):
+            if _is_cert_error(exc):
                 raise FetchTLSError(str(exc) or repr(exc)) from exc
             if isinstance(exc, httpx.RemoteProtocolError):
                 raise FetchIncomplete(str(exc) or repr(exc)) from exc
@@ -260,11 +281,6 @@ class HttpxFetcher:
             headers={k.lower(): v for k, v in resp.headers.items()},
             body=body,
             latency=latency,
-            set_cookies=(
-                {c.name: c.value or "" for c in resp.cookies.jar}
-                if "set-cookie" in resp.headers
-                else {}
-            ),
         )
 
 

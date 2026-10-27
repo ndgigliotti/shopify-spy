@@ -45,10 +45,12 @@ file; you don't need to change how you run it.
 - CSV output JSON-encodes nested values (Scrapy wrote Python reprs), and Shopify CSVs
   always include the `collection` column when collections are scraped.
 - Images keep their original format and extension instead of being re-encoded as
-  JPEG; `checksum` is the MD5 of the original file. Existing cached images are
-  downloaded once more because their file names change.
+  JPEG; `checksum` is the MD5 of the original file. A cached image is reused only
+  when its extension matches the URL's, so PNG/WebP images cached as re-encoded
+  JPEGs are downloaded once more in their original format.
 - Status files gain a `code` field per URL (the library's `StoreStatus`); the
-  existing `status` strings are unchanged.
+  existing `status` strings are unchanged. Stores stopped by Ctrl-C before they
+  produced anything now show `stopped` instead of `no response`.
 - `--concurrent` limits requests per host across the whole run (it was per store).
 - Retries back off exponentially and honor `Retry-After`.
 - Log lines differ (no more Scrapy "Crawled (200)" lines); `--verbose` shows one line

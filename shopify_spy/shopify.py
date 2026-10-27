@@ -17,6 +17,9 @@ BULK_PAGE_SIZE = 250
 # Sitemap documents fetched at once per store (the session's slots still apply)
 FETCH_CONCURRENCY = 32
 
+# Shopify child sitemaps that never list products or collections
+SKIPPED_CHILD_SITEMAPS = ("sitemap_pages_", "sitemap_blogs_", "sitemap_agentic_discovery")
+
 next_bulk_page_url = next_page_url
 
 
@@ -104,12 +107,16 @@ async def _bulk(ctx: StoreContext, emit: Emit, seen: set[str]) -> tuple[bool, bo
         store = parsed.netloc
         base_url = f"{parsed.scheme}://{store}/products/"
         logger.info("Bulk: %d products from %s", len(products), response.url)
+        full_page = len(products) >= BULK_PAGE_SIZE
+        products = [p for p in products if isinstance(p, dict)]
+        handles = {str(p["handle"]).lower() for p in products if p.get("handle")}
+        if handles and handles <= seen:
+            # A server that ignores `page` would otherwise repeat this page forever
+            logger.warning("Bulk page repeated earlier products; stopping at %s", response.url)
+            return True, False
+        seen |= handles
         for product in products:
-            if not isinstance(product, dict):
-                continue
             handle = product.get("handle", "")
-            if handle:
-                seen.add(str(handle).lower())
             await emit(
                 {
                     "product": product,
@@ -118,7 +125,7 @@ async def _bulk(ctx: StoreContext, emit: Emit, seen: set[str]) -> tuple[bool, bo
                     "image_urls": image_urls(product, ctx.images),
                 }
             )
-        if len(products) < BULK_PAGE_SIZE:
+        if not full_page:
             return True, False
         url = next_page_url(response.url)
         first = False
@@ -152,16 +159,30 @@ async def _sitemap(ctx: StoreContext, emit: Emit, seen: set[str], skip_products:
         data["image_urls"] = image_urls(data, ctx.images)
         await emit(data)
 
-    walk = sitemap.iter_locs(ctx.session, get_sitemap_url(ctx.url))
+    want_products = ctx.products and not skip_products
+
+    def follow(child: str) -> bool:
+        """Skip Shopify child sitemaps that can't list anything wanted."""
+        name = urllib.parse.urlsplit(child).path.rsplit("/", 1)[-1]
+        if name.startswith("sitemap_products_"):
+            return want_products
+        if name.startswith("sitemap_collections_"):
+            return ctx.collections
+        return not name.startswith(SKIPPED_CHILD_SITEMAPS)
+
+    walk = sitemap.iter_locs(ctx.session, get_sitemap_url(ctx.url), follow)
     async with asyncio.TaskGroup() as tg:
         async for loc in walk:
-            if "/products/" in loc:
-                if not ctx.products or skip_products:
+            parts = urllib.parse.urlsplit(loc)
+            if (parts.hostname or "").lower() not in walk.hosts:
+                continue
+            if "/products/" in parts.path:
+                if not want_products:
                     continue
                 handle = product_handle(loc)
                 if handle is not None and handle in seen:
                     continue
-            elif "/collections/" not in loc or not ctx.collections:
+            elif "/collections/" not in parts.path or not ctx.collections:
                 continue
             # Take the slot before creating the task, so a huge sitemap doesn't
             # queue one task per entry
