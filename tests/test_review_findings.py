@@ -216,7 +216,7 @@ async def test_async_failure_warning_points_at_the_callers_line():
 
 def test_retry_waits_survive_zero_throttle_max_delay():
     # The retry cap no longer follows throttle_max_delay
-    fetcher = FakeFetcher({bulk_url(1): Seq([(503, ""), products(1)])})
+    fetcher = FakeFetcher({bulk_url(1): Seq([(500, ""), products(1)])})
     start = time.monotonic()
     items, _, _ = scrape(fetcher, throttle_max_delay=0, _backoff=True)
     assert len(items) == 1

@@ -25,6 +25,11 @@ ROBOTS_TOKEN = "shopify-spy"
 RETRY_STATUSES = frozenset({500, 502, 503, 504, 522, 524, 408, 429, 403})
 RETRY_MAX_DELAY = 60.0  # longest wait before a retry, Retry-After included
 ROTATE_ON_STATUSES = frozenset({403})
+# "Slow down" responses: they pause and permanently slow the host, and without a
+# Retry-After their retries back off from RATE_LIMIT_BASE_DELAY (rate limits are
+# measured over seconds, so a sub-second retry just hits the limit again)
+RATE_LIMIT_STATUSES = frozenset({429, 503})
+RATE_LIMIT_BASE_DELAY = 5.0
 
 
 def now() -> float:
@@ -54,6 +59,7 @@ class HostSlot:
         self.semaphore = asyncio.Semaphore(concurrency)
         self.throttle = throttle
         self.delay = max(0.0, throttle.start_delay) if throttle.enabled else 0.0
+        self.floor = 0.0  # raised by pause(); adjust() never goes below it
         self.last_seen: float | None = None
         self.paused_until = 0.0
         self._gate = asyncio.Lock()
@@ -76,22 +82,24 @@ class HostSlot:
             return
         target = latency / self.throttle.target_concurrency
         new = max(target, (self.delay + target) / 2.0)
-        new = min(max(new, 0.0), self.throttle.max_delay)
+        new = min(max(new, self.floor), self.throttle.max_delay)
         # A non-200 response must not make us faster (errors can be quick to arrive)
         if status != 200 and new <= self.delay:
             return
         self.delay = new
 
     def pause(self, seconds: float) -> None:
-        """Hold every request to this host for ``seconds`` and slow the throttle.
+        """Hold every request to this host for ``seconds`` and slow it for good.
 
-        For a 429: otherwise only the rate-limited request waits, while the host's
-        other requests keep arriving and use up their own retries.
+        For a rate limit: otherwise only the limited request waits, while the host's
+        other requests keep arriving and use up their own retries. The doubled delay
+        becomes the host's floor, so AutoThrottle can't speed back up to the rate
+        that was refused.
         """
         self.paused_until = max(self.paused_until, now() + seconds)
         if self.throttle.enabled:
             doubled = max(self.delay * 2, self.throttle.start_delay)
-            self.delay = min(doubled, self.throttle.max_delay)
+            self.delay = self.floor = min(doubled, self.throttle.max_delay)
 
 
 def parse_retry_after(value: str | None) -> float | None:
@@ -115,16 +123,26 @@ class RetryPolicy:
     rotate_on: frozenset[int] = ROTATE_ON_STATUSES
     backoff: bool = True
     base_delay: float = 0.5
+    rate_limit_base_delay: float = RATE_LIMIT_BASE_DELAY
     max_delay: float = RETRY_MAX_DELAY
 
     def should_retry_status(self, status: int, attempt: int) -> bool:
         return status in self.statuses and attempt < self.retries
 
-    def delay(self, attempt: int, retry_after: float | None, cap: float | None) -> float:
+    def delay(
+        self,
+        attempt: int,
+        retry_after: float | None,
+        cap: float | None,
+        rate_limited: bool = False,
+    ) -> float:
         """Seconds to wait before retry number ``attempt + 1``."""
         if not self.backoff:
             return 0.0
-        delay = self.base_delay * (2**attempt) * random.uniform(0.5, 1.5)
+        # A server's Retry-After says how long is enough; otherwise guess long
+        slow = rate_limited and retry_after is None
+        base = self.rate_limit_base_delay if slow else self.base_delay
+        delay = base * (2**attempt) * random.uniform(0.5, 1.5)
         if retry_after is not None:
             delay = max(delay, retry_after)
         limit = self.max_delay if cap is None else min(self.max_delay, cap)
