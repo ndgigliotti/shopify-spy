@@ -1,4 +1,4 @@
-"""Update the browser versions in shopify_spy/_user_agents.py from the vendors' feeds.
+"""Update the browser versions in shopify_spy/user_agents.json from the vendors' feeds.
 
 Run monthly or before a release: uv run python scripts/update_user_agents.py
 
@@ -12,7 +12,8 @@ major versions change, and this script updates only those, from official sources
 Everything else is a template: the string formats below and SAFARI_VERSION (Apple
 has no machine-readable feed). The script can't tell when a vendor changes its
 format, so every run ends with a reminder to research that (an agent with web
-access, or by hand) and update the templates and FORMATS_VERIFIED here.
+access, or by hand), update the templates here, and set "formats_verified" in the
+JSON to the date of that check.
 
 Exit status: 0 when the file is current or was updated (stdout says which); 2 when
 a generated string breaks a version-token rule real browsers follow (nothing is
@@ -21,7 +22,6 @@ written; the templates are wrong).
 
 from __future__ import annotations
 
-import ast
 import datetime
 import json
 import re
@@ -29,12 +29,10 @@ import sys
 import urllib.request
 from pathlib import Path
 
-# When the templates and SAFARI_VERSION were last checked against current browsers
-FORMATS_VERIFIED = "2026-10-27"
 # major.minor (sometimes .patch), as Safari always sends it; a bare major is a fake tell
 SAFARI_VERSION = "27.0"
 
-OUTPUT = Path(__file__).resolve().parent.parent / "shopify_spy" / "_user_agents.py"
+OUTPUT = Path(__file__).resolve().parent.parent / "shopify_spy" / "user_agents.json"
 CHROME_API = (
     "https://versionhistory.googleapis.com/v1/chrome/platforms/{platform}/channels/stable/"
     "versions?order_by=version%20desc&pageSize=50"
@@ -55,15 +53,17 @@ FIREFOX = {
     "Linux": ["X11; Linux x86_64", "X11; Ubuntu; Linux x86_64"],
 }
 
-RESEARCH_REMINDER = f"""\
+REMINDER = """\
 REMINDER: only major versions were updated. String formats and SAFARI_VERSION
-({SAFARI_VERSION}) were last verified {FORMATS_VERIFIED}. Before merging, research online
-whether any of them changed: Safari's current version (Apple's Safari release notes),
-and announced user agent changes from Chrome (chromestatus.com), Firefox (MDN) and
-Edge. Compare against real user agents, e.g. useragents.me; informal lists like
+({safari}) were last verified {verified}. Before merging, research online whether any
+of them changed: Safari's current version (Apple's Safari release notes), and
+announced user agent changes from Chrome (chromestatus.com), Firefox (MDN) and Edge.
+Compare against real user agents, e.g. useragents.me; informal lists like
 jnrbsn/user-agents are templated themselves (they drop Safari's minor version).
-If anything changed, edit the templates in scripts/update_user_agents.py and
-update FORMATS_VERIFIED."""
+If anything changed, edit the templates in scripts/update_user_agents.py; either way,
+set "formats_verified" in {output} to the date you checked."""
+
+Agents = dict[str, list[str]]  # group label -> user agents
 
 
 def get_json(url: str) -> object:
@@ -88,57 +88,42 @@ def firefox_majors() -> list[int]:
 
 def edge_major() -> int:
     products = get_json(EDGE_API)
-    stable = next(p for p in products if p["Product"] == "Stable")
-    return max(major(r["ProductVersion"]) for r in stable["Releases"] if r["Platform"] == "Windows")
+    releases = [
+        major(r["ProductVersion"])
+        for p in products
+        if p.get("Product") == "Stable"
+        for r in p.get("Releases", [])
+        if r.get("Platform") == "Windows"
+    ]
+    if not releases:
+        raise RuntimeError(f"no stable Windows release in {EDGE_API}; has its format changed?")
+    return max(releases)
 
 
-def build() -> list[tuple[str, list[str]]]:
-    """(comment, user agents) groups, in the order the module lists them."""
+def build() -> Agents:
+    """User agents by group label, in the order they're listed."""
     webkit = "AppleWebKit/537.36 (KHTML, like Gecko)"
-    groups = []
+    agents: Agents = {}
     for name, token in CHROME.items():
-        agents = [
+        agents[f"Chrome - {name}"] = [
             f"Mozilla/5.0 ({token}) {webkit} Chrome/{m}.0.0.0 Safari/537.36"
             for m in chrome_majors(CHROME_PLATFORM_IDS[name])
         ]
-        groups.append((f"Chrome - {name}", agents))
     ff = firefox_majors()
     for name, tokens in FIREFOX.items():
-        agents = [
+        agents[f"Firefox - {name}"] = [
             f"Mozilla/5.0 ({token}; rv:{m}.0) Gecko/20100101 Firefox/{m}.0"
             for token in tokens
             for m in ff
         ]
-        groups.append((f"Firefox - {name}", agents))
-    safari = (
+    agents["Safari - macOS"] = [
         f"Mozilla/5.0 ({CHROME['macOS']}) AppleWebKit/605.1.15 (KHTML, like Gecko) "
         f"Version/{SAFARI_VERSION} Safari/605.1.15"
-    )
-    groups.append(("Safari - macOS", [safari]))
+    ]
     e = edge_major()
     chromium = f"Mozilla/5.0 ({CHROME['Windows']}) {webkit} Chrome/{e}.0.0.0 Safari/537.36"
-    edge = f"{chromium} Edg/{e}.0.0.0"
-    groups.append(("Edge - Windows", [edge]))
-    return groups
-
-
-def render(groups: list[tuple[str, list[str]]]) -> str:
-    today = datetime.date.today().isoformat()
-    lines = [
-        '"""Browser user agent strings for request spoofing.',
-        "",
-        "Generated by scripts/update_user_agents.py from the browser vendors' release",
-        f"feeds ({today}); rerun it instead of editing by hand.",
-        '"""',
-        "",
-        "# fmt: off",
-        "USER_AGENTS = [",
-    ]
-    for comment, agents in groups:
-        lines.append(f"    # {comment}")
-        lines.extend(f'    "{agent}",' for agent in agents)
-    lines += ["]", "# fmt: on", ""]
-    return "\n".join(lines)
+    agents["Edge - Windows"] = [f"{chromium} Edg/{e}.0.0.0"]
+    return agents
 
 
 def consistency_errors(agents: list[str]) -> list[str]:
@@ -162,37 +147,33 @@ def consistency_errors(agents: list[str]) -> list[str]:
     return errors
 
 
-def current_agents() -> list[str] | None:
-    """USER_AGENTS as the module lists it now (parsed, not imported)."""
+def load() -> dict | None:
     try:
-        tree = ast.parse(OUTPUT.read_text())
-    except (OSError, SyntaxError):
+        return json.loads(OUTPUT.read_text("utf-8"))
+    except (OSError, ValueError):
         return None
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "USER_AGENTS" for t in node.targets
-        ):
-            return ast.literal_eval(node.value)
-    return None
 
 
 def main() -> int:
-    groups = build()
-    agents = [agent for _, group in groups for agent in group]
-    errors = consistency_errors(agents)
+    agents = build()
+    errors = consistency_errors([a for group in agents.values() for a in group])
     if errors:
         for error in errors:
             print(f"ERROR {error}")
         print(f"Not writing {OUTPUT}: fix the templates in this script first")
         return 2
-    # Leave the file (and its date) alone unless the list changed, so a clean
+    current = load() or {}
+    today = datetime.date.today().isoformat()
+    verified = current.get("formats_verified", today)
+    # Leave the file (and its dates) alone unless the list changed, so a clean
     # git diff means there's nothing to update
-    if agents == current_agents():
+    if current.get("agents") == agents:
         print(f"Unchanged: {OUTPUT}")
     else:
-        OUTPUT.write_text(render(groups))
+        data = {"generated": today, "formats_verified": verified, "agents": agents}
+        OUTPUT.write_text(json.dumps(data, indent=2) + "\n", "utf-8")
         print(f"Wrote {OUTPUT}")
-    print(RESEARCH_REMINDER)
+    print(REMINDER.format(safari=SAFARI_VERSION, verified=verified, output=OUTPUT.name))
     return 0
 
 
