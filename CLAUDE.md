@@ -35,7 +35,7 @@ Two platform spiders. All use `load_store_urls()` from utils for URL init.
 `NoItemTimeout` closes the spider if no items are scraped within `--bail` seconds. `LiveItemCounter` prints a live item count to stdout during scraping.
 
 ### Settings (`shopify_spy/settings.py`)
-Scrapy defaults: autothrottle on, 16 concurrent requests per domain, robots.txt respected, image pipeline enabled, JSONL feed output. Custom UA middleware replaces Scrapy's default. 403 is in RETRY_HTTP_CODES to trigger UA rotation. The CLI overrides feed settings at runtime via `get_project_settings()`. Scrapy logs are written to a file in the platform state directory (via `platformdirs`), not the terminal.
+Scrapy defaults: autothrottle on, 16 concurrent requests per domain, robots.txt respected, image pipeline enabled, JSONL feed output. Custom UA middleware replaces Scrapy's default. 403 is in RETRY_HTTP_CODES to trigger UA rotation. The CLI loads `shopify_spy.settings` explicitly (`_load_settings()`, not `get_project_settings()`, which depends on `scrapy.cfg` in the working directory), then overrides feed settings at runtime. Scrapy logs are written to a file in the platform state directory (via `platformdirs`), not the terminal.
 
 ### Utilities (`shopify_spy/utils.py`)
 `as_bool()` converts strings or bools to `bool`, handling values like `"yes"`, `"1"`, `"null"`. Used to coerce spider arguments that arrive as strings when called from the Scrapy CLI. `find_all_values(key, obj)` recursively searches nested dicts/lists and yields all matching values. `load_store_urls(url, url_file)` loads URLs from a single URL or a file, shared across all spiders. `normalize_url(url)` parses a URL, defaulting to https if no scheme.

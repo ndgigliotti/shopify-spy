@@ -34,12 +34,13 @@ LOG_LEVEL = "INFO"
 COOKIES_ENABLED = False
 TELNETCONSOLE_ENABLED = False
 
-OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
-OUTPUT_URI = OUTPUT_DIR.as_uri()
+# Relative to the working directory when the crawl writes, not to the package (which may
+# be read-only once installed)
+OUTPUT_DIR = Path("output")
 
 # Note: The CLI overrides FEEDS based on the configured output format.
 FEEDS = {
-    f"{OUTPUT_URI}/%(name)s_%(time)s.jsonl": {
+    f"{OUTPUT_DIR}/%(name)s_%(time)s.jsonl": {
         "format": "jsonlines",
         "encoding": "utf8",
         "store_empty": False,

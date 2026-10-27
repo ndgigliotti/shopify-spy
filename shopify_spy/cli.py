@@ -6,7 +6,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import platformdirs
 import typer
@@ -28,6 +28,9 @@ from shopify_spy.constants import (
     STORE_SUCCESS_COUNT,
 )
 from shopify_spy.utils import normalize_url, read_url_file, split_valid_urls
+
+if TYPE_CHECKING:
+    from scrapy.settings import Settings
 
 app = typer.Typer(
     name="shopify-spy",
@@ -331,6 +334,20 @@ def get_urls(urls: list[str] | None, url_file: Path | None) -> list[str]:
     return []
 
 
+def _load_settings() -> "Settings":
+    """Load shopify_spy.settings, independent of the working directory and environment.
+
+    get_project_settings() would only find it through a scrapy.cfg in the working directory
+    (which installed copies don't have), and would load another project's settings when
+    SCRAPY_SETTINGS_MODULE or a different scrapy.cfg is present.
+    """
+    from scrapy.settings import Settings
+
+    settings = Settings()
+    settings.setmodule("shopify_spy.settings", priority="project")
+    return settings
+
+
 def _log_dir() -> Path:
     """Return the platform-appropriate log directory, creating it if needed."""
     path = platformdirs.user_state_path("shopify-spy") / "logs"
@@ -399,9 +416,8 @@ def run_spider(
     """
     # Deferred imports to avoid loading Scrapy until needed
     from scrapy.crawler import CrawlerProcess
-    from scrapy.utils.project import get_project_settings
 
-    settings = get_project_settings()
+    settings = _load_settings()
 
     # Generate a timestamp used for log, output, and status file names
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S+00-00")
