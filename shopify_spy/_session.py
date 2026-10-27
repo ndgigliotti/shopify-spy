@@ -308,7 +308,7 @@ class StoreSession:
             response: Response | None = None
             error: FetchError | None = None
             async with self._store_slots, slot.semaphore:
-                sent_at = await slot.wait_turn()
+                await slot.wait_turn()
                 self.stats.requests += 1
                 try:
                     response = await self.fetcher.fetch(
@@ -340,7 +340,7 @@ class StoreSession:
                 if not self.retry.should_retry_status(response.status, attempt):
                     if rate_limited:  # no retry left, but the host still has to back off
                         wait = self.retry.delay(attempt, retry_after, self._retry_cap(), True)
-                        slot.pause(wait, sent_at)
+                        slot.pause(wait)
                     return response
                 if response.status in self.retry.rotate_on and self.identity.rotates:
                     self.identity.rotate()
@@ -365,7 +365,7 @@ class StoreSession:
                 reason = name
             delay = self.retry.delay(attempt, retry_after, self._retry_cap(), rate_limited)
             if rate_limited:
-                slot.pause(delay, sent_at)
+                slot.pause(delay)
             attempt += 1
             logger.info("Retrying %s (attempt %d, %s) in %.1fs", url, attempt, reason, delay)
             if delay:

@@ -161,25 +161,33 @@ async def test_pause_sets_a_floor_that_eases_back_down():
 
 
 @pytest.mark.parametrize("pause", [5.0, 0.0], ids=["backoff", "no-pause"])
-def test_rate_limits_from_requests_sent_before_a_slowdown_double_once(clock, pause):
-    # A burst of 429s for requests sent at the old rate is one signal, not many,
-    # however short the pause (no backoff, a tiny Retry-After) and however late
-    # the stragglers arrive
+def test_refusals_without_an_answer_between_double_once(clock, pause):
+    # In-flight stragglers and a cooldown that refuses everything are one signal:
+    # they pause the host but don't keep halving its rate (a live Shopify store
+    # drove the delay to 60 s and its run to 0 items this way)
     s = slot(start_delay=1.0, max_delay=60.0)
-    sent = [clock.t - 0.5, clock.t - 0.3, clock.t - 0.1]
-    for sent_at in sent:
-        s.pause(pause, sent_at)
-        clock.t += 3.0  # a slow straggler lands well after the pause ended
+    for _ in range(6):
+        s.pause(pause)
+        clock.t += 10.0
     assert s.floor == 2.0  # 1.0 doubled once
+    assert s.paused_until >= clock.t - 10.0 + pause
 
 
-def test_rate_limit_on_a_request_sent_after_the_slowdown_doubles_again(clock):
-    # Even inside the pause window: the slower rate was refused too
+def test_refusal_after_answers_at_the_slower_rate_doubles_again(clock):
     s = slot(start_delay=1.0, max_delay=60.0)
-    s.pause(10.0, sent_at=clock.t - 0.1)
-    clock.t += 0.5
-    s.pause(1.0, sent_at=clock.t - 0.1)  # sent after the first slowdown
-    assert s.floor == 4.0
+    s.pause(1.0)
+    s.adjust(0.1, 200)  # the slower rate worked for a while...
+    s.pause(1.0)  # ...then was refused too
+    assert s.floor == pytest.approx(2.0 * 0.98 * 2)  # eased once, then doubled
+
+
+def test_blocks_and_errors_dont_count_as_answers(clock):
+    s = slot(start_delay=1.0, max_delay=60.0)
+    s.pause(1.0)
+    for status in (403, 430, 500):
+        s.adjust(0.1, status)
+    s.pause(1.0)
+    assert s.floor == 2.0
 
 
 async def test_wait_turn_honors_a_pause_extended_while_waiting():
@@ -191,8 +199,8 @@ async def test_wait_turn_honors_a_pause_extended_while_waiting():
     await asyncio.sleep(0.05)
     s.pause(0.2)  # extended to ~0.25 from t0 while the waiter sleeps
     async with asyncio.timeout(2):
-        sent_at = await waiter
-    assert sent_at - t0 >= 0.2
+        await waiter
+    assert loop.time() - t0 >= 0.2
 
 
 def test_adjust_ignores_429_but_follows_slow_503():
