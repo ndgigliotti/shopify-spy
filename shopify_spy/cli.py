@@ -27,7 +27,7 @@ from shopify_spy.constants import (
     STORE_RESPONSE_STATUS_COUNT,
     STORE_SUCCESS_COUNT,
 )
-from shopify_spy.utils import normalize_url, split_valid_urls
+from shopify_spy.utils import normalize_url, read_url_file, split_valid_urls
 
 app = typer.Typer(
     name="shopify-spy",
@@ -314,12 +314,13 @@ def apply_cli_overrides(
 
 def get_urls(urls: list[str] | None, url_file: Path | None) -> list[str]:
     """Get URLs from arguments or file, with interactive fallback."""
-    if urls:
-        return [u.strip() for u in urls if u.strip()]
+    # Blank arguments (e.g. an empty shell variable) fall through to --url-file
+    args = [u.strip() for u in urls or [] if u.strip()]
+    if args:
+        return args
 
     if url_file:
-        with open(url_file) as f:
-            return [line.strip() for line in f if line.strip()]
+        return read_url_file(url_file)
 
     # Interactive prompt if stdin is a TTY
     if sys.stdin.isatty():
