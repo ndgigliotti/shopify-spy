@@ -308,7 +308,7 @@ class StoreSession:
             response: Response | None = None
             error: FetchError | None = None
             async with self._store_slots, slot.semaphore:
-                await slot.wait_turn()
+                sent_at = await slot.wait_turn()
                 self.stats.requests += 1
                 try:
                     response = await self.fetcher.fetch(
@@ -335,9 +335,12 @@ class StoreSession:
                     attempt + 1,
                     kind.name,
                 )
+                retry_after = parse_retry_after(response.headers.get("retry-after"))
+                rate_limited = response.status in RATE_LIMIT_STATUSES
                 if not self.retry.should_retry_status(response.status, attempt):
-                    if response.status in RATE_LIMIT_STATUSES:
-                        slot.pause(0)  # no retry left, but the host still slows down
+                    if rate_limited:  # no retry left, but the host still has to back off
+                        wait = self.retry.delay(attempt, retry_after, self._retry_cap(), True)
+                        slot.pause(wait, sent_at)
                     return response
                 if response.status in self.retry.rotate_on and self.identity.rotates:
                     self.identity.rotate()
@@ -346,7 +349,6 @@ class StoreSession:
                         response.status,
                         self.identity.current.user_agent,
                     )
-                retry_after = parse_retry_after(response.headers.get("retry-after"))
                 reason = str(response.status)
             else:
                 assert error is not None
@@ -359,11 +361,11 @@ class StoreSession:
                 if not (retryable and attempt < self.retry.retries):
                     raise RequestFailed(url, error) from error
                 retry_after = None
+                rate_limited = False
                 reason = name
-            rate_limited = response is not None and response.status in RATE_LIMIT_STATUSES
             delay = self.retry.delay(attempt, retry_after, self._retry_cap(), rate_limited)
             if rate_limited:
-                slot.pause(delay)
+                slot.pause(delay, sent_at)
             attempt += 1
             logger.info("Retrying %s (attempt %d, %s) in %.1fs", url, attempt, reason, delay)
             if delay:

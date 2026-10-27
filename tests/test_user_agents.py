@@ -187,20 +187,36 @@ def test_generated_strings_match_real_browser_shapes(fixed_versions):
 # --- Feeds ----------------------------------------------------------------------------
 
 
-def test_chrome_ignores_early_rollouts(monkeypatch):
-    # Oct 2026: 157 served to 0.5% of Windows users, 156 to everyone
-    releases = {
-        "win": [("156.0.8078.48", 1), ("157.0.8103.15", 0.005), ("156.0.8078.49", 0.005)],
-        "mac": [("156.0.8078.48", 1)],
-        "linux": [("156.0.8078.47", 1)],
-    }
+CHROME_RELEASES = {  # (version, stable start date), shaped like the Oct 2026 feed
+    "win": [("155.0.8000.1", "2026-09-22"), ("156.0.8078.48", "2026-10-07"),
+            ("157.0.8103.15", "2026-10-22")],  # 157: early rollout, Windows only
+    "mac": [("155.0.8000.1", "2026-09-23"), ("156.0.8078.48", "2026-10-20")],
+    "linux": [("155.0.8000.1", "2026-09-23"), ("156.0.8078.47", "2026-10-20")],
+}  # fmt: skip
 
+
+@pytest.fixture
+def chrome_feed(monkeypatch):
     def feed(url):
         platform = url.split("/platforms/")[1].split("/")[0]
-        return {"releases": [{"version": v, "fraction": f} for v, f in releases[platform]]}
+        return {
+            "releases": [
+                {"version": v, "serving": {"startTime": f"{d}T17:00:00Z"}}
+                for v, d in CHROME_RELEASES[platform]
+            ]
+        }
 
     monkeypatch.setattr(gen, "get_json", feed)
-    assert gen.chrome_majors() == [155, 156]
+
+
+def test_chrome_waits_out_early_rollouts(chrome_feed):
+    # 156 counts from its first platform (Windows, Oct 7) though macOS got it later;
+    # 157 is only five days into its rollout
+    assert gen.chrome_majors(datetime.date(2026, 10, 27)) == [155, 156]
+
+
+def test_chrome_counts_a_major_once_its_rollout_has_run(chrome_feed):
+    assert gen.chrome_majors(datetime.date(2026, 11, 5)) == [156, 157]
 
 
 def test_unrecognized_edge_feed_fails_clearly(monkeypatch):

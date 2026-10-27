@@ -5,8 +5,8 @@ Run monthly or before a release: uv run python scripts/update_user_agents.py
 Browsers freeze most of their user agent (OS tokens, minor versions), so only
 major versions change, and this script updates only those, from official sources:
 
-- Chrome: Google's Version History API. The newest major that most stable users
-  get (an early rollout to a few percent doesn't count) and the one before it.
+- Chrome: Google's Version History API. The newest major that has been on stable
+  for two weeks (an early rollout to a few percent doesn't count) and the one before.
 - Firefox: Mozilla's product-details (latest release and ESR)
 - Edge: Microsoft's Edge update API (newest stable major)
 
@@ -36,13 +36,14 @@ SAFARI_VERSION = "27.0"
 
 OUTPUT = Path(__file__).resolve().parent.parent / "shopify_spy" / "user_agents.json"
 # Releases currently served on the stable channel, with the fraction of users each gets
+# Recent stable releases with their start dates (a few months' worth)
 CHROME_API = (
     "https://versionhistory.googleapis.com/v1/chrome/platforms/{platform}/channels/stable/"
-    "versions/all/releases?filter=endtime=none"
+    "versions/all/releases?order_by=starttime%20desc&pageSize=300"
 )
 FIREFOX_API = "https://product-details.mozilla.org/1.0/firefox_versions.json"
 EDGE_API = "https://edgeupdates.microsoft.com/api/products"
-MAJORITY = 0.5  # a Chrome major counts once a release of it serves this share of users
+ROLLOUT_DAYS = 14  # a new Chrome major reaches most stable users within about this
 
 # Frozen platform tokens, as each browser sends them whatever the real OS version
 CHROME = {  # name -> (Version History platform id, token)
@@ -119,21 +120,26 @@ def major(version: str) -> int:
     return int(version.split(".")[0])
 
 
-def chrome_majors() -> list[int]:
-    """The newest major most stable users run on every platform, and the one before.
+def chrome_majors(today: datetime.date | None = None) -> list[int]:
+    """The newest major out on stable for ROLLOUT_DAYS, and the one before.
 
-    Early stable rollouts reach a few percent of users first (157 at 0.5% on
-    Windows only, Oct 2026); a version that rare stands out, so it doesn't count.
+    A new major reaches a few percent of stable users first (157 at 0.5% on Windows
+    only, Oct 2026) and everyone over about two weeks; until then it's rare enough
+    to stand out. (The feed's per-release "fraction" is relative to a rollout group,
+    not to all users, so it can't say how common a version is.)
     """
-    majority = []
+    cutoff = ((today or datetime.date.today()) - datetime.timedelta(days=ROLLOUT_DAYS)).isoformat()
+    # When each major first reached stable on any platform: rollouts start on one
+    # platform (157: Windows only) and others can follow later at full share
+    first_seen: dict[int, str] = {}
     for platform_id, _ in CHROME.values():
-        releases = get_json(CHROME_API.format(platform=platform_id))["releases"]
-        served = [major(r["version"]) for r in releases if r.get("fraction", 0) >= MAJORITY]
-        if not served:
-            raise RuntimeError(f"no Chrome release serves most {platform_id} users")
-        majority.append(max(served))
-    newest = min(majority)
-    return [newest - 1, newest]
+        for r in get_json(CHROME_API.format(platform=platform_id))["releases"]:
+            m, start = major(r["version"]), r["serving"]["startTime"][:10]
+            first_seen[m] = min(first_seen.get(m, start), start)
+    settled = [m for m, start in first_seen.items() if start <= cutoff]
+    if not settled:
+        raise RuntimeError(f"no Chrome major on stable since {cutoff}; has the feed changed?")
+    return [max(settled) - 1, max(settled)]
 
 
 def firefox_majors() -> list[int]:
