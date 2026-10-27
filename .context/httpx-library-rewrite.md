@@ -899,7 +899,7 @@ transports.
 | D2 | CSV: nested values JSON-encoded; the CLI passes fixed Shopify columns via `fields=` (§4.10) so mixed product/collection files keep all columns; WooCommerce keeps first-item columns | **Adopt.** Today's CSV is Python repr and drops columns |
 | D3 | `max_concurrent_stores` (default 16) | **Adopt.** Today 1,000 URLs start 1,000 crawlers |
 | D4 | robots.txt evaluated as `shopify-spy` → `*` (today effectively `Scrapy` → `*`) | **Adopt** |
-| D5 | Exponential backoff with jitter; `Retry-After` honored, capped at 60 s (independent of throttle settings) and, while the bail clock runs, below the remaining bail time | **Adopt** |
+| D5 | Exponential backoff with jitter; `Retry-After` honored, capped at 60 s (independent of throttle settings) and, while the bail clock runs, below the remaining bail time. A 429 pauses the whole host for that wait and doubles its throttle delay (added after live testing; 0.2.x runs lost requests to 429s, #17) | **Adopt** |
 | D6 | Keep `<platform>_spider_<ts>` file names | **Keep** for now |
 | D7 | `scrapy crawl`/`scrapy check` and the `CrawlerProcess` recipe removed | Unavoidable |
 | D8 | Python ≥ 3.11 | **Adopt** |

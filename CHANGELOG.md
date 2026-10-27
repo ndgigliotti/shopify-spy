@@ -26,10 +26,6 @@ file; you don't need to change how you run it.
 
 ### Fixed
 
-- Installs from PyPI (pip, pipx, uv) now actually use throttling, 403 retries with
-  user-agent rotation, image downloads and `--bail`. These only worked when running
-  from a checkout of the repository, so installed runs may now be slower and can stop
-  after 30 seconds without items.
 - `--no-throttle` (and `throttle.enabled: false`) now turns throttling off.
 - `scrape.platform` in a config file now takes effect when `--platform` isn't given.
 - `--peek` prints one item in total (it printed one per store) and creates no files
@@ -52,7 +48,9 @@ file; you don't need to change how you run it.
   existing `status` strings are unchanged. Stores stopped by Ctrl-C before they
   produced anything now show `stopped` instead of `no response`.
 - `--concurrent` limits requests per host across the whole run (it was per store).
-- Retries back off exponentially and honor `Retry-After`.
+- Retries back off exponentially and honor `Retry-After`. A 429 (Too Many Requests)
+  pauses every request to that host for the wait and slows its throttle, instead of
+  letting the host's other requests use up their retries.
 - Log lines differ (no more Scrapy "Crawled (200)" lines); `--verbose` shows one line
   per request.
 - `--limit` help text now says it applies per store (the behavior is unchanged).
