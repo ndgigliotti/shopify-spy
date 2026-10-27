@@ -62,37 +62,42 @@ def _host(url: str) -> str:
     return (urllib.parse.urlsplit(url).hostname or "").lower()
 
 
-async def iter_locs(
-    session: StoreSession, sitemap_url: str, found: dict[str, bool] | None = None
-) -> AsyncIterator[str]:
-    """Yield page URLs from a sitemap, following sitemap indexes on the same host.
+class SitemapWalk:
+    """Async-iterable page URLs from a sitemap, following indexes on the same host.
 
-    The store's host is the sitemap URL's host plus wherever it redirected to. If
-    ``found`` is given, ``found["root_ok"]`` is set when the top sitemap was read.
+    The store's host is the sitemap URL's host plus wherever it redirected to.
+    ``root_ok`` becomes True once the top-level sitemap has been read.
     """
-    hosts = {_host(sitemap_url)}
-    visited: set[str] = set()
 
-    async def walk(url: str, depth: int) -> AsyncIterator[str]:
-        if url in visited or depth > MAX_DEPTH:
+    def __init__(self, session: StoreSession, sitemap_url: str) -> None:
+        self.session = session
+        self.sitemap_url = sitemap_url
+        self.root_ok = False
+        self._hosts = {_host(sitemap_url)}
+        self._visited: set[str] = set()
+
+    def __aiter__(self) -> AsyncIterator[str]:
+        return self._walk(self.sitemap_url, 0)
+
+    async def _walk(self, url: str, depth: int) -> AsyncIterator[str]:
+        if url in self._visited or depth > MAX_DEPTH:
             return
-        visited.add(url)
+        self._visited.add(url)
         try:
-            response = await session.get(url)
+            response = await self.session.get(url)
         except RequestFailed as exc:
             logger.info("Sitemap request failed: %s", exc)
             return
-        if response is None or not 200 <= response.status < 300:
+        if response is None or not response.ok:
             return
         root, locs = parse(response.body)
         if depth == 0:
-            hosts.add(_host(response.url))
-            if found is not None and root is not None:
-                found["root_ok"] = True
+            self._hosts.add(_host(response.url))
+            self.root_ok = root is not None
         if root == "sitemapindex":
             for loc in locs:
-                if _host(loc) in hosts:
-                    async for page in walk(loc, depth + 1):
+                if _host(loc) in self._hosts:
+                    async for page in self._walk(loc, depth + 1):
                         yield page
                 else:
                     logger.info("Skipping off-host child sitemap %s", loc)
@@ -100,5 +105,7 @@ async def iter_locs(
             for loc in locs:
                 yield loc
 
-    async for loc in walk(sitemap_url, 0):
-        yield loc
+
+def iter_locs(session: StoreSession, sitemap_url: str) -> SitemapWalk:
+    """Walk a sitemap: ``async for loc in iter_locs(session, url)``."""
+    return SitemapWalk(session, sitemap_url)

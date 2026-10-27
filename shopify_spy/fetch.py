@@ -17,15 +17,16 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, Self
-
-import httpx
+from typing import TYPE_CHECKING, Any, Protocol, Self
 
 from shopify_spy.utils import canonicalize_url
 
+if TYPE_CHECKING:
+    import httpx
+
 logger = logging.getLogger("shopify_spy")
 
-# Abort downloads larger than this (decoded bytes); warn above WARN_SIZE
+# Abort responses larger than this, raw or decompressed; warn above WARN_SIZE
 MAX_SIZE = 1024 * 1024 * 1024
 WARN_SIZE = 32 * 1024 * 1024
 
@@ -66,8 +67,19 @@ class Response:
     def text(self) -> str:
         return self.body.decode("utf-8", errors="replace")
 
+    @property
+    def ok(self) -> bool:
+        return 200 <= self.status < 300
+
     def json(self) -> Any:
         return json.loads(self.body)
+
+    def json_or_none(self) -> Any:
+        """The body as JSON, or None if it isn't JSON."""
+        try:
+            return json.loads(self.body)
+        except ValueError:
+            return None
 
     @property
     def location(self) -> str | None:
@@ -162,6 +174,8 @@ class HttpxFetcher:
         self._client: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> Self:
+        import httpx  # imported here: it's slow to import and only needed for real HTTP
+
         self._client = httpx.AsyncClient(
             http1=True,
             http2=False,
@@ -196,6 +210,8 @@ class HttpxFetcher:
             raise FetchTimeout(f"no complete response within {request.timeout}s") from exc
 
     async def _fetch(self, request: Request, headers: dict[str, str]) -> Response:
+        import httpx
+
         assert self._client is not None
         loop = asyncio.get_running_loop()
         start = loop.time()  # the loop clock excludes time the sync API is paused
@@ -244,11 +260,15 @@ class HttpxFetcher:
             headers={k.lower(): v for k, v in resp.headers.items()},
             body=body,
             latency=latency,
-            set_cookies={c.name: c.value or "" for c in resp.cookies.jar},
+            set_cookies=(
+                {c.name: c.value or "" for c in resp.cookies.jar}
+                if "set-cookie" in resp.headers
+                else {}
+            ),
         )
 
 
-# --- Test and parity transports -----------------------------------------------------------
+# Transports for tests and for replaying recorded traffic
 
 
 class Seq(list):
@@ -322,7 +342,7 @@ def _to_response(request: Request, spec: Any) -> Response:
     raise TypeError(f"bad FakeFetcher spec: {spec!r}")
 
 
-# Recorded transport errors, by name, shared with the Scrapy parity middlewares
+# Exceptions for the transport errors a recorded corpus can contain, by kind
 RECORDED_ERRORS: dict[str, type[FetchError]] = {
     "timeout": FetchTimeout,
     "connection": FetchConnectionError,

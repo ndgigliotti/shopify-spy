@@ -13,7 +13,7 @@ import urllib.parse
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Generic, TypeVar
 
 from shopify_spy.fetch import (
     FetchBadEncoding,
@@ -42,8 +42,23 @@ REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 MAX_REDIRECTS = 20
 STORE_CONCURRENCY = 16  # per-store cap, like Scrapy's CONCURRENT_REQUESTS
 
-# "store" requests are the ones diagnoses count; probes, robots.txt and images are not
-Kind = Literal["store", "robots", "image", "probe"]
+T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class RequestKind:
+    """How the session treats a request."""
+
+    name: str
+    check_robots: bool = True  # obey robots.txt for this request
+    counted: bool = True  # counts toward the store's diagnosis stats
+    dedupe: bool = True  # skip a URL this store already requested
+
+
+STORE = RequestKind("store")
+ROBOTS = RequestKind("robots", check_robots=False, counted=False, dedupe=False)
+IMAGE = RequestKind("image", counted=False, dedupe=False)
+PROBE = RequestKind("probe", counted=False, dedupe=False)  # e.g. a wrong-platform check
 
 
 class RequestFailed(Exception):
@@ -56,11 +71,42 @@ class RequestFailed(Exception):
 
 
 class StopStore(Exception):  # noqa: N818 - control flow, not an error
-    """Raised inside a store to end it early with a reason (item_limit, shutdown)."""
+    """Raised by the runner inside a store to end it early (e.g. at the item limit)."""
 
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+class ShutdownRequested(Exception):  # noqa: N818 - control flow, not an error
+    """Raised instead of starting a request once a graceful shutdown was requested."""
+
+
+class SingleFlight(Generic[T]):
+    """Runs one fetch per key; concurrent callers for that key await its result.
+
+    If the caller doing the fetch is cancelled, a waiting caller fetches instead of
+    getting a result that was never produced.
+    """
+
+    def __init__(self) -> None:
+        self._futures: dict[str, asyncio.Future[tuple[bool, T | None]]] = {}
+
+    async def get(self, key: str, fetch: Callable[[], Awaitable[T]]) -> T:
+        while (future := self._futures.get(key)) is not None:
+            done, value = await asyncio.shield(future)
+            if done:
+                return value  # type: ignore[return-value]
+        future = asyncio.get_running_loop().create_future()
+        self._futures[key] = future
+        try:
+            value = await fetch()
+        except BaseException:
+            del self._futures[key]
+            future.set_result((False, None))
+            raise
+        future.set_result((True, value))
+        return value
 
 
 class HostRegistry:
@@ -78,7 +124,7 @@ class HostRegistry:
         self.respect_robots_txt = respect_robots_txt
         self.shutdown = asyncio.Event()  # set for a graceful stop: no new requests
         self._slots: dict[str, HostSlot] = {}
-        self._robots: dict[str, asyncio.Future[RobotsRules | None]] = {}
+        self._robots: SingleFlight[RobotsRules] = SingleFlight()
 
     def slot(self, url: str) -> HostSlot:
         key = origin(url)
@@ -90,58 +136,34 @@ class HostRegistry:
     async def robots(self, url: str, session: StoreSession) -> RobotsRules:
         """Return robots.txt rules for the URL's origin, fetching them once per run."""
         key = origin(url)
-        while True:
-            future = self._robots.get(key)
-            if future is None:
-                return await self._fetch_robots(key, session)
-            rules = await asyncio.shield(future)
-            if rules is not None:
-                return rules
-            # The store fetching it was cancelled; fetch it again ourselves
+        return await self._robots.get(key, lambda: _fetch_robots(key, session))
 
-    async def _fetch_robots(self, key: str, session: StoreSession) -> RobotsRules:
-        future: asyncio.Future[RobotsRules | None] = asyncio.get_running_loop().create_future()
-        self._robots[key] = future
-        rules = RobotsRules(None)
-        try:
-            response = await session.get(f"{key}/robots.txt", kind="robots", dedupe=False)
-            # Scrapy parses any body it gets back, even an error page (which has
-            # no rules, so everything is allowed)
-            if response is not None:
-                rules = RobotsRules(response.text)
-        except (RequestFailed, FetchError) as exc:
-            logger.debug("robots.txt unavailable for %s: %s", key, exc)
-        except BaseException:
-            # Cancelled or stopped: let the next store fetch it instead of allowing all
-            del self._robots[key]
-            future.set_result(None)
-            raise
-        future.set_result(rules)
-        return rules
+
+async def _fetch_robots(key: str, session: StoreSession) -> RobotsRules:
+    try:
+        response = await session.get(f"{key}/robots.txt", kind=ROBOTS)
+    except (RequestFailed, FetchError) as exc:
+        logger.debug("robots.txt unavailable for %s: %s", key, exc)
+        return RobotsRules(None)
+    # Scrapy parses any body it gets back, even an error page (which has no rules,
+    # so everything is allowed)
+    return RobotsRules(response.text if response is not None else None)
 
 
 @dataclass
 class StoreStats:
-    """Counts for one store; the store's own requests exclude robots.txt and images."""
+    """Counts for one store. Apart from ``requests``, only counted request kinds
+    (the store's own requests, not robots.txt, images or probes) are included."""
 
-    requests: int = 0
-    responses: int = 0  # store requests only, every hop
-    successes: int = 0  # store 2xx responses
+    requests: int = 0  # every request attempt, any kind
+    responses: int = 0  # every hop
+    successes: int = 0  # 2xx responses
     by_status: Counter[int] = field(default_factory=Counter)
     robots_disallowed: int = 0
     duplicates: int = 0
     transport_errors: Counter[str] = field(default_factory=Counter)
     tls_errors: int = 0
     images_failed: int = 0
-    errors: list[str] = field(default_factory=list)
-
-    def record_response(self, kind: Kind, status: int) -> None:
-        if kind != "store":
-            return
-        self.responses += 1
-        self.by_status[status] += 1
-        if 200 <= status < 300:
-            self.successes += 1
 
 
 Emit = Callable[[dict[str, Any]], Awaitable[None]]
@@ -149,20 +171,31 @@ Emit = Callable[[dict[str, Any]], Awaitable[None]]
 
 @dataclass
 class StoreContext:
-    """What a platform adapter gets for one store."""
+    """What a platform adapter gets for one store.
+
+    Adapters are ``async def run(ctx, emit) -> bool``: they emit items and return
+    whether they reached the end of the store's catalog.
+    """
 
     session: StoreSession
     url: str  # normalized store URL, scheme://host[:port]
     products: bool = True
     collections: bool = False
     images: bool = False
-    items: int = 0  # items emitted so far
-    hint: str | None = None  # e.g. a likely-wrong-platform note for the caller
-    truncated: bool = False  # set when an error ended the store after it had items
+    items: int = 0  # items emitted so far (maintained by the runner)
+    suggested_platform: str | None = None  # set when the store looks like another platform
 
-    @property
-    def netloc(self) -> str:
-        return urllib.parse.urlsplit(self.url).netloc
+    async def probe_platform(
+        self, path: str, looks_right: Callable[[Any], bool], platform: str
+    ) -> None:
+        """Suggest ``platform`` if ``path`` answers 200 with JSON that ``looks_right``."""
+        try:
+            response = await self.session.get(f"{self.url}{path}", kind=PROBE)
+        except RequestFailed:
+            return
+        if response is not None and response.status == 200:
+            if looks_right(response.json_or_none()):
+                self.suggested_platform = platform
 
 
 class StoreSession:
@@ -197,16 +230,17 @@ class StoreSession:
         self,
         url: str,
         *,
-        kind: Kind = "store",
+        kind: RequestKind = STORE,
         follow_redirects: bool = True,
-        dedupe: bool = True,
     ) -> Response | None:
         """Fetch a URL; return None if it was skipped (duplicate or robots.txt).
 
         Non-2xx responses are returned once retries are exhausted. Raises
-        RequestFailed if no response could be obtained or redirects loop.
+        RequestFailed if no response could be obtained or redirects loop, and
+        ShutdownRequested instead of starting a request after a graceful shutdown
+        was requested.
         """
-        if dedupe:
+        if kind.dedupe:
             key = f"GET {canonicalize_url(url)}"
             if key in self._seen:
                 self.stats.duplicates += 1
@@ -227,13 +261,13 @@ class StoreSession:
             url = target
         raise RequestFailed(url, f"more than {MAX_REDIRECTS} redirects")
 
-    async def _allowed(self, url: str, kind: Kind) -> bool:
-        if kind == "robots" or not self.registry.respect_robots_txt:
+    async def _allowed(self, url: str, kind: RequestKind) -> bool:
+        if not kind.check_robots or not self.registry.respect_robots_txt:
             return True
         rules = await self.registry.robots(url, self)
         if rules.allowed(url, self.robots_agent):
             return True
-        if kind == "store":
+        if kind.counted:
             self.stats.robots_disallowed += 1
         logger.info("Forbidden by robots.txt: %s", url)
         return False
@@ -243,14 +277,14 @@ class StoreSession:
             return None
         return max(0.0, self.bail_deadline - now())
 
-    async def _fetch_with_retries(self, url: str, kind: Kind) -> Response | None:
+    async def _fetch_with_retries(self, url: str, kind: RequestKind) -> Response | None:
         if not await self._allowed(url, kind):
             return None
         slot = self.registry.slot(url)
         attempt = 0
         while True:
             if self.registry.shutdown.is_set():
-                raise StopStore("shutdown")
+                raise ShutdownRequested
             response: Response | None = None
             error: FetchError | None = None
             async with self._store_slots, slot.semaphore:
@@ -270,7 +304,10 @@ class StoreSession:
                     error = exc
             if response is not None:
                 slot.adjust(response.latency, response.status)
-                self.stats.record_response(kind, response.status)
+                if kind.counted:
+                    self.stats.responses += 1
+                    self.stats.by_status[response.status] += 1
+                    self.stats.successes += response.ok
                 if self.cookies is not None:
                     self.cookies.update(response.set_cookies)
                 logger.debug(
@@ -279,7 +316,7 @@ class StoreSession:
                     response.status,
                     response.latency,
                     attempt + 1,
-                    kind,
+                    kind.name,
                 )
                 if not self.retry.should_retry_status(response.status, attempt):
                     return response
@@ -295,9 +332,9 @@ class StoreSession:
             else:
                 assert error is not None
                 name = type(error).__name__
-                self.stats.transport_errors[name] += 1
-                if isinstance(error, FetchTLSError):
-                    self.stats.tls_errors += 1
+                if kind.counted:
+                    self.stats.transport_errors[name] += 1
+                    self.stats.tls_errors += isinstance(error, FetchTLSError)
                 logger.debug("Error fetching %s: %s", url, error)
                 retryable = not isinstance(error, (FetchTLSError, FetchTooLarge, FetchBadEncoding))
                 if not (retryable and attempt < self.retry.retries):

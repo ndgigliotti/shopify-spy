@@ -13,10 +13,13 @@ from shopify_spy.fetch import (
 )
 from shopify_spy.policy import IdentityPool, RetryPolicy, ThrottleSettings, now
 from shopify_spy.session import (
+    IMAGE,
     MAX_REDIRECTS,
+    PROBE,
     HostRegistry,
     RequestFailed,
-    StopStore,
+    ShutdownRequested,
+    SingleFlight,
     StoreSession,
 )
 
@@ -66,10 +69,10 @@ async def test_duplicate_url_skipped():
     assert fetcher.count(f"{STORE}/p?a=1&b=2") == 1
 
 
-async def test_dedupe_false_fetches_again():
+async def test_kind_without_dedupe_fetches_again():
     session, fetcher = make_session({f"{STORE}/p": (200, "ok")})
     await get(session, f"{STORE}/p")
-    assert (await get(session, f"{STORE}/p", dedupe=False)).status == 200
+    assert (await get(session, f"{STORE}/p", kind=PROBE)).status == 200
     assert fetcher.count(f"{STORE}/p") == 2
     assert session.stats.duplicates == 0
 
@@ -81,8 +84,8 @@ async def test_robots_disallow_returns_none_and_counts_store_only():
     session, fetcher = make_session({f"{STORE}/robots.txt": DISALLOW_PRIVATE})
     assert await get(session, f"{STORE}/private/1") is None
     assert session.stats.robots_disallowed == 1
-    assert await get(session, f"{STORE}/private/2", kind="probe") is None
-    assert await get(session, f"{STORE}/private/3", kind="image") is None
+    assert await get(session, f"{STORE}/private/2", kind=PROBE) is None
+    assert await get(session, f"{STORE}/private/3", kind=IMAGE) is None
     assert session.stats.robots_disallowed == 1
     assert all("/private" not in r.url for r in fetcher.requests)
 
@@ -336,8 +339,8 @@ async def test_stats_count_store_requests_only():
         robots=False,
     )
     await get(session, f"{STORE}/ok")
-    await get(session, f"{STORE}/probe", kind="probe")
-    await get(session, f"{STORE}/img", kind="image")
+    await get(session, f"{STORE}/probe", kind=PROBE)
+    await get(session, f"{STORE}/img", kind=IMAGE)
     await get(session, f"{STORE}/missing")
     assert session.stats.responses == 2
     assert session.stats.successes == 1
@@ -351,9 +354,8 @@ async def test_stats_count_store_requests_only():
 async def test_shutdown_stops_new_requests():
     session, fetcher = make_session({f"{STORE}/p": (200, "ok")})
     session.registry.shutdown.set()
-    with pytest.raises(StopStore) as excinfo:
+    with pytest.raises(ShutdownRequested):
         await get(session, f"{STORE}/p")
-    assert excinfo.value.reason == "shutdown"
     assert fetcher.requests == []
 
 
@@ -365,7 +367,7 @@ async def test_shutdown_stops_before_retry():
         return (503, "")
 
     session, fetcher = make_session({f"{STORE}/p": route}, robots=False)
-    with pytest.raises(StopStore):
+    with pytest.raises(ShutdownRequested):
         await get(session, f"{STORE}/p")
     assert fetcher.count(f"{STORE}/p") == 1
 
@@ -382,3 +384,24 @@ async def test_slots_keyed_by_origin():
     assert registry.slot("https://a.test/x") is registry.slot("https://A.test/y")
     assert registry.slot("https://a.test/x") is not registry.slot("http://a.test:8080/y")
     assert registry.slot("https://a.test/x") is not registry.slot("https://b.test/x")
+
+
+async def test_single_flight_shares_one_fetch_and_survives_owner_cancellation():
+    calls = 0
+
+    async def fetch():
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.1)
+        return calls
+
+    flight = SingleFlight()
+    owner = asyncio.ensure_future(flight.get("k", fetch))
+    await asyncio.sleep(0)  # the owner starts fetching
+    waiter = asyncio.ensure_future(flight.get("k", fetch))
+    await asyncio.sleep(0)
+    owner.cancel()  # the waiter must fetch itself, not receive a missing result
+    async with asyncio.timeout(2):
+        assert await waiter == 2
+        assert await flight.get("k", fetch) == 2  # cached afterwards
+    assert calls == 2

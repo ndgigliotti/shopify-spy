@@ -3,7 +3,6 @@ from pathlib import Path
 import pytest
 
 from shopify_spy.config import (
-    OUTPUT_FORMATS,
     Config,
     OutputConfig,
     ScrapeConfig,
@@ -119,14 +118,6 @@ def test_load_config_without_format(tmp_path):
     config_file.write_text("output:\n  dir: ./data\n")
     config = load_config_from_file(config_file)
     assert config.output.format == "jsonl"
-
-
-def test_output_formats_mapping():
-    """OUTPUT_FORMATS maps format names to (scrapy_format, file_ext) tuples."""
-    assert OUTPUT_FORMATS["json"] == ("json", ".json")
-    assert OUTPUT_FORMATS["jsonl"] == ("jsonlines", ".jsonl")
-    assert OUTPUT_FORMATS["csv"] == ("csv", ".csv")
-    assert OUTPUT_FORMATS["xml"] == ("xml", ".xml")
 
 
 # --- Limit config tests ---

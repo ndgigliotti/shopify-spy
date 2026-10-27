@@ -9,6 +9,7 @@ works instead.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import sys
 import time
 import warnings
@@ -22,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from shopify_spy.policy import ThrottleSettings
 from shopify_spy.results import RunResult, ScrapeFailed, StoreResult, run_finish_reason
 from shopify_spy.runner import RunConfig, Runner
-from shopify_spy.utils import is_valid_url, normalize_url
+from shopify_spy.utils import is_valid_url, normalize_url, origin
 
 RUNNING_LOOP_ERROR = (
     "An event loop is already running (e.g. Jupyter or async code). "
@@ -104,8 +105,7 @@ def _prepare_urls(urls: str | Iterable[str]) -> list[tuple[str, str]]:
     stores: list[tuple[str, str]] = []
     seen: set[str] = set()
     for u in inputs:
-        parsed = normalize_url(u)
-        store = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+        store = origin(normalize_url(u).geturl())
         if store not in seen:
             seen.add(store)
             stores.append((u, store))
@@ -194,23 +194,18 @@ class _BaseRun:
                 duration=time.monotonic() - self._started,
             )
         if items is not None:
-            self._result = RunResult(
-                stores=self._result.stores,
-                finish_reason=self._result.finish_reason,
-                items=items,
-                duration=self._result.duration,
-            )
+            self._result = dataclasses.replace(self._result, items=items)
         return self._result
 
     def _check_failure(self) -> None:
-        result = self.result
-        failed = result.failures(self._opts.strict)
-        if not failed or not (self._opts.strict or len(failed) == len(result.stores)):
+        if self._opts.on_failure == "ignore":
             return
-        if self._opts.on_failure == "raise":
-            raise ScrapeFailed(result, failed)
-        if self._opts.on_failure == "warn":
-            warnings.warn(str(ScrapeFailed(result, failed)), ScrapeWarning, stacklevel=4)
+        try:
+            self.result.raise_for_status(self._opts.strict)
+        except ScrapeFailed as exc:
+            if self._opts.on_failure == "raise":
+                raise
+            warnings.warn(str(exc), ScrapeWarning, stacklevel=4)
 
     def _claim(self) -> None:
         if self._iterated:
@@ -256,7 +251,8 @@ def _ensure_no_running_loop() -> None:
 class ScrapeRun(_BaseRun):
     """A scrape in progress (sync). Iterate it, or call ``collect()`` or ``first()``.
 
-    Use as a context manager (or let iteration finish) so an early exit cleans up.
+    Leaving iteration early (``break``, an exception, or ``close()``) stops the run
+    and marks unfinished stores "closed"; ``with`` does the same on exit.
     """
 
     def __init__(self, *args: Any) -> None:

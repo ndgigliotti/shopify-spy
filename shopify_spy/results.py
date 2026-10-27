@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from shopify_spy.session import StoreStats
 
 
 class StoreStatus(StrEnum):
@@ -34,6 +37,8 @@ class StoreStatus(StrEnum):
         """The status string used in CLI summaries and status files."""
         return _LABELS[self]
 
+
+_PLATFORM_NAMES = {"shopify": "Shopify", "woocommerce": "WooCommerce"}
 
 _LABELS = {
     StoreStatus.ok: "ok",
@@ -65,7 +70,7 @@ class StoreResult:
     status: StoreStatus
     complete: bool
     finish_reason: str  # finished, item_limit, bail, shutdown, closed, error
-    hint: str | None = None
+    suggested_platform: str | None = None  # set when the store looks like another platform
     responses_by_status: dict[int, int] = field(default_factory=dict)
     robots_disallowed: int = 0
     images_failed: int = 0
@@ -75,6 +80,14 @@ class StoreResult:
     @property
     def failed(self) -> bool:
         return self.status.is_failure
+
+    @property
+    def hint(self) -> str | None:
+        """Readable advice, e.g. "looks like WooCommerce; pass platform='woocommerce'"."""
+        if self.suggested_platform is None:
+            return None
+        name = _PLATFORM_NAMES.get(self.suggested_platform, self.suggested_platform)
+        return f"looks like {name}; pass platform='{self.suggested_platform}'"
 
 
 @dataclass(frozen=True)
@@ -135,13 +148,9 @@ def diagnose(
     errored: bool,
     truncated: bool,
     finish_reason: str,
-    successes: int,
-    responses: int,
-    by_status: dict[int, int],
-    robots_disallowed: int,
-    tls_errors: int,
+    stats: StoreStats,
 ) -> StoreStatus:
-    """Decide a store's status. Mirrors the CLI diagnosis order on master.
+    """Decide a store's status. Keeps the Scrapy-era CLI's diagnosis order.
 
     Blocking causes only count if the store never got a 2xx: a 403 recovered by a UA
     swap, or the products.json 404 that triggers the sitemap fallback, isn't why a
@@ -151,17 +160,17 @@ def diagnose(
         return StoreStatus.error
     if items > 0:
         return StoreStatus.partial if truncated else StoreStatus.ok
-    if successes == 0:
-        if robots_disallowed > 0:
+    if stats.successes == 0:
+        if stats.robots_disallowed > 0:
             return StoreStatus.robots_blocked
-        if by_status.get(403, 0) > 0:
+        if stats.by_status[403] > 0:
             return StoreStatus.forbidden
-        if by_status.get(404, 0) > 0:
+        if stats.by_status[404] > 0:
             return StoreStatus.not_found
     if finish_reason == "bail":
         return StoreStatus.timed_out
-    if responses == 0:
-        return StoreStatus.tls_error if tls_errors > 0 else StoreStatus.no_response
+    if stats.responses == 0:
+        return StoreStatus.tls_error if stats.tls_errors > 0 else StoreStatus.no_response
     return StoreStatus.empty
 
 

@@ -68,6 +68,16 @@ def canonicalize_url(url: str) -> str:
     return urllib.parse.urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), path, query, ""))
 
 
+def next_page_url(url: str) -> str:
+    """Increment the ``page`` query parameter (1 if absent), keeping the others."""
+    parsed = urllib.parse.urlparse(url)
+    params = dict(urllib.parse.parse_qsl(parsed.query))
+    params["page"] = str(int(params.get("page", 1)) + 1)
+    return urllib.parse.urlunparse(
+        (parsed.scheme, parsed.netloc, parsed.path, "", urllib.parse.urlencode(params), "")
+    )
+
+
 def origin(url: str) -> str:
     """Return scheme://host[:port] for a URL, the key for per-host state."""
     parsed = urllib.parse.urlsplit(url)
