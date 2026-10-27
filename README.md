@@ -76,13 +76,13 @@ Results are saved as JSONL in the output directory (default: `./output`). Use `-
 
 <div align="center"><img src="https://raw.githubusercontent.com/ndgigliotti/shopify-spy/master/assets/ua-rotation-neon.png" width="700"></div>
 
-- **Failure diagnostics.** When a scrape returns 0 items, the tool explains why (403, 404, robots.txt, timeout) and suggests flags to try.
+- **Failure diagnostics.** When a scrape returns 0 items, the tool explains why for each store (403, 404, robots.txt, timeout, no response) and suggests flags to try. Malformed URLs are skipped with a warning instead of breaking the run.
 - **Python library.** `import shopify_spy` gives the same scraping engine as the CLI; see [Use as a library](#use-as-a-library).
 - **Log files.** Detailed logs go to a log file, keeping the terminal clean. Use `--verbose` to also print to the terminal.
 - **Status JSON.** Each run writes a machine-readable status file with per-URL results, errors, and timing.
 - **Bail timeout.** Automatically aborts if no items are scraped within `--bail` seconds (default: 30).
 - **Coding-agent friendly.** Designed for use by AI coding agents (Claude Code, Cursor, etc.):
-  - `--peek` pipes a single item to stdout for quick schema inspection
+  - `--peek` pipes a single item to stdout for quick schema inspection; warnings and errors go to stderr, so stdout stays valid JSONL
   - Non-zero exit codes on failure with diagnostic messages explaining why
   - Status JSON with machine-readable per-URL results and error details
   - `--bail` prevents dead runs from hanging indefinitely
@@ -214,7 +214,24 @@ A status JSON file is written for each run with metadata:
 }
 ```
 
-`status` is a human-readable label (`ok`, `403 Forbidden`, `blocked by robots.txt`, `timed out`, ...); `code` is the matching `StoreStatus` value from the Python API.
+`status` is a human-readable label; `code` is the matching `StoreStatus` value from the Python API:
+
+| `status` | `code` | Meaning |
+|---|---|---|
+| `ok` | `ok` | Items were scraped |
+| `ok` | `partial` | Items were scraped, but part of the catalog couldn't be reached |
+| `0 items` | `empty` | The store answered but had no products |
+| `timed out` | `timed_out` | No items within `--bail` seconds |
+| `403 Forbidden` | `forbidden` | The store returned 403s and no successful response |
+| `404 Not Found` | `not_found` | The store returned 404s and no successful response; check the URL and `--platform` |
+| `blocked by robots.txt` | `robots_blocked` | robots.txt forbade the store's requests; try `--ignore-robots` |
+| `TLS error` | `tls_error` | The certificate failed verification; try `--insecure` |
+| `no response` | `no_response` | The store never answered (DNS, connection or network failure) |
+| `failed` | `error` | An unexpected error (details in the log file) |
+| `stopped` | `stopped` | Interrupted (Ctrl-C) before producing anything |
+| `invalid URL` | `invalid_url` | The URL was malformed and skipped before scraping |
+
+`finish_reason` summarizes the run: `finished`, `item_limit` (a store reached `--limit`), `bail` (a store hit the `--bail` timeout), `crawler_failed` (a store raised an unexpected error), or `shutdown` (interrupted).
 
 Detailed logs are written to a log file (not the terminal). Log files are stored in the platform-appropriate state directory (e.g., `~/.local/state/shopify-spy/logs/` on Linux). Use `--verbose` to also print logs to the terminal.
 
