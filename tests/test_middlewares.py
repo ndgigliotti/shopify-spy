@@ -1,6 +1,7 @@
 from unittest.mock import Mock, patch
 
 from scrapy.http import Request, Response
+from scrapy.http.request import NO_CALLBACK
 from scrapy.settings import Settings
 from scrapy.statscollectors import MemoryStatsCollector
 
@@ -257,27 +258,54 @@ def test_swap_on_statuses_excludes_server_errors():
 # --- StoreResponseStats tests ---
 
 
-def test_store_response_stats_skips_robots_txt():
+def _store_stats():
     crawler = Mock(settings=Settings())
     stats = MemoryStatsCollector(crawler)
-    mw = StoreResponseStats(stats)
-    robots = Request("https://store.com/robots.txt", meta={"dont_obey_robotstxt": True})
-    page = Request("https://store.com/products.json")
+    return stats, StoreResponseStats(stats)
+
+
+def _robots_request(url="https://store.com/robots.txt"):
+    # As RobotsTxtMiddleware builds it
+    return Request(url, callback=NO_CALLBACK, meta={"dont_obey_robotstxt": True})
+
+
+def _spider_request(url="https://store.com/products.json"):
+    return Request(url, callback=lambda response: None)
+
+
+def test_store_response_stats_skips_robots_txt():
+    stats, mw = _store_stats()
+    robots, page = _robots_request(), _spider_request()
     mw.process_response(robots, Response(robots.url, status=404))
     mw.process_response(robots, Response(robots.url, status=403))
     mw.process_response(page, Response(page.url, status=403))
     mw.process_response(page, Response(page.url, status=200))
     assert stats.get_value("shopify_spy/store_response_count") == 2
+    assert stats.get_value("shopify_spy/store_success_count") == 1
     assert stats.get_value("shopify_spy/store_response_status_count/403") == 1
     assert stats.get_value("shopify_spy/store_response_status_count/404") is None
 
 
-def test_store_response_stats_counts_robots_retries_as_robots():
-    """Retried and redirected robots.txt requests keep the meta and stay excluded."""
-    crawler = Mock(settings=Settings())
-    stats = MemoryStatsCollector(crawler)
-    mw = StoreResponseStats(stats)
-    robots = Request("https://store.com/robots.txt", meta={"dont_obey_robotstxt": True})
+def test_store_response_stats_skips_robots_retries_and_redirects():
+    """Retried and redirected robots.txt requests keep NO_CALLBACK and stay excluded."""
+    stats, mw = _store_stats()
+    robots = _robots_request()
     for req in (robots.copy(), robots.replace(url="https://www.store.com/robots.txt")):
         mw.process_response(req, Response(req.url, status=301))
     assert stats.get_value("shopify_spy/store_response_count") is None
+
+
+def test_store_response_stats_skips_image_downloads():
+    """ImagesPipeline requests also use NO_CALLBACK; CDN errors are not store errors."""
+    stats, mw = _store_stats()
+    image = Request("https://cdn.shopify.com/a.jpg", callback=NO_CALLBACK)
+    mw.process_response(image, Response(image.url, status=403))
+    assert stats.get_value("shopify_spy/store_response_status_count/403") is None
+
+
+def test_store_response_stats_counts_default_callback():
+    """A spider request without an explicit callback (callback=None) is the store's."""
+    stats, mw = _store_stats()
+    page = Request("https://store.com/sitemap.xml")
+    mw.process_response(page, Response(page.url, status=200))
+    assert stats.get_value("shopify_spy/store_success_count") == 1

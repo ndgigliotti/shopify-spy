@@ -750,8 +750,42 @@ def test_diagnose_crawler_no_response():
 
 
 def test_diagnose_crawler_zero_items():
-    c = _make_crawler({"downloader/response_count": 5})
+    c = _make_crawler(
+        {
+            "downloader/response_count": 5,
+            "shopify_spy/store_response_count": 5,
+            "shopify_spy/store_success_count": 5,
+        }
+    )
     assert _diagnose_crawler(c, Config()) == "0 items"
+
+
+def test_diagnose_crawler_recovered_403_is_not_blocking():
+    """A 403 the UA swap recovered from (a later 2xx) doesn't hide the timeout."""
+    c = _make_crawler(
+        {
+            "finish_reason": "no_item_timeout",
+            "shopify_spy/store_response_count": 2,
+            "shopify_spy/store_success_count": 1,
+            "shopify_spy/store_response_status_count/403": 1,
+            "shopify_spy/store_response_status_count/200": 1,
+        }
+    )
+    assert _diagnose_crawler(c, Config()) == "timed out"
+
+
+def test_diagnose_crawler_fallback_404_is_not_blocking():
+    """products.json 404 followed by a working sitemap is the normal fallback."""
+    c = _make_crawler(
+        {
+            "finish_reason": "no_item_timeout",
+            "shopify_spy/store_response_count": 2,
+            "shopify_spy/store_success_count": 1,
+            "shopify_spy/store_response_status_count/404": 1,
+            "shopify_spy/store_response_status_count/200": 1,
+        }
+    )
+    assert _diagnose_crawler(c, Config()) == "timed out"
 
 
 # --- Status file tests ---
