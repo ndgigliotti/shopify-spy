@@ -14,7 +14,6 @@ from rich.console import Console
 from rich.markup import escape
 
 from shopify_spy.config import (
-    NO_ITEM_TIMEOUT_REASON,
     OUTPUT_FORMATS,
     Config,
     OutputFormat,
@@ -22,6 +21,7 @@ from shopify_spy.config import (
     create_default_config,
     load_config,
 )
+from shopify_spy.constants import NO_ITEM_TIMEOUT_REASON, STORE_RESPONSE_STATUS_COUNT
 from shopify_spy.utils import normalize_url
 
 app = typer.Typer(
@@ -633,10 +633,8 @@ def _host(url: str) -> str:
 
 
 def _store_status_count(crawler: object, status: int) -> int:
-    """Count responses with this HTTP status, excluding the robots.txt request."""
-    return crawler.stats.get_value(
-        f"downloader/response_status_count/{status}", 0
-    ) - crawler.stats.get_value(f"robotstxt/response_status_count/{status}", 0)
+    """Count the store's responses with this HTTP status (robots.txt traffic excluded)."""
+    return crawler.stats.get_value(STORE_RESPONSE_STATUS_COUNT.format(status), 0)
 
 
 def _diagnose_crawler(crawler: object, config: Config) -> str:

@@ -566,8 +566,8 @@ def test_multi_url_failure_shows_per_url_status(tmp_path, capsys):
     """Failure path prints per-URL diagnostics when multiple URLs are given."""
     config = Config(output=OutputConfig(dir=tmp_path))
     stats = [
-        {"downloader/response_status_count/403": 1, "downloader/response_count": 1},
-        {"downloader/response_status_count/404": 1, "downloader/response_count": 1},
+        {"shopify_spy/store_response_status_count/403": 1, "downloader/response_count": 1},
+        {"shopify_spy/store_response_status_count/404": 1, "downloader/response_count": 1},
     ]
     urls = ["https://blocked.com", "https://missing.com"]
 
@@ -589,7 +589,7 @@ def test_multi_url_failure_shows_per_url_status(tmp_path, capsys):
 def test_single_url_failure_no_per_url_breakdown(tmp_path, capsys):
     """Single-URL failure should NOT print a per-URL line."""
     config = Config(output=OutputConfig(dir=tmp_path))
-    stats = [{"downloader/response_status_count/403": 1, "downloader/response_count": 1}]
+    stats = [{"shopify_spy/store_response_status_count/403": 1, "downloader/response_count": 1}]
 
     mock_settings = MagicMock()
     with (
@@ -616,12 +616,16 @@ def test_diagnose_crawler_items():
 
 
 def test_diagnose_crawler_403():
-    c = _make_crawler({"downloader/response_status_count/403": 2, "downloader/response_count": 2})
+    c = _make_crawler(
+        {"shopify_spy/store_response_status_count/403": 2, "downloader/response_count": 2}
+    )
     assert _diagnose_crawler(c, Config()) == "403 Forbidden"
 
 
 def test_diagnose_crawler_404():
-    c = _make_crawler({"downloader/response_status_count/404": 1, "downloader/response_count": 1})
+    c = _make_crawler(
+        {"shopify_spy/store_response_status_count/404": 1, "downloader/response_count": 1}
+    )
     assert _diagnose_crawler(c, Config()) == "404 Not Found"
 
 
@@ -630,11 +634,14 @@ def test_robots_txt_404_does_not_hide_timeout(tmp_path, capsys):
     config = Config(output=OutputConfig(dir=tmp_path))
     stats = [
         {
+            # robots.txt 404, one store response, then the store hangs until --bail
             "finish_reason": "no_item_timeout",
-            "downloader/response_count": 1,
+            "downloader/response_count": 2,
             "downloader/response_status_count/404": 1,
-            "robotstxt/response_count": 0,
+            "robotstxt/response_count": 1,
             "robotstxt/response_status_count/404": 1,
+            "shopify_spy/store_response_count": 1,
+            "shopify_spy/store_response_status_count/200": 1,
         }
     ]
 
@@ -657,7 +664,7 @@ def test_summary_has_a_hint_per_distinct_problem(tmp_path, capsys):
     """One store's problem does not hide another's hint."""
     config = Config(output=OutputConfig(dir=tmp_path))
     stats = [
-        {"downloader/response_status_count/403": 2, "downloader/response_count": 2},
+        {"shopify_spy/store_response_status_count/403": 2, "downloader/response_count": 2},
         {},
     ]
 
@@ -710,7 +717,7 @@ def test_timeout_does_not_hide_403(tmp_path, capsys):
         {"item_scraped_count": 0, "finish_reason": "finished"},
         {
             "finish_reason": "no_item_timeout",
-            "downloader/response_status_count/403": 5,
+            "shopify_spy/store_response_status_count/403": 5,
             "downloader/response_count": 5,
         },
     ]
@@ -780,7 +787,7 @@ def test_status_file_written_on_success(tmp_path):
 def test_status_file_written_on_failure(tmp_path):
     """Status file is written even when scraping fails (0 items)."""
     config = Config(output=OutputConfig(dir=tmp_path))
-    stats = [{"downloader/response_status_count/403": 1, "downloader/response_count": 1}]
+    stats = [{"shopify_spy/store_response_status_count/403": 1, "downloader/response_count": 1}]
 
     mock_settings = MagicMock()
     with (
@@ -804,7 +811,7 @@ def test_status_file_multi_url(tmp_path):
     config = Config(output=OutputConfig(dir=tmp_path))
     stats = [
         {"item_scraped_count": 10, "finish_reason": "finished"},
-        {"downloader/response_status_count/403": 1, "downloader/response_count": 1},
+        {"shopify_spy/store_response_status_count/403": 1, "downloader/response_count": 1},
     ]
     urls = ["https://ok.com", "https://blocked.com"]
 

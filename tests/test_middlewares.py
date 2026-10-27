@@ -1,8 +1,10 @@
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from scrapy.http import Request, Response
+from scrapy.settings import Settings
+from scrapy.statscollectors import MemoryStatsCollector
 
-from shopify_spy.middlewares import SWAP_ON_STATUSES, UserAgentMiddleware
+from shopify_spy.middlewares import SWAP_ON_STATUSES, StoreResponseStats, UserAgentMiddleware
 from shopify_spy.user_agents import USER_AGENTS
 
 # --- user_agents list tests ---
@@ -250,3 +252,32 @@ def test_swap_on_statuses_contains_403():
 def test_swap_on_statuses_excludes_server_errors():
     for code in (500, 502, 503, 504):
         assert code not in SWAP_ON_STATUSES
+
+
+# --- StoreResponseStats tests ---
+
+
+def test_store_response_stats_skips_robots_txt():
+    crawler = Mock(settings=Settings())
+    stats = MemoryStatsCollector(crawler)
+    mw = StoreResponseStats(stats)
+    robots = Request("https://store.com/robots.txt", meta={"dont_obey_robotstxt": True})
+    page = Request("https://store.com/products.json")
+    mw.process_response(robots, Response(robots.url, status=404))
+    mw.process_response(robots, Response(robots.url, status=403))
+    mw.process_response(page, Response(page.url, status=403))
+    mw.process_response(page, Response(page.url, status=200))
+    assert stats.get_value("shopify_spy/store_response_count") == 2
+    assert stats.get_value("shopify_spy/store_response_status_count/403") == 1
+    assert stats.get_value("shopify_spy/store_response_status_count/404") is None
+
+
+def test_store_response_stats_counts_robots_retries_as_robots():
+    """Retried and redirected robots.txt requests keep the meta and stay excluded."""
+    crawler = Mock(settings=Settings())
+    stats = MemoryStatsCollector(crawler)
+    mw = StoreResponseStats(stats)
+    robots = Request("https://store.com/robots.txt", meta={"dont_obey_robotstxt": True})
+    for req in (robots.copy(), robots.replace(url="https://www.store.com/robots.txt")):
+        mw.process_response(req, Response(req.url, status=301))
+    assert stats.get_value("shopify_spy/store_response_count") is None

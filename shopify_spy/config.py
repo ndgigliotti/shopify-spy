@@ -15,9 +15,6 @@ OUTPUT_FORMATS: dict[str, tuple[str, str]] = {
 }
 OutputFormat = Literal["json", "jsonl", "csv", "xml"]
 
-# Spider close reason used by the NoItemTimeout extension (the --bail timer)
-NO_ITEM_TIMEOUT_REASON = "no_item_timeout"
-
 
 class Platform(str, Enum):
     shopify = "shopify"

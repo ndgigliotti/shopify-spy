@@ -6,7 +6,7 @@ import warnings
 from scrapy import signals
 from scrapy.exceptions import NotConfigured
 
-from shopify_spy.config import NO_ITEM_TIMEOUT_REASON
+from shopify_spy.constants import NO_ITEM_TIMEOUT_REASON
 
 logger = logging.getLogger(__name__)
 
