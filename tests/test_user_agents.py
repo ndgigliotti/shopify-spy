@@ -1,4 +1,4 @@
-"""The shipped user agent list and scripts/update_user_agents.py, which generates it."""
+"""The shipped user agent list and scripts/update_user_agents.py, which updates it."""
 
 import datetime
 import importlib.util
@@ -26,6 +26,13 @@ def fixed_versions(monkeypatch):
     monkeypatch.setattr(gen, "edge_major", lambda: 151)
 
 
+@pytest.fixture
+def output(tmp_path, monkeypatch):
+    path = tmp_path / "_user_agents.py"
+    monkeypatch.setattr(gen, "OUTPUT", path)
+    return path
+
+
 def generated(groups):
     return [agent for _, agents in groups for agent in agents]
 
@@ -43,6 +50,18 @@ def test_shipped_list_is_well_formed():
 def test_shipped_list_version_tokens_are_consistent():
     # Same rules as master's test_user_agents_version_tokens_consistent
     assert gen.consistency_errors(USER_AGENTS) == []
+
+
+def test_shipped_list_is_recent():
+    match = re.search(r"\((\d{4}-\d{2}-\d{2})\)", _user_agents.__doc__ or "")
+    assert match, "missing the generation date; run scripts/update_user_agents.py"
+    age = datetime.date.today() - datetime.date.fromisoformat(match.group(1))
+    assert age.days <= MAX_AGE_DAYS, (
+        f"user agents are {age.days} days old; run scripts/update_user_agents.py"
+    )
+
+
+# --- Version-token rules --------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -66,75 +85,11 @@ def test_safari_patch_versions_are_valid():
     assert gen.consistency_errors([safari.format("26.6.1"), safari.format("26.0")]) == []
 
 
-def test_main_refuses_to_write_inconsistent_tokens(fixed_versions, output, monkeypatch):
-    monkeypatch.setattr(gen, "SAFARI_VERSION", "27")
-    monkeypatch.setattr(gen, "get_json", lambda url: generated(gen.build()))
-    assert gen.main() == 2
-    assert not output.exists()
-
-
-def test_shipped_list_comes_from_the_generator(fixed_versions):
-    # Hand edits that break a template show up as a format the generator never makes
-    templates = {gen.shape(a) for a in generated(gen.build())}
-    assert {gen.shape(a) for a in USER_AGENTS} == templates
-
-
-def test_shipped_list_is_recent():
-    match = re.search(r"\((\d{4}-\d{2}-\d{2})\)", _user_agents.__doc__ or "")
-    assert match, "missing the generation date; run scripts/update_user_agents.py"
-    age = datetime.date.today() - datetime.date.fromisoformat(match.group(1))
-    assert age.days <= MAX_AGE_DAYS, (
-        f"user agents are {age.days} days old; run scripts/update_user_agents.py"
-    )
-
-
-# --- Format check ---------------------------------------------------------------------
-
-
-def test_shape_masks_major_versions_only():
-    chrome = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    assert gen.shape(chrome + "Chrome/157.0.0.0 Safari/537.36").endswith(
-        "Chrome/N.0.0.0 Safari/537.36"
-    )
-    firefox = "Mozilla/5.0 (X11; Linux x86_64; rv:158.0) Gecko/20100101 Firefox/158.0"
-    assert gen.shape(firefox) == (
-        "Mozilla/5.0 (X11; Linux x86_64; rv:N.0) Gecko/20100101 Firefox/N.0"
-    )
-    assert "Version/N Safari" in gen.shape("... Version/18.5 Safari/605.1.15")
-
-
-def test_format_change_is_a_warning(fixed_versions):
-    ours = generated(gen.build())
-    # Chrome stops freezing its minor version: our template no longer matches
-    reference = [a.replace(".0.0.0", ".1.2.3") for a in ours]
-    warnings, _ = gen.check_format(ours, reference)
-    assert warnings and all("no longer seen" in w for w in warnings)
-
-
-def test_extra_reference_formats_are_only_notices(fixed_versions):
-    ours = generated(gen.build())
-    opera = "Mozilla/5.0 (Windows NT 10.0) Chrome/150.0.0.0 Safari/537.36 OPR/120.0.0.0"
-    warnings, notices = gen.check_format(ours, [*ours, opera])
-    assert warnings == []
-    assert any("don't generate" in n for n in notices)
-
-
-def test_newer_safari_is_a_notice(fixed_versions, monkeypatch):
-    ours = generated(gen.build())
-    newer = [a.replace(f"Version/{gen.SAFARI_VERSION} ", "Version/99 ") for a in ours]
-    warnings, notices = gen.check_format(ours, newer)
-    assert warnings == []
-    assert any("Safari 99" in n for n in notices)
+def test_generated_strings_follow_the_rules(fixed_versions):
+    assert gen.consistency_errors(generated(gen.build())) == []
 
 
 # --- Writing --------------------------------------------------------------------------
-
-
-@pytest.fixture
-def output(tmp_path, monkeypatch):
-    path = tmp_path / "_user_agents.py"
-    monkeypatch.setattr(gen, "OUTPUT", path)
-    return path
 
 
 def test_render_round_trips(fixed_versions, output):
@@ -143,42 +98,30 @@ def test_render_round_trips(fixed_versions, output):
     assert gen.current_agents() == generated(groups)
 
 
-def test_main_writes_a_changed_list(fixed_versions, output, monkeypatch):
-    monkeypatch.setattr(gen, "get_json", lambda url: generated(gen.build()))
+def test_main_writes_a_changed_list_and_reminds_to_research(fixed_versions, output, capsys):
     assert gen.main() == 0
     assert gen.current_agents() == generated(gen.build())
+    assert "research online" in capsys.readouterr().out
 
 
-def test_main_leaves_an_unchanged_file_alone(fixed_versions, output, monkeypatch):
+def test_main_leaves_an_unchanged_file_alone(fixed_versions, output):
     output.write_text(gen.render(gen.build()).replace("(20", "(19"))  # an old date
     before = output.read_text()
-    monkeypatch.setattr(gen, "get_json", lambda url: generated(gen.build()))
     assert gen.main() == 0
     assert output.read_text() == before
 
 
-def test_main_refuses_to_write_on_a_format_change(fixed_versions, output, monkeypatch):
-    drifted = [a.replace("Gecko/20100101", "Gecko/20300101") for a in generated(gen.build())]
-    monkeypatch.setattr(gen, "get_json", lambda url: drifted)
+def test_main_refuses_to_write_broken_templates(fixed_versions, output, monkeypatch):
+    monkeypatch.setattr(gen, "SAFARI_VERSION", "27")
     assert gen.main() == 2
     assert not output.exists()
-
-
-def test_main_still_writes_when_the_reference_is_down(fixed_versions, output, monkeypatch):
-    def down(url):
-        raise OSError("unreachable")
-
-    monkeypatch.setattr(gen, "get_json", down)
-    assert gen.main() == 0
-    assert output.exists()
 
 
 # --- Live -----------------------------------------------------------------------------
 
 
 @pytest.mark.integration
-def test_live_feeds_produce_a_current_list():
+def test_live_feeds_produce_valid_strings():
     agents = generated(gen.build())
-    reference = [a for a in gen.get_json(gen.REFERENCE_LIST) if isinstance(a, str)]
-    warnings, _ = gen.check_format(agents, reference)
-    assert warnings == []
+    assert len(agents) == len(USER_AGENTS)
+    assert gen.consistency_errors(agents) == []
