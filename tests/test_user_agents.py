@@ -2,12 +2,11 @@
 
 import datetime
 import importlib.util
-import re
+import json
 from pathlib import Path
 
 import pytest
 
-from shopify_spy import _user_agents
 from shopify_spy._user_agents import USER_AGENTS
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "update_user_agents.py"
@@ -15,7 +14,9 @@ spec = importlib.util.spec_from_file_location("update_user_agents", SCRIPT)
 gen = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gen)
 
-MAX_AGE_DAYS = 120  # the monthly job keeps it well under this
+SHIPPED = json.loads(gen.OUTPUT.read_text("utf-8"))
+MAX_AGE_DAYS = 120  # versions: the monthly job keeps them well under this
+MAX_FORMAT_CHECK_AGE_DAYS = 180  # formats: researched at least twice a year
 
 
 @pytest.fixture
@@ -28,16 +29,24 @@ def fixed_versions(monkeypatch):
 
 @pytest.fixture
 def output(tmp_path, monkeypatch):
-    path = tmp_path / "_user_agents.py"
+    path = tmp_path / "user_agents.json"
     monkeypatch.setattr(gen, "OUTPUT", path)
     return path
 
 
-def generated(groups):
-    return [agent for _, agents in groups for agent in agents]
+def flat(agents):
+    return [agent for group in agents.values() for agent in group]
+
+
+def age_days(iso_date):
+    return (datetime.date.today() - datetime.date.fromisoformat(iso_date)).days
 
 
 # --- The shipped list -----------------------------------------------------------------
+
+
+def test_package_loads_the_shipped_list():
+    assert USER_AGENTS == flat(SHIPPED["agents"])
 
 
 def test_shipped_list_is_well_formed():
@@ -52,12 +61,16 @@ def test_shipped_list_version_tokens_are_consistent():
     assert gen.consistency_errors(USER_AGENTS) == []
 
 
-def test_shipped_list_is_recent():
-    match = re.search(r"\((\d{4}-\d{2}-\d{2})\)", _user_agents.__doc__ or "")
-    assert match, "missing the generation date; run scripts/update_user_agents.py"
-    age = datetime.date.today() - datetime.date.fromisoformat(match.group(1))
-    assert age.days <= MAX_AGE_DAYS, (
-        f"user agents are {age.days} days old; run scripts/update_user_agents.py"
+def test_shipped_versions_are_recent():
+    age = age_days(SHIPPED["generated"])
+    assert age <= MAX_AGE_DAYS, f"versions are {age} days old; run scripts/update_user_agents.py"
+
+
+def test_formats_were_researched_recently():
+    age = age_days(SHIPPED["formats_verified"])
+    assert age <= MAX_FORMAT_CHECK_AGE_DAYS, (
+        f"user agent formats were last checked {age} days ago; research them online "
+        "(see the reminder scripts/update_user_agents.py prints) and update formats_verified"
     )
 
 
@@ -86,26 +99,31 @@ def test_safari_patch_versions_are_valid():
 
 
 def test_generated_strings_follow_the_rules(fixed_versions):
-    assert gen.consistency_errors(generated(gen.build())) == []
+    assert gen.consistency_errors(flat(gen.build())) == []
+
+
+def test_unrecognized_edge_feed_fails_clearly(monkeypatch):
+    monkeypatch.setattr(gen, "get_json", lambda url: [{"Product": "Beta", "Releases": []}])
+    with pytest.raises(RuntimeError, match="no stable Windows release"):
+        gen.edge_major()
 
 
 # --- Writing --------------------------------------------------------------------------
 
 
-def test_render_round_trips(fixed_versions, output):
-    groups = gen.build()
-    output.write_text(gen.render(groups))
-    assert gen.current_agents() == generated(groups)
-
-
-def test_main_writes_a_changed_list_and_reminds_to_research(fixed_versions, output, capsys):
+def test_main_writes_a_changed_list_and_keeps_formats_verified(fixed_versions, output, capsys):
+    output.write_text(json.dumps({"formats_verified": "2026-01-02", "agents": {}}))
     assert gen.main() == 0
-    assert gen.current_agents() == generated(gen.build())
+    data = json.loads(output.read_text())
+    assert data["agents"] == gen.build()
+    assert data["generated"] == datetime.date.today().isoformat()
+    assert data["formats_verified"] == "2026-01-02"  # only research moves it
     assert "research online" in capsys.readouterr().out
 
 
 def test_main_leaves_an_unchanged_file_alone(fixed_versions, output):
-    output.write_text(gen.render(gen.build()).replace("(20", "(19"))  # an old date
+    data = {"generated": "2020-01-01", "formats_verified": "2020-01-01", "agents": gen.build()}
+    output.write_text(json.dumps(data))
     before = output.read_text()
     assert gen.main() == 0
     assert output.read_text() == before
@@ -122,6 +140,4 @@ def test_main_refuses_to_write_broken_templates(fixed_versions, output, monkeypa
 
 @pytest.mark.integration
 def test_live_feeds_produce_valid_strings():
-    agents = generated(gen.build())
-    assert len(agents) == len(USER_AGENTS)
-    assert gen.consistency_errors(agents) == []
+    assert gen.consistency_errors(flat(gen.build())) == []
