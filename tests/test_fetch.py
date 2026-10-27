@@ -6,6 +6,7 @@ import gzip
 import http.server
 import json
 import socket
+import ssl
 import threading
 import time
 import zlib
@@ -17,9 +18,9 @@ import respx
 from shopify_spy.fetch import (
     ACCEPT_ENCODING,
     FakeFetcher,
-    FetchBadEncoding,
     FetchConnectionError,
     FetchIncomplete,
+    FetchInvalidURL,
     FetchTimeout,
     FetchTLSError,
     FetchTooLarge,
@@ -29,6 +30,7 @@ from shopify_spy.fetch import (
     Request,
     Response,
     Seq,
+    _is_cert_error,
     decompress,
     load_corpus,
 )
@@ -157,18 +159,41 @@ async def test_compressed_bodies_are_decoded(server, path):
     assert response.body == PAYLOAD
 
 
-async def test_unsupported_content_encoding_raises(server):
-    with pytest.raises(FetchBadEncoding):
-        await fetch(f"{server}/br")
+async def test_unknown_content_encoding_passes_body_through(server):
+    # Like Scrapy: servers send values such as "utf-8"; the body is left as is
+    response = await fetch(f"{server}/br")
+    assert response.body == b"\x0b\x02\x80hello\x03"
 
 
-async def test_unsupported_content_encoding_raises_respx():
+async def test_content_encoding_list_is_decoded_in_order():
+    body = gzip.compress(b"payload")
     with respx.mock:
         respx.get("https://shop.test/x").mock(
-            return_value=httpx.Response(200, content=b"zz", headers={"Content-Encoding": "zstd"})
+            return_value=httpx.Response(
+                200, content=body, headers={"Content-Encoding": "identity, gzip"}
+            )
         )
-        with pytest.raises(FetchBadEncoding):
-            await fetch("https://shop.test/x")
+        assert (await fetch("https://shop.test/x")).body == b"payload"
+
+
+def test_concatenated_gzip_members_are_all_decoded():
+    body = gzip.compress(b"first ") + gzip.compress(b"second")
+    assert decompress(body, zlib.MAX_WBITS | 16) == b"first second"
+
+
+async def test_invalid_url_is_a_fetch_error():
+    with pytest.raises(FetchInvalidURL):
+        await fetch("https://shop.test/bad\x7fpath")
+
+
+def test_only_certificate_failures_are_tls_errors():
+    cert = ssl.SSLCertVerificationError("certificate verify failed")
+    wrapped = httpx.ConnectError("boom")
+    wrapped.__cause__ = cert
+    assert _is_cert_error(wrapped)
+    reset = httpx.ConnectError("[SSL: UNEXPECTED_EOF_WHILE_READING]")
+    reset.__cause__ = ssl.SSLError("UNEXPECTED_EOF_WHILE_READING")
+    assert not _is_cert_error(reset)  # retried as a connection error instead
 
 
 async def test_total_deadline_applies_to_trickled_body(server):
@@ -208,15 +233,6 @@ async def test_response_headers_lowercased(server):
     response = await fetch(f"{server}/mixed-case")
     assert response.headers["x-custom-header"] == "Value"
     assert all(name == name.lower() for name in response.headers)
-
-
-async def test_set_cookies_collected_respx():
-    with respx.mock:
-        respx.get("https://shop.test/c").mock(
-            return_value=httpx.Response(200, headers={"Set-Cookie": "session=abc; Path=/"})
-        )
-        response = await fetch("https://shop.test/c")
-    assert response.set_cookies == {"session": "abc"}
 
 
 def test_decompress_bomb_guard():

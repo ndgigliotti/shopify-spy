@@ -16,9 +16,9 @@ from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
 
 from shopify_spy.fetch import (
-    FetchBadEncoding,
     Fetcher,
     FetchError,
+    FetchInvalidURL,
     FetchTLSError,
     FetchTooLarge,
     Request,
@@ -150,6 +150,18 @@ async def _fetch_robots(key: str, session: StoreSession) -> RobotsRules:
     return RobotsRules(response.text if response is not None else None)
 
 
+def _redirect_target(url: str, location: str | None) -> str | None:
+    """The absolute http(s) URL a redirect points to, or None if it can't be followed."""
+    if not location:
+        return None
+    try:
+        target = urllib.parse.urljoin(url, location)
+        scheme = urllib.parse.urlsplit(target).scheme
+    except ValueError:  # e.g. "http://[::1" in Location
+        return None
+    return target if scheme in ("http", "https") else None
+
+
 @dataclass
 class StoreStats:
     """Counts for one store. Apart from ``requests``, only counted request kinds
@@ -209,7 +221,6 @@ class StoreSession:
         retry: RetryPolicy,
         identity: IdentityPool,
         request_timeout: float,
-        cookies: bool = False,
     ) -> None:
         self.fetcher = fetcher
         self.registry = registry
@@ -217,7 +228,6 @@ class StoreSession:
         self.identity = identity
         self.request_timeout = request_timeout
         self.stats = StoreStats()
-        self.cookies: dict[str, str] | None = {} if cookies else None
         self.bail_deadline: float | None = None  # set by the runner until the first item
         self._seen: set[str] = set()
         self._store_slots = asyncio.Semaphore(STORE_CONCURRENCY)
@@ -240,26 +250,35 @@ class StoreSession:
         ShutdownRequested instead of starting a request after a graceful shutdown
         was requested.
         """
-        if kind.dedupe:
-            key = f"GET {canonicalize_url(url)}"
-            if key in self._seen:
-                self.stats.duplicates += 1
-                return None
-            self._seen.add(key)
-
+        if kind.dedupe and self._is_duplicate(url):
+            return None
         for _ in range(MAX_REDIRECTS + 1):
             response = await self._fetch_with_retries(url, kind)
             if response is None:
                 return None
             if not (follow_redirects and response.status in REDIRECT_STATUSES):
                 return response
-            location = response.location
-            target = urllib.parse.urljoin(url, location) if location else None
-            if not target or urllib.parse.urlsplit(target).scheme not in ("http", "https"):
+            target = _redirect_target(url, response.location)
+            if target is None:
                 return response
             logger.debug("Redirecting (%d) to %s from %s", response.status, target, url)
+            # Several URLs redirecting to one page yield it once, like Scrapy's dupefilter
+            if kind.dedupe and self._is_duplicate(target):
+                return None
             url = target
         raise RequestFailed(url, f"more than {MAX_REDIRECTS} redirects")
+
+    def _is_duplicate(self, url: str) -> bool:
+        """Record the URL as requested; True (and counted) if it already was."""
+        try:
+            key = f"GET {canonicalize_url(url)}"
+        except ValueError as exc:  # e.g. a malformed IPv6 host
+            raise RequestFailed(url, f"invalid URL: {exc}") from exc
+        if key in self._seen:
+            self.stats.duplicates += 1
+            return True
+        self._seen.add(key)
+        return False
 
     async def _allowed(self, url: str, kind: RequestKind) -> bool:
         if not kind.check_robots or not self.registry.respect_robots_txt:
@@ -297,7 +316,6 @@ class StoreSession:
                             url=url,
                             identity=self.identity.current,
                             timeout=self.request_timeout,
-                            cookies=self.cookies or {},
                         )
                     )
                 except FetchError as exc:
@@ -308,8 +326,6 @@ class StoreSession:
                     self.stats.responses += 1
                     self.stats.by_status[response.status] += 1
                     self.stats.successes += response.ok
-                if self.cookies is not None:
-                    self.cookies.update(response.set_cookies)
                 logger.debug(
                     "GET %s -> %d in %.2fs (attempt %d, %s)",
                     url,
@@ -336,7 +352,7 @@ class StoreSession:
                     self.stats.transport_errors[name] += 1
                     self.stats.tls_errors += isinstance(error, FetchTLSError)
                 logger.debug("Error fetching %s: %s", url, error)
-                retryable = not isinstance(error, (FetchTLSError, FetchTooLarge, FetchBadEncoding))
+                retryable = not isinstance(error, (FetchTLSError, FetchTooLarge, FetchInvalidURL))
                 if not (retryable and attempt < self.retry.retries):
                     raise RequestFailed(url, error) from error
                 retry_after = None

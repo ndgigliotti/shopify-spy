@@ -9,6 +9,7 @@ import pytest
 from shopify_spy import policy
 from shopify_spy.fetch import FetcherCapabilities
 from shopify_spy.policy import (
+    RETRY_MAX_DELAY,
     HostSlot,
     IdentityPool,
     RetryPolicy,
@@ -197,14 +198,16 @@ def test_should_retry_status():
 
 
 def test_retry_policy_for_http_transport_rotates_on_403():
-    retry = retry_policy_for(FetcherCapabilities(), retries=3, backoff=False, max_delay=7.0)
+    retry = retry_policy_for(FetcherCapabilities(), retries=3, backoff=False)
     assert retry.rotate_on == frozenset({403})
-    assert (retry.retries, retry.backoff, retry.max_delay) == (3, False, 7.0)
+    assert (retry.retries, retry.backoff) == (3, False)
+    # The retry cap doesn't follow throttle settings (throttle_max_delay=0 kept retries)
+    assert retry.max_delay == RETRY_MAX_DELAY
 
 
 def test_retry_policy_for_browser_does_not_rotate():
     caps = FetcherCapabilities(applies_identity_headers=False, renders_js=True)
-    retry = retry_policy_for(caps, retries=2, backoff=True, max_delay=60.0)
+    retry = retry_policy_for(caps, retries=2, backoff=True)
     assert retry.rotate_on == frozenset()
     assert 403 in retry.statuses  # still retried, just without rotation
 

@@ -200,10 +200,24 @@ async def test_redirect_to_disallowed_host_returns_none():
 
 
 async def test_too_many_redirects_raises():
-    session, fetcher = make_session({f"{STORE}/loop": (302, "", {"Location": "/loop"})})
+    routes = {f"{STORE}/r{i}": (301, "", {"Location": f"/r{i + 1}"}) for i in range(25)}
+    session, fetcher = make_session(routes)
     with pytest.raises(RequestFailed):
-        await get(session, f"{STORE}/loop")
-    assert fetcher.count(f"{STORE}/loop") == MAX_REDIRECTS + 1
+        await get(session, f"{STORE}/r0")
+    assert fetcher.count(f"{STORE}/r{MAX_REDIRECTS}") == 1
+
+
+async def test_redirect_to_an_already_requested_url_is_a_duplicate():
+    # Like Scrapy's dupefilter: a loop, or several URLs redirecting to one page
+    session, fetcher = make_session({f"{STORE}/loop": (302, "", {"Location": "/loop"})})
+    assert await get(session, f"{STORE}/loop") is None
+    assert fetcher.count(f"{STORE}/loop") == 1
+    assert session.stats.duplicates == 1
+
+
+async def test_unparseable_redirect_location_returns_the_redirect():
+    session, _ = make_session({f"{STORE}/x": (302, "", {"Location": "http://[::1"})})
+    assert (await get(session, f"{STORE}/x")).status == 302
 
 
 async def test_twenty_redirects_are_allowed():

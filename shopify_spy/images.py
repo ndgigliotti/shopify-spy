@@ -11,7 +11,13 @@ import urllib.parse
 from pathlib import Path
 from typing import Any
 
-from shopify_spy.session import IMAGE, RequestFailed, SingleFlight, StoreSession
+from shopify_spy.session import (
+    IMAGE,
+    RequestFailed,
+    ShutdownRequested,
+    SingleFlight,
+    StoreSession,
+)
 
 logger = logging.getLogger("shopify_spy")
 
@@ -56,19 +62,36 @@ class ImageDownloader:
             *(self._results.get(u, lambda u=u: self._download(u)) for u in urls),
             return_exceptions=True,
         )
-        item[RESULT_FIELD] = [r for r in results if isinstance(r, dict)]
+        records = []
+        for url, result in zip(urls, results, strict=True):
+            if isinstance(result, dict):
+                records.append(result)
+            elif isinstance(result, Exception) and not isinstance(result, ShutdownRequested):
+                self._failed(url, repr(result))
+            elif isinstance(result, BaseException) and not isinstance(result, Exception):
+                raise result  # cancellation
+        item[RESULT_FIELD] = records
         return item
 
     def _list_existing(self) -> dict[str, Path]:
-        """Map image names to files already in the folder (read once per store)."""
+        """Map file names to files already in the folder (read once per store)."""
         if self.dir.is_dir():
-            return {path.stem: path for path in self.dir.iterdir()}
+            return {path.name: path for path in self.dir.iterdir()}
         return {}
 
-    async def _fresh(self, name: str) -> Path | None:
+    async def _fresh(self, url: str, name: str) -> Path | None:
+        """A cached copy of the image younger than 90 days, if there is one.
+
+        Only a file with the extension the URL implies counts, so JPEGs re-encoded by
+        the Scrapy-era pipeline (same SHA-1 names) aren't reused for other formats.
+        URLs without an image extension aren't served from the cache.
+        """
+        suffix = Path(urllib.parse.urlsplit(url).path).suffix.lower()
+        if suffix not in IMAGE_EXTENSIONS:
+            return None
         if self._existing is None:
             self._existing = await asyncio.to_thread(self._list_existing)
-        path = self._existing.get(name)
+        path = self._existing.get(f"{name}{suffix}")
         if path is None:
             return None
         age_days = (time.time() - path.stat().st_mtime) / 86400
@@ -76,7 +99,7 @@ class ImageDownloader:
 
     async def _download(self, url: str) -> dict[str, Any] | None:
         name = image_name(url)
-        existing = await self._fresh(name)
+        existing = await self._fresh(url, name)
         if existing is not None:
             body = await asyncio.to_thread(existing.read_bytes)
             return _record(url, existing, body, "uptodate")

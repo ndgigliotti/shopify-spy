@@ -31,6 +31,7 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
     """
     url = get_api_url(ctx.url)
     first = True
+    seen_ids: set[Any] = set()
     while True:
         try:
             response = await ctx.session.get(url)
@@ -52,17 +53,24 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
             return True
         store = urllib.parse.urlsplit(response.url).netloc
         logger.info("WooCommerce: %d products from %s", len(products), response.url)
+        products = [p for p in products if isinstance(p, dict)]
+        ids = {p["id"] for p in products if p.get("id") is not None}
+        if ids and ids <= seen_ids:
+            # A server that ignores `page` would otherwise repeat this page forever
+            logger.warning("Page repeated earlier products; stopping at %s", response.url)
+            return True
+        seen_ids |= ids
         for product in products:
-            if isinstance(product, dict):
-                await emit(_item(product, store, ctx.images))
+            await emit(_item(product, store, ctx.images))
         url = next_page_url(response.url)
         first = False
 
 
 def _item(product: dict[str, Any], store: str, images: bool) -> dict[str, Any]:
     product["store"] = store
+    images_field = product.get("images") or []  # may be null
     product["image_urls"] = (
-        [img["src"] for img in product.get("images", []) if isinstance(img, dict) and "src" in img]
+        [img["src"] for img in images_field if isinstance(img, dict) and "src" in img]
         if images
         else []
     )

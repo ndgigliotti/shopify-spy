@@ -23,6 +23,7 @@ DEFAULT_HEADERS = {
 ROBOTS_TOKEN = "shopify-spy"
 
 RETRY_STATUSES = frozenset({500, 502, 503, 504, 522, 524, 408, 429, 403})
+RETRY_MAX_DELAY = 60.0  # longest wait before a retry, Retry-After included
 ROTATE_ON_STATUSES = frozenset({403})
 
 
@@ -96,7 +97,7 @@ class RetryPolicy:
     rotate_on: frozenset[int] = ROTATE_ON_STATUSES
     backoff: bool = True
     base_delay: float = 0.5
-    max_delay: float = 60.0
+    max_delay: float = RETRY_MAX_DELAY
 
     def should_retry_status(self, status: int, attempt: int) -> bool:
         return status in self.statuses and attempt < self.retries
@@ -112,12 +113,10 @@ class RetryPolicy:
         return max(0.0, min(delay, limit))
 
 
-def retry_policy_for(
-    capabilities: FetcherCapabilities, retries: int, backoff: bool, max_delay: float
-) -> RetryPolicy:
+def retry_policy_for(capabilities: FetcherCapabilities, retries: int, backoff: bool) -> RetryPolicy:
     """Pick retry behavior for a transport. Browsers don't rotate identities."""
     rotate = frozenset() if not capabilities.applies_identity_headers else ROTATE_ON_STATUSES
-    return RetryPolicy(retries=retries, rotate_on=rotate, backoff=backoff, max_delay=max_delay)
+    return RetryPolicy(retries=retries, rotate_on=rotate, backoff=backoff)
 
 
 @dataclass

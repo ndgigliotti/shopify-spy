@@ -150,7 +150,7 @@ def _isolate(monkeypatch):
     monkeypatch.setattr(
         engine,
         "retry_policy_for",
-        lambda caps, retries, backoff, max_delay: original(caps, retries, False, max_delay),
+        lambda caps, retries, backoff: original(caps, retries, False),
     )
 
 

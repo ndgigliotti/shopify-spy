@@ -384,6 +384,7 @@ Keyword-only, validated eagerly (pydantic). One table, tested for consistency:
 | `tls_error` | Certificate verification failed | yes | new string (D14) |
 | `no_response` | DNS/connection failures only | yes | `no response` |
 | `error` | Unexpected exception in this store | yes | new string |
+| `stopped` | Closed or shut down before producing anything (incl. never started) | no | `stopped` |
 
 Limits, shutdown and `close()` don't change the status; they set
 `finish_reason` and `complete=False`. The status file keeps today's per-URL
@@ -556,17 +557,20 @@ bottom layer.
   - **Size limits:** counted on *decoded* bytes from `aiter_bytes()`
     (`num_bytes_downloaded` counts compressed bytes), like Scrapy.
   - **Encoding:** client-level pinned `Accept-Encoding: gzip, deflate` (a
-    per-request header would replace it too). A response with any other
-    `Content-Encoding` is an error: httpx otherwise returns it undecoded
-    without complaint.
-  - HTTP/1.1 (`http1=True, http2=False`), cookies handled by the session,
+    per-request header would replace it too). Bodies are decoded by us, not
+    httpx: gzip (incl. concatenated members) and deflate, in `Content-Encoding`
+    order; an unknown token (servers send e.g. `utf-8`) leaves the body as is,
+    as Scrapy did (changed after code review; originally an error).
+  - HTTP/1.1 (`http1=True, http2=False`), cookies never stored (a deny-all jar),
     `trust_env=True`, `verify` from `verify_tls` (client-level only, which is
     fine because the client is per run).
 - Transport errors map to `FetchTimeout`, `FetchConnectionError`,
   `FetchTooLarge`, `FetchIncomplete` (truncated bodies, `RemoteProtocolError`),
-  `FetchBadEncoding`.
-- Cookie jar is per store, on the session, **off by default** (parity); the
-  future browser→HTTP clearance handoff turns it on.
+  `FetchInvalidURL`, `FetchTLSError` (certificate verification only; other TLS
+  failures are retried connection errors).
+- **No cookies** (parity with Scrapy's settings). The per-store cookie plumbing was
+  removed after code review (it was never enabled and would have leaked across
+  hosts); the browser→HTTP clearance handoff (§12) adds a domain-aware jar.
 - HTML rendering for a future Hydrogen adapter gets its own `PageRenderer`
   protocol later; `Fetcher` stays request/response.
 
@@ -895,7 +899,7 @@ transports.
 | D2 | CSV: nested values JSON-encoded; the CLI passes fixed Shopify columns via `fields=` (§4.10) so mixed product/collection files keep all columns; WooCommerce keeps first-item columns | **Adopt.** Today's CSV is Python repr and drops columns |
 | D3 | `max_concurrent_stores` (default 16) | **Adopt.** Today 1,000 URLs start 1,000 crawlers |
 | D4 | robots.txt evaluated as `shopify-spy` → `*` (today effectively `Scrapy` → `*`) | **Adopt** |
-| D5 | Exponential backoff with jitter; `Retry-After` honored, capped at `throttle_max_delay` and, while the bail clock runs, below the remaining bail time | **Adopt** |
+| D5 | Exponential backoff with jitter; `Retry-After` honored, capped at 60 s (independent of throttle settings) and, while the bail clock runs, below the remaining bail time | **Adopt** |
 | D6 | Keep `<platform>_spider_<ts>` file names | **Keep** for now |
 | D7 | `scrapy crawl`/`scrapy check` and the `CrawlerProcess` recipe removed | Unavoidable |
 | D8 | Python ≥ 3.11 | **Adopt** |
