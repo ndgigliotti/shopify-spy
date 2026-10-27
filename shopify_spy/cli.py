@@ -4,7 +4,7 @@ import json
 import logging
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -404,7 +404,7 @@ def run_spider(
     settings = get_project_settings()
 
     # Generate a timestamp used for log, output, and status file names
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S+00-00")
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S+00-00")
     name = f"{config.scrape.platform.value}_spider"
 
     # Configure output directory

@@ -1,10 +1,13 @@
-"""YAML configuration loading and Pydantic models."""
+"""YAML configuration for the CLI: Pydantic models and loading.
 
-from enum import Enum
+The library never reads config files; the CLI maps a Config to ``scrape()`` options
+with ``Config.to_kwargs()``.
+"""
+
+from enum import StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-import yaml
 from pydantic import BaseModel, Field
 
 OUTPUT_FORMATS: dict[str, tuple[str, str]] = {
@@ -16,7 +19,7 @@ OUTPUT_FORMATS: dict[str, tuple[str, str]] = {
 OutputFormat = Literal["json", "jsonl", "csv", "xml"]
 
 
-class Platform(str, Enum):
+class Platform(StrEnum):
     shopify = "shopify"
     woocommerce = "woocommerce"
 
@@ -51,8 +54,10 @@ class NetworkConfig(BaseModel):
     concurrent_requests: int = Field(default=16, ge=1)
     timeout: int = Field(default=180, ge=1)
     retries: int = Field(default=2, ge=0)
-    user_agent: str | None = None  # None = Scrapy default
+    user_agent: str | None = None  # None = random browser UA, swapped after a 403
     respect_robots_txt: bool = True
+    verify_tls: bool = True
+    max_concurrent_stores: int | None = Field(default=16, ge=1)  # None = no limit
 
 
 class ThrottleConfig(BaseModel):
@@ -71,6 +76,29 @@ class Config(BaseModel):
     output: OutputConfig = Field(default_factory=OutputConfig)
     network: NetworkConfig = Field(default_factory=NetworkConfig)
     throttle: ThrottleConfig = Field(default_factory=ThrottleConfig)
+
+    def to_kwargs(self) -> dict[str, Any]:
+        """Map this config to ``scrape()``/``scrape_async()`` keyword arguments."""
+        return {
+            "platform": self.scrape.platform.value,
+            "products": self.scrape.products,
+            "collections": self.scrape.collections,
+            "images": self.scrape.images,
+            "images_dir": self.output.images_dir.expanduser() if self.scrape.images else None,
+            "max_items_per_store": self.scrape.limit,
+            "bail": self.scrape.bail or None,
+            "concurrent_requests": self.network.concurrent_requests,
+            "request_timeout": self.network.timeout,
+            "retries": self.network.retries,
+            "user_agent": self.network.user_agent,
+            "respect_robots_txt": self.network.respect_robots_txt,
+            "verify_tls": self.network.verify_tls,
+            "max_concurrent_stores": self.network.max_concurrent_stores,
+            "throttle": self.throttle.enabled,
+            "throttle_start_delay": self.throttle.start_delay,
+            "throttle_max_delay": self.throttle.max_delay,
+            "throttle_target_concurrency": self.throttle.target_concurrency,
+        }
 
 
 # Default config file locations (searched in order)
@@ -97,11 +125,13 @@ output:
   images_subdir: images  # Subdirectory for downloaded images
 
 network:
-  concurrent_requests: 16  # Concurrent requests per domain
-  timeout: 180             # Download timeout (seconds)
+  concurrent_requests: 16  # Concurrent requests per host
+  timeout: 180             # Request timeout (seconds)
   retries: 2               # Retry failed requests
   # user_agent: MyBot/1.0 (+https://example.com)  # Custom user agent
   respect_robots_txt: true
+  verify_tls: true         # Verify TLS certificates (false = --insecure)
+  max_concurrent_stores: 16  # Stores scraped at once
 
 throttle:
   enabled: true            # Auto-throttle based on server response
@@ -137,6 +167,8 @@ def load_config(config_path: Path | None = None) -> Config:
 
 def load_config_from_file(path: Path) -> Config:
     """Load and validate configuration from a specific file."""
+    import yaml
+
     with open(path) as f:
         data = yaml.safe_load(f)
 

@@ -17,6 +17,9 @@ import pytest
 
 pytestmark = pytest.mark.e2e
 
+# Both CLIs run the same scenarios until the httpx engine replaces Scrapy
+CLI_MODULES = ["shopify_spy.cli", "shopify_spy._cli_next"]
+
 BAIL = 4
 DISALLOW_ALL = b"User-agent: *\nDisallow: /\n"
 
@@ -113,12 +116,17 @@ def stores():
         server.shutdown()
 
 
-def _run(tmp_path, urls, *args):
+@pytest.fixture(params=CLI_MODULES)
+def cli_module(request):
+    return request.param
+
+
+def _run(tmp_path, cli_module, urls, *args):
     result = subprocess.run(
         [
             sys.executable,
             "-m",
-            "shopify_spy.cli",
+            cli_module,
             "scrape",
             *urls,
             "--output",
@@ -150,15 +158,15 @@ EXPECTED_SHOPIFY = {
 }
 
 
-def test_shopify_diagnosis(tmp_path, stores):
+def test_shopify_diagnosis(tmp_path, stores, cli_module):
     urls = {scenario: stores(scenario) for scenario in EXPECTED_SHOPIFY}
-    statuses = _run(tmp_path, list(urls.values()))
+    statuses = _run(tmp_path, cli_module, list(urls.values()))
     actual = {scenario: statuses[url] for scenario, url in urls.items()}
     assert actual == EXPECTED_SHOPIFY
 
 
-def test_woocommerce_single_request_robots_redirect(tmp_path, stores):
+def test_woocommerce_single_request_robots_redirect(tmp_path, stores, cli_module):
     """WooCommerce makes one API request, so robots.txt forbids exactly one request."""
     url = stores("robots_redirect_disallow")
-    statuses = _run(tmp_path, [url], "--platform", "woocommerce")
+    statuses = _run(tmp_path, cli_module, [url], "--platform", "woocommerce")
     assert statuses[url] == "blocked by robots.txt"

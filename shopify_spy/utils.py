@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 import urllib.parse
 from collections.abc import Iterator
@@ -43,10 +44,10 @@ def is_valid_url(url: str) -> bool:
     return any(c.isalnum() for c in host) and "%" not in host
 
 
-def read_url_file(path: str) -> list[str]:
-    """Read URLs from a file, one per line, skipping blank lines."""
+def read_url_file(path: str | os.PathLike[str]) -> list[str]:
+    """Read URLs from a file, one per line, skipping blank lines and # comments."""
     with open(path) as f:
-        return [line.strip() for line in f if line.strip()]
+        return [s for line in f if (s := line.strip()) and not s.startswith("#")]
 
 
 def split_valid_urls(urls: list[str]) -> tuple[list[str], list[str]]:
@@ -56,6 +57,26 @@ def split_valid_urls(urls: list[str]) -> tuple[list[str], list[str]]:
     for u in urls:
         (valid if is_valid_url(u) else invalid).append(u)
     return valid, invalid
+
+
+def canonicalize_url(url: str) -> str:
+    """Return a canonical form of a URL for duplicate detection.
+
+    Lowercases the scheme and host, sorts query parameters and drops the fragment,
+    roughly matching Scrapy's request fingerprinting.
+    """
+    parsed = urllib.parse.urlsplit(url)
+    query = urllib.parse.urlencode(
+        sorted(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+    )
+    path = parsed.path or "/"
+    return urllib.parse.urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), path, query, ""))
+
+
+def origin(url: str) -> str:
+    """Return scheme://host[:port] for a URL, the key for per-host state."""
+    parsed = urllib.parse.urlsplit(url)
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
 
 
 def find_all_values(key: str, obj: Any) -> Iterator[Any]:

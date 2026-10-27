@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf8"?>
+<items>
+<item><product><id>1</id><title>Café ☕ "quoted" &lt;tag&gt; &amp; amp</title><tags><value>a</value><value>b,c</value></tags><variants><value><price>9.99</price><available>True</available><sku>None</sku></value></variants><empty></empty><none>None</none></product><url>https://a.com/products/x.json</url><store>a.com</store><image_urls><value>https://cdn.example/x.jpg</value><value>https://cdn.example/y.png</value></image_urls></item>
+<item><collection><id>2</id><title>Line
+break</title><n>1.5</n><flag>False</flag></collection><url>https://a.com/collections/y.json</url><store>a.com</store><image_urls></image_urls></item>
+</items>
