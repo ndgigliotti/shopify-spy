@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from shopify_spy._user_agents import _DATA as SHIPPED
 from shopify_spy._user_agents import USER_AGENTS
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "update_user_agents.py"
@@ -14,7 +15,7 @@ spec = importlib.util.spec_from_file_location("update_user_agents", SCRIPT)
 gen = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gen)
 
-SHIPPED = json.loads(gen.OUTPUT.read_text("utf-8"))
+# Deliberately calendar-based: they fail when the monthly update stops, which is the alarm
 MAX_AGE_DAYS = 120  # versions: the monthly job keeps them well under this
 MAX_FORMAT_CHECK_AGE_DAYS = 180  # formats: researched at least twice a year
 
@@ -22,7 +23,7 @@ MAX_FORMAT_CHECK_AGE_DAYS = 180  # formats: researched at least twice a year
 @pytest.fixture
 def fixed_versions(monkeypatch):
     """Generate without the network: every feed reports the same versions."""
-    monkeypatch.setattr(gen, "chrome_majors", lambda platform: [150, 151])
+    monkeypatch.setattr(gen, "chrome_majors", lambda: [150, 151])
     monkeypatch.setattr(gen, "firefox_majors", lambda: [140, 150])
     monkeypatch.setattr(gen, "edge_major", lambda: 151)
 
@@ -45,10 +46,6 @@ def age_days(iso_date):
 # --- The shipped list -----------------------------------------------------------------
 
 
-def test_package_loads_the_shipped_list():
-    assert USER_AGENTS == flat(SHIPPED["agents"])
-
-
 def test_shipped_list_is_well_formed():
     assert len(USER_AGENTS) == len(set(USER_AGENTS))
     assert all(a.startswith("Mozilla/5.0 (") for a in USER_AGENTS)
@@ -57,7 +54,6 @@ def test_shipped_list_is_well_formed():
 
 
 def test_shipped_list_version_tokens_are_consistent():
-    # Same rules as master's test_user_agents_version_tokens_consistent
     assert gen.consistency_errors(USER_AGENTS) == []
 
 
@@ -67,6 +63,7 @@ def test_shipped_versions_are_recent():
 
 
 def test_formats_were_researched_recently():
+    assert SHIPPED.get("formats_verified"), "user agent formats were never researched"
     age = age_days(SHIPPED["formats_verified"])
     assert age <= MAX_FORMAT_CHECK_AGE_DAYS, (
         f"user agent formats were last checked {age} days ago; research them online "
@@ -119,6 +116,13 @@ def test_main_writes_a_changed_list_and_keeps_formats_verified(fixed_versions, o
     assert data["generated"] == datetime.date.today().isoformat()
     assert data["formats_verified"] == "2026-01-02"  # only research moves it
     assert "research online" in capsys.readouterr().out
+
+
+def test_main_never_stamps_an_unresearched_list(fixed_versions, output):
+    # A missing or corrupt file must not get formats_verified = today
+    output.write_text("not json")
+    assert gen.main() == 0
+    assert json.loads(output.read_text())["formats_verified"] is None
 
 
 def test_main_leaves_an_unchanged_file_alone(fixed_versions, output):

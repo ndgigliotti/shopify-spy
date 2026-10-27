@@ -70,14 +70,14 @@ def test_adjust_non_200_never_decreases():
     s = slot(start_delay=1.0)
     s.adjust(0.1, 500)
     assert s.delay == 1.0
-    s.adjust(4.0, 503)
+    s.adjust(4.0, 502)
     assert s.delay == pytest.approx(4.0)
 
 
 def test_adjust_matches_scrapy_over_a_sequence():
     s = slot(start_delay=1.0, max_delay=5.0, target_concurrency=2.0)
     expected = 1.0
-    for latency, status in [(0.1, 200), (3.0, 200), (0.4, 404), (12.0, 503), (0.0, 200)]:
+    for latency, status in [(0.1, 200), (3.0, 200), (0.4, 404), (12.0, 502), (0.0, 200)]:
         s.adjust(latency, status)
         expected = scrapy_adjust(expected, latency, status, 2.0, 5.0)
         assert s.delay == pytest.approx(expected)
@@ -129,10 +129,19 @@ async def test_pause_holds_requests_and_slows_the_throttle():
     async with asyncio.timeout(2):
         await s.wait_turn()
     assert loop.time() - t0 >= 0.15
-    assert s.delay == 0.0  # start_delay 0: nothing to double
-    s.delay = 0.3
-    s.pause(0)
-    assert s.delay == 0.5  # doubled, clamped to max_delay
+    # Slowed even from a zero start delay (to the 1 s minimum, clamped to max_delay)
+    assert s.delay == s.floor == 0.5
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """A manual clock for HostSlot: advance it with clock.t += seconds."""
+
+    class Clock:
+        t = 1000.0
+
+    monkeypatch.setattr(policy, "now", lambda: Clock.t)
+    return Clock
 
 
 async def test_pause_sets_a_floor_that_eases_back_down():
@@ -151,15 +160,34 @@ async def test_pause_sets_a_floor_that_eases_back_down():
     assert s.floor == pytest.approx(0.5, abs=0.02)  # only successes lower it
 
 
-async def test_rate_limits_in_one_episode_double_once():
-    # A burst of 429s from requests already in flight is one signal, not many
+@pytest.mark.parametrize("pause", [5.0, 0.0], ids=["backoff", "no-pause"])
+def test_rate_limits_in_one_episode_double_once(clock, pause):
+    # A burst of 429s from requests already in flight is one signal, not many, even
+    # when the pause itself is zero (no backoff, a tiny Retry-After)
     s = slot(start_delay=1.0, max_delay=60.0)
     for _ in range(5):
-        s.pause(0.2)
+        s.pause(pause)
+        clock.t += 0.1
     assert s.floor == 2.0  # 1.0 doubled once
-    await asyncio.sleep(0.25)  # the episode is over; a new 429 slows it again
-    s.pause(0.2)
+    clock.t += max(pause, 2.0)  # past the pause and one delay: a new episode
+    s.pause(pause)
     assert s.floor == 4.0
+
+
+def test_adjust_ignores_rate_limits():
+    # pause() owns rate limits; a fast 429 must not also move the delay
+    s = slot(start_delay=1.0)
+    s.adjust(30.0, 429)
+    assert s.delay == 1.0
+
+
+def test_floor_eases_on_non_error_responses(clock):
+    s = slot(start_delay=1.0)
+    s.pause(0)
+    s.adjust(0.05, 404)  # a missing page is still the host answering fine
+    assert s.floor == pytest.approx(2.0 * 0.98)
+    s.adjust(0.05, 500)
+    assert s.floor == pytest.approx(2.0 * 0.98)
 
 
 async def test_pause_without_throttle_keeps_zero_delay():

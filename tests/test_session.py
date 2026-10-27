@@ -349,6 +349,19 @@ async def test_429_pauses_the_whole_host():
     assert (await first).status == 200
 
 
+async def test_429_without_retries_left_still_slows_the_host():
+    registry = HostRegistry(
+        concurrent_requests=16,
+        throttle=ThrottleSettings(start_delay=0.0),
+        respect_robots_txt=False,
+    )
+    session, _ = make_session(
+        {f"{STORE}/p": (429, "")}, retry=RetryPolicy(retries=0), registry=registry
+    )
+    assert (await get(session, f"{STORE}/p")).status == 429
+    assert registry.slot(STORE).floor >= 1.0
+
+
 async def test_retry_after_capped_by_max_delay():
     session, _ = make_session(
         {f"{STORE}/p": Seq([(503, "", {"Retry-After": "30"}), (200, "ok")])},

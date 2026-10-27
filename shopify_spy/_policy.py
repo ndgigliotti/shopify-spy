@@ -25,11 +25,8 @@ ROBOTS_TOKEN = "shopify-spy"
 RETRY_STATUSES = frozenset({500, 502, 503, 504, 522, 524, 408, 429, 403})
 RETRY_MAX_DELAY = 60.0  # longest wait before a retry, Retry-After included
 ROTATE_ON_STATUSES = frozenset({403})
-# "Slow down" responses: they pause and permanently slow the host, and without a
-# Retry-After their retries back off from RATE_LIMIT_BASE_DELAY (rate limits are
-# measured over seconds, so a sub-second retry just hits the limit again)
+# "Slow down" responses: they pause the host and raise its delay floor (HostSlot.pause)
 RATE_LIMIT_STATUSES = frozenset({429, 503})
-RATE_LIMIT_BASE_DELAY = 5.0
 
 
 def now() -> float:
@@ -59,7 +56,8 @@ class HostSlot:
     a little, so the host speeds up gradually until it pushes back again.
     """
 
-    FLOOR_DECAY = 0.98  # per successful response: the floor halves in ~34 of them
+    FLOOR_DECAY = 0.98  # per non-error response: the floor halves in ~34 of them
+    MIN_RATE_LIMITED_DELAY = 1.0  # a rate limit slows the host to at least this
 
     def __init__(self, concurrency: int, throttle: ThrottleSettings) -> None:
         self.semaphore = asyncio.Semaphore(concurrency)
@@ -68,6 +66,7 @@ class HostSlot:
         self.floor = 0.0  # raised by pause(); adjust() never goes below it
         self.last_seen: float | None = None
         self.paused_until = 0.0
+        self.episode_until = 0.0  # rate limits before this belong to the last episode
         self._gate = asyncio.Lock()
 
     async def wait_turn(self) -> None:
@@ -84,9 +83,9 @@ class HostSlot:
 
     def adjust(self, latency: float, status: int) -> None:
         """AutoThrottle: move the delay toward latency / target_concurrency."""
-        if not self.throttle.enabled:
-            return
-        if status == 200:
+        if not self.throttle.enabled or status in RATE_LIMIT_STATUSES:
+            return  # pause() handles rate limits; a quick refusal says nothing about load
+        if status < 500:
             self.floor *= self.FLOOR_DECAY
         target = latency / self.throttle.target_concurrency
         new = max(target, (self.delay + target) / 2.0)
@@ -102,14 +101,19 @@ class HostSlot:
         For a rate limit: otherwise only the limited request waits, while the host's
         other requests keep arriving and use up their own retries. The doubled delay
         becomes the host's floor, so AutoThrottle can't jump straight back to the
-        rate that was refused. Rate limits arriving during a pause come from
+        rate that was refused. Rate limits that arrive within the episode come from
         requests sent before it, at the old rate, so they don't double it again.
         """
-        new_episode = now() >= self.paused_until
-        self.paused_until = max(self.paused_until, now() + seconds)
-        if self.throttle.enabled and new_episode:
-            doubled = max(self.delay * 2, self.throttle.start_delay)
+        t = now()
+        self.paused_until = max(self.paused_until, t + seconds)
+        if t < self.episode_until:
+            return
+        if self.throttle.enabled:
+            doubled = max(self.delay * 2, self.throttle.start_delay, self.MIN_RATE_LIMITED_DELAY)
             self.delay = self.floor = min(doubled, self.throttle.max_delay)
+        # Requests already in flight answer within about one delay, even if the pause
+        # is short or zero (no backoff, a tiny Retry-After)
+        self.episode_until = max(self.paused_until, t + self.delay)
 
 
 def parse_retry_after(value: str | None) -> float | None:
@@ -133,7 +137,8 @@ class RetryPolicy:
     rotate_on: frozenset[int] = ROTATE_ON_STATUSES
     backoff: bool = True
     base_delay: float = 0.5
-    rate_limit_base_delay: float = RATE_LIMIT_BASE_DELAY
+    # Rate limits are measured over seconds, so a sub-second retry just hits them again
+    rate_limit_base_delay: float = 5.0
     max_delay: float = RETRY_MAX_DELAY
 
     def should_retry_status(self, status: int, attempt: int) -> bool:
