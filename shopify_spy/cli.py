@@ -29,6 +29,8 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+# Warnings go to stderr so they don't mix with --peek's JSONL on stdout
+err_console = Console(stderr=True)
 logger = logging.getLogger(__name__)
 
 # Stat set on a crawler that raised instead of finishing (Scrapy's finish_reason is kept)
@@ -321,6 +323,8 @@ def _log_dir() -> Path:
 
 def _finish_reason(crawlers: list, config: Config) -> str:
     """Derive an overall finish reason from a list of crawlers."""
+    if any(c.stats.get_value(CRAWLER_FAILED_STAT, False) for c in crawlers):
+        return "crawler_failed"
     reasons = [c.stats.get_value("finish_reason", "unknown") for c in crawlers]
     if any(r == "no_item_timeout" for r in reasons):
         return "bail"
@@ -499,11 +503,10 @@ def run_spider(
 
     # Crawl each URL; keep crawlers in URL order (process.crawlers is an unordered set)
     crawlers = []
-    failed: set[int] = set()
-    for i, store_url in enumerate(urls):
+    for store_url in urls:
         crawler = process.create_crawler(spider_cls)
         deferred = process.crawl(crawler, url=store_url, **spider_kwargs)
-        deferred.addErrback(_record_failure, failed, i, store_url)
+        deferred.addErrback(_record_failure, crawler, store_url)
         crawlers.append(crawler)
 
     start = time.monotonic()
@@ -517,16 +520,6 @@ def run_spider(
     # Clean up the stderr handler added for verbose mode
     if stderr_handler is not None:
         logging.getLogger().removeHandler(stderr_handler)
-
-    # Mark crawlers that raised. One that failed before Scrapy created its stats
-    # gets empty ones so it is reported instead of crashing the summary.
-    from scrapy.statscollectors import MemoryStatsCollector
-
-    for i, c in enumerate(crawlers):
-        if i in failed or c.stats is None:
-            if c.stats is None:
-                c.stats = MemoryStatsCollector(c)
-            c.stats.set_value(CRAWLER_FAILED_STAT, True)
 
     total = sum(c.stats.get_value("item_scraped_count", 0) for c in crawlers)
     multi = len(urls) > 1
@@ -550,10 +543,10 @@ def run_spider(
             if multi:
                 for url, c in zip(urls, crawlers):
                     console.print(f"  {escape(_host(url))}: {_diagnose_crawler(c, config)}")
-            if crawler_failures:
-                console.print(
-                    f"[yellow]Warning: {crawler_failures} store(s) failed with an error.[/yellow]"
-                )
+        if crawler_failures:
+            (err_console if peek else console).print(
+                f"[yellow]Warning: {crawler_failures} store(s) failed with an error.[/yellow]"
+            )
         return
 
     # Diagnose why nothing was scraped
@@ -610,14 +603,22 @@ def run_spider(
     raise typer.Exit(1)
 
 
-def _record_failure(failure: object, failed: set[int], index: int, url: str) -> None:
-    """Errback for process.crawl(): log the error to the log file and mark the store failed."""
+def _record_failure(failure: object, crawler: object, url: str) -> None:
+    """Errback for process.crawl(): log the error and mark the store as failed.
+
+    A crawler that failed before Scrapy created its stats gets empty ones, so the
+    summary can report it instead of crashing.
+    """
+    from scrapy.statscollectors import MemoryStatsCollector
+
     logger.error(
         "Spider failed for %s",
         url,
         exc_info=(failure.type, failure.value, failure.getTracebackObject()),
     )
-    failed.add(index)
+    if crawler.stats is None:
+        crawler.stats = MemoryStatsCollector(crawler)
+    crawler.stats.set_value(CRAWLER_FAILED_STAT, True)
 
 
 def _host(url: str) -> str:
