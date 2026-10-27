@@ -131,6 +131,8 @@ def _run(tmp_path, urls, *args):
         capture_output=True,
         text=True,
         timeout=120,
+        # Run outside the repo, like an installed copy: no scrapy.cfg to find settings by
+        cwd=tmp_path,
     )
     status_files = list(tmp_path.glob("status/*_status.json"))
     assert status_files, result.stdout + result.stderr
