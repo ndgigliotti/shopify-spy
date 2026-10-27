@@ -50,9 +50,10 @@ file; you don't need to change how you run it.
   produced anything now show `stopped` instead of `no response`.
 - `--concurrent` limits requests per host across the whole run (it was per store).
 - Retries back off exponentially and honor `Retry-After`. A 429 (Too Many Requests)
-  or 503 pauses every request to that host for the wait and permanently doubles its
-  throttle delay, instead of letting the host's other requests use up their retries;
-  without `Retry-After`, those retries wait from 5 seconds up.
+  or 503 pauses every request to that host for the wait and doubles its throttle
+  delay, which then eases back down as requests succeed, instead of letting the
+  host's other requests use up their retries; without `Retry-After`, those retries
+  wait from 5 seconds up.
 - Browser user agents are updated to current versions (Chrome 155–157, Firefox
   153/158, Safari 27, Edge 156).
 - Log lines differ (no more Scrapy "Crawled (200)" lines); `--verbose` shows one line

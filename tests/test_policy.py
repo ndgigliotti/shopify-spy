@@ -135,17 +135,31 @@ async def test_pause_holds_requests_and_slows_the_throttle():
     assert s.delay == 0.5  # doubled, clamped to max_delay
 
 
-async def test_pause_sets_a_floor_that_autothrottle_keeps():
-    # Fast responses after a rate limit must not bring back the refused rate
+async def test_pause_sets_a_floor_that_eases_back_down():
+    # Fast responses after a rate limit must not jump back to the refused rate,
+    # but the host recovers gradually
     s = slot(start_delay=1.0, max_delay=60.0)
     s.delay = 0.2
     s.pause(0)
     assert s.delay == s.floor == 1.0  # doubled 0.4, raised to start_delay
-    for _ in range(10):
+    s.adjust(latency=0.05, status=200)
+    assert s.delay == pytest.approx(0.98)  # straight to the decayed floor, not 0.05
+    for _ in range(33):
         s.adjust(latency=0.05, status=200)
-    assert s.delay == 1.0
-    s.pause(0)
-    assert s.floor == 2.0  # each rate limit doubles it again
+    assert s.floor == pytest.approx(0.5, abs=0.02)  # halves in ~34 successes
+    s.adjust(latency=0.05, status=429)
+    assert s.floor == pytest.approx(0.5, abs=0.02)  # only successes lower it
+
+
+async def test_rate_limits_in_one_episode_double_once():
+    # A burst of 429s from requests already in flight is one signal, not many
+    s = slot(start_delay=1.0, max_delay=60.0)
+    for _ in range(5):
+        s.pause(0.2)
+    assert s.floor == 2.0  # 1.0 doubled once
+    await asyncio.sleep(0.25)  # the episode is over; a new 429 slows it again
+    s.pause(0.2)
+    assert s.floor == 4.0
 
 
 async def test_pause_without_throttle_keeps_zero_delay():
