@@ -32,6 +32,15 @@ def test_bulk_full_page_requests_next_page():
     assert result.stores[0].complete
 
 
+def test_bulk_empty_page_after_full_page_ends_the_catalog():
+    # A catalog of exactly 500 products: page 3 is empty, and the sitemap isn't needed
+    routes = {bulk_url(1): products(250), bulk_url(2): products(250, 250), bulk_url(3): products(0)}
+    items, result, fetcher = scrape(routes)
+    assert len(items) == 500
+    assert fetcher.count(SITEMAP) == 0
+    assert result.stores[0].complete
+
+
 def test_bulk_short_page_stops():
     items, _, fetcher = scrape({bulk_url(1): products(249)})
     assert len(items) == 249

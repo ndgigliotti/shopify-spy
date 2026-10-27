@@ -77,7 +77,7 @@ async def _bulk(ctx: StoreContext, emit: Emit, seen: set[str]) -> tuple[bool, bo
     """Page through /products.json. Return (complete, first page was a 404).
 
     Not complete means fall back to the sitemap: a failed request, non-2xx, non-JSON,
-    or a page without products, on any page.
+    or an empty first page. An empty page after a full one is the end of the catalog.
     """
     url = get_bulk_products_url(ctx.url)
     first = True
@@ -92,13 +92,18 @@ async def _bulk(ctx: StoreContext, emit: Emit, seen: set[str]) -> tuple[bool, bo
             return False, False
         if not response.ok:
             logger.info(
-                "Bulk products.json returned %d for %s, falling back to sitemap",
+                "Bulk products.json returned %d for %s, falling back to sitemap%s",
                 response.status,
                 url,
+                # Shopify refuses page > 100, so bulk tops out at 25,000 products
+                " (past Shopify's 100-page limit)" if response.status == 400 and not first else "",
             )
             return False, first and response.status == 404
         data = response.json_or_none()
         products = data.get("products") if isinstance(data, dict) else None
+        if products == [] and not first:
+            # The previous page was full, so the catalog was an exact multiple of the page size
+            return True, False
         if not isinstance(products, list) or not products:
             logger.info("Bulk products.json empty for %s, falling back to sitemap", url)
             return False, False
