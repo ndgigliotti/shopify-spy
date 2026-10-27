@@ -10,12 +10,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-OUTPUT_FORMATS: dict[str, tuple[str, str]] = {
-    "json": ("json", ".json"),
-    "jsonl": ("jsonlines", ".jsonl"),
-    "csv": ("csv", ".csv"),
-    "xml": ("xml", ".xml"),
-}
 OutputFormat = Literal["json", "jsonl", "csv", "xml"]
 
 
@@ -86,7 +80,7 @@ class Config(BaseModel):
             "images": self.scrape.images,
             "images_dir": self.output.images_dir.expanduser() if self.scrape.images else None,
             "max_items_per_store": self.scrape.limit,
-            "bail": self.scrape.bail or None,
+            "bail": self.scrape.bail,
             "concurrent_requests": self.network.concurrent_requests,
             "request_timeout": self.network.timeout,
             "retries": self.network.retries,

@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import urllib.parse
 from typing import Any
 
 from shopify_spy import sitemap
 from shopify_spy.session import Emit, RequestFailed, StoreContext
-from shopify_spy.utils import find_all_values, normalize_url
+from shopify_spy.utils import find_all_values, next_page_url, normalize_url
 
 logger = logging.getLogger("shopify_spy")
 
 BULK_PAGE_SIZE = 250
 # Sitemap documents fetched at once per store (the session's slots still apply)
 FETCH_CONCURRENCY = 32
-WOOCOMMERCE_HINT = "looks like WooCommerce; pass platform='woocommerce'"
+
+next_bulk_page_url = next_page_url
 
 
 def get_sitemap_url(url: str) -> str:
@@ -31,16 +31,6 @@ def get_bulk_products_url(store_url: str, page: int = 1) -> str:
     parsed = normalize_url(store_url)
     query = urllib.parse.urlencode({"limit": BULK_PAGE_SIZE, "page": page})
     return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, "/products.json", "", query, ""))
-
-
-def next_bulk_page_url(url: str) -> str:
-    """Increment the page parameter in a bulk products URL."""
-    parsed = urllib.parse.urlparse(url)
-    params = dict(urllib.parse.parse_qsl(parsed.query))
-    params["page"] = str(int(params.get("page", 1)) + 1)
-    return urllib.parse.urlunparse(
-        (parsed.scheme, parsed.netloc, parsed.path, "", urllib.parse.urlencode(params), "")
-    )
 
 
 def product_handle(url: str) -> str | None:
@@ -61,21 +51,23 @@ def image_urls(data: Any, enabled: bool) -> list[Any]:
     return list(find_all_values("src", data)) if enabled else []
 
 
-async def run(ctx: StoreContext, emit: Emit) -> None:
-    """Emit a store's products (and collections, if enabled)."""
+async def run(ctx: StoreContext, emit: Emit) -> bool:
+    """Emit a store's products (and collections, if enabled).
+
+    Returns whether the catalog was covered: False only when the bulk endpoint
+    stopped partway and the sitemap couldn't be read to fill the gap.
+    """
     seen_handles: set[str] = set()
     bulk_complete = False
     bulk_404 = False
     if ctx.products:
         bulk_complete, bulk_404 = await _bulk(ctx, emit, seen_handles)
         if bulk_complete and not ctx.collections:
-            return
+            return True
     sitemap_ok = await _sitemap(ctx, emit, seen_handles, skip_products=bulk_complete)
-    if ctx.products and not bulk_complete and seen_handles and not sitemap_ok:
-        # The bulk run stopped partway and the sitemap couldn't fill the gap
-        ctx.truncated = True
     if ctx.items == 0 and bulk_404:
-        await _probe_woocommerce(ctx)
+        await ctx.probe_platform("/wp-json/", _looks_like_woocommerce, "woocommerce")
+    return bulk_complete or not seen_handles or sitemap_ok
 
 
 async def _bulk(ctx: StoreContext, emit: Emit, seen: set[str]) -> tuple[bool, bool]:
@@ -95,17 +87,14 @@ async def _bulk(ctx: StoreContext, emit: Emit, seen: set[str]) -> tuple[bool, bo
         if response is None:
             logger.info("Bulk products.json skipped for %s, falling back to sitemap", url)
             return False, False
-        if not 200 <= response.status < 300:
+        if not response.ok:
             logger.info(
                 "Bulk products.json returned %d for %s, falling back to sitemap",
                 response.status,
                 url,
             )
             return False, first and response.status == 404
-        try:
-            data = json.loads(response.body)
-        except ValueError:
-            data = None
+        data = response.json_or_none()
         products = data.get("products") if isinstance(data, dict) else None
         if not isinstance(products, list) or not products:
             logger.info("Bulk products.json empty for %s, falling back to sitemap", url)
@@ -131,7 +120,7 @@ async def _bulk(ctx: StoreContext, emit: Emit, seen: set[str]) -> tuple[bool, bo
             )
         if len(products) < BULK_PAGE_SIZE:
             return True, False
-        url = next_bulk_page_url(response.url)
+        url = next_page_url(response.url)
         first = False
 
 
@@ -140,59 +129,46 @@ async def _sitemap(ctx: StoreContext, emit: Emit, seen: set[str], skip_products:
 
     After a complete bulk run every product is already emitted, so product entries
     are skipped; after a partial one, only products whose handles weren't seen are
-    fetched.
+    fetched. Returns whether the top-level sitemap could be read.
     """
-    sitemap_url = get_sitemap_url(ctx.url)
     limiter = asyncio.Semaphore(FETCH_CONCURRENCY)
 
-    async def fetch(url: str, key: str) -> None:
-        async with limiter:
-            try:
-                response = await ctx.session.get(url)
-            except RequestFailed as exc:
-                logger.info("Request failed: %s", exc)
-                return
-        if response is None or not 200 <= response.status < 300:
-            return
+    async def fetch(url: str) -> None:
         try:
-            data = json.loads(response.body)
-        except ValueError:
-            logger.warning("Non-JSON response from %s", url)
+            response = await ctx.session.get(url)
+        except RequestFailed as exc:
+            logger.info("Request failed: %s", exc)
             return
+        finally:
+            limiter.release()
+        if response is None or not response.ok:
+            return
+        data = response.json_or_none()
         if not isinstance(data, dict):
+            logger.warning("Non-JSON or unexpected response from %s", url)
             return
-        parsed = urllib.parse.urlsplit(response.url)
         data["url"] = response.url
-        data["store"] = parsed.netloc
+        data["store"] = urllib.parse.urlsplit(response.url).netloc
         data["image_urls"] = image_urls(data, ctx.images)
         await emit(data)
 
-    found = {"root_ok": False}
+    walk = sitemap.iter_locs(ctx.session, get_sitemap_url(ctx.url))
     async with asyncio.TaskGroup() as tg:
-        async for loc in sitemap.iter_locs(ctx.session, sitemap_url, found):
+        async for loc in walk:
             if "/products/" in loc:
                 if not ctx.products or skip_products:
                     continue
                 handle = product_handle(loc)
                 if handle is not None and handle in seen:
                     continue
-                tg.create_task(fetch(loc + ".json", "product"))
-            elif "/collections/" in loc and ctx.collections:
-                tg.create_task(fetch(loc + ".json", "collection"))
-    return found["root_ok"]
+            elif "/collections/" not in loc or not ctx.collections:
+                continue
+            # Take the slot before creating the task, so a huge sitemap doesn't
+            # queue one task per entry
+            await limiter.acquire()
+            tg.create_task(fetch(loc + ".json"))
+    return walk.root_ok
 
 
-async def _probe_woocommerce(ctx: StoreContext) -> None:
-    """Set a hint if the store answers like WooCommerce."""
-    try:
-        response = await ctx.session.get(f"{ctx.url}/wp-json/", kind="probe", dedupe=False)
-    except RequestFailed:
-        return
-    if response is None or response.status != 200:
-        return
-    try:
-        data = json.loads(response.body)
-    except ValueError:
-        return
-    if isinstance(data, dict) and ("namespaces" in data or "routes" in data):
-        ctx.hint = WOOCOMMERCE_HINT
+def _looks_like_woocommerce(data: Any) -> bool:
+    return isinstance(data, dict) and ("namespaces" in data or "routes" in data)

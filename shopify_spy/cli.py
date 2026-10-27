@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 import signal
 import sys
 import time
@@ -28,7 +27,7 @@ from shopify_spy.config import (
 )
 from shopify_spy.export import EXTENSIONS, ItemWriter, write_status
 from shopify_spy.fetch import FetcherFactory
-from shopify_spy.results import RunResult, StoreResult, StoreStatus
+from shopify_spy.results import _PLATFORM_NAMES, RunResult, StoreResult, StoreStatus
 from shopify_spy.utils import normalize_url, read_url_file, split_valid_urls
 
 app = typer.Typer(
@@ -425,8 +424,6 @@ def run_scrape(
         )
 
     kwargs: dict[str, Any] = config.to_kwargs()
-    if kwargs["images_dir"] is not None:
-        kwargs["images_dir"] = (output_dir / config.output.images_subdir).resolve()
     kwargs["on_failure"] = "ignore"
     if FETCHER_FACTORY is not None:
         kwargs["fetcher_factory"] = FETCHER_FACTORY
@@ -444,14 +441,12 @@ def run_scrape(
     saved = (logger.level, logger.propagate)
     handlers = _setup_logging(log_file, verbose, quiet)
     show_counter = not peek and not quiet
-    start = time.monotonic()
     try:
         result, forced = asyncio.run(
             _scrape(urls, kwargs, writer=writer, peek=peek, show_counter=show_counter)
         )
     finally:
         _restore_logging(handlers, *saved)
-    duration = time.monotonic() - start
 
     if show_counter and result.total_items > 0:
         print("\r" + " " * 40 + "\r", end="", flush=True)
@@ -467,7 +462,7 @@ def run_scrape(
             output_dir / "status" / f"{name}_{timestamp}_status.json",
             stores,
             finish_reason=finish_reason,
-            duration=duration,
+            duration=result.duration,
             log_file=str(log_file) if log_file else None,
             skipped_urls=skipped_urls,
         )
@@ -531,6 +526,7 @@ async def _scrape(
     previous = signal.signal(signal.SIGINT, on_sigint)
     forced = False
     count = 0
+    last_draw = 0.0
     try:
         async with run:
             async for item in run:
@@ -540,7 +536,9 @@ async def _scrape(
                 assert writer is not None
                 writer.write(item)
                 count += 1
-                if show_counter:
+                # Redraw at most ten times a second; printing every item is slow
+                if show_counter and (now := time.monotonic()) - last_draw >= 0.1:
+                    last_draw = now
                     print(f"\r  Scraped {count} items...", end="", flush=True)
     except asyncio.CancelledError:
         forced = True
@@ -610,10 +608,12 @@ def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
     if StoreStatus.empty in present:
         hints.append("The store may be empty or the endpoint returned no products.")
     for s in stores:
-        if s.hint:
-            # The library phrases hints as Python arguments; the CLI's are flags
-            hint = re.sub(r"pass platform='(\w+)'", r"use --platform \1", s.hint)
-            hints.append(f"{escape(_host(s.input_url))} {escape(hint)}.")
+        if s.suggested_platform:
+            name = _PLATFORM_NAMES.get(s.suggested_platform, s.suggested_platform)
+            hints.append(
+                f"{escape(_host(s.input_url))} looks like {name}; "
+                f"use --platform {s.suggested_platform}."
+            )
     return hints
 
 

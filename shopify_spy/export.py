@@ -12,12 +12,11 @@ import json
 import logging
 from collections.abc import Iterable
 from pathlib import Path
-from typing import IO, Any, Literal
+from typing import IO, Any
 from xml.sax.saxutils import XMLGenerator
 
 logger = logging.getLogger("shopify_spy")
 
-Format = Literal["jsonl", "json", "csv", "xml"]
 FORMATS: dict[str, str] = {".jsonl": "jsonl", ".json": "json", ".csv": "csv", ".xml": "xml"}
 EXTENSIONS: dict[str, str] = {v: k for k, v in FORMATS.items()}
 
@@ -67,6 +66,7 @@ class ItemWriter:
         self._csv: Any = None
         self._xml: XMLGenerator | None = None
         self._dropped: set[str] = set()
+        self._field_set: set[str] = set()
 
     def __enter__(self) -> ItemWriter:
         return self
@@ -95,6 +95,7 @@ class ItemWriter:
                     self.fields = next(csv.reader(f), None)
             if self.fields is None:
                 self.fields = list(item.keys())
+            self._field_set = set(self.fields)
             if not existing:
                 self._csv.writerow(self.fields)
 
@@ -110,7 +111,7 @@ class ItemWriter:
             self._file.write(_dumps(item).encode("utf-8"))
         elif self.format == "csv":
             assert self.fields is not None
-            extra = item.keys() - set(self.fields) - self._dropped
+            extra = item.keys() - self._field_set - self._dropped
             if extra:
                 self._dropped |= extra
                 logger.warning("CSV columns are fixed; dropping field(s): %s", ", ".join(extra))

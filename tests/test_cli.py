@@ -1,6 +1,6 @@
-"""Tests for the httpx-based CLI (shopify_spy.cli), ported from test_cli.py.
+"""Tests for the CLI (shopify_spy.cli), ported from the Scrapy-era test_cli.py.
 
-The old tests mocked Scrapy's CrawlerProcess and faked its stats. These drive real
+Those tests mocked Scrapy's CrawlerProcess and faked its stats. These drive real
 scrapes through FakeFetcher routes, so every diagnosis comes from the library's own
 accounting. Plan references (§, D) are to .context/httpx-library-rewrite.md.
 """
@@ -400,7 +400,7 @@ def test_overrides_map_to_kwargs():
     assert kwargs["max_items_per_store"] == 7
     assert kwargs["throttle"] is False
     assert kwargs["respect_robots_txt"] is False
-    assert kwargs["bail"] is None  # 0 = off
+    assert kwargs["bail"] == 0  # 0 = off; the library treats it like None
     assert kwargs["concurrent_requests"] == 2
 
 

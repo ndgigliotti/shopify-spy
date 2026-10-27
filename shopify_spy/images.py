@@ -11,7 +11,7 @@ import urllib.parse
 from pathlib import Path
 from typing import Any
 
-from shopify_spy.session import RequestFailed, StopStore, StoreSession
+from shopify_spy.session import IMAGE, RequestFailed, SingleFlight, StoreSession
 
 logger = logging.getLogger("shopify_spy")
 
@@ -46,56 +46,53 @@ class ImageDownloader:
     def __init__(self, session: StoreSession, images_dir: Path) -> None:
         self.session = session
         self.dir = images_dir / "full"
-        self._results: dict[str, asyncio.Future[dict[str, Any] | None]] = {}
+        self._results: SingleFlight[dict[str, Any] | None] = SingleFlight()
+        self._existing: dict[str, Path] | None = None  # image name -> file, listed once
 
     async def process(self, item: dict[str, Any]) -> dict[str, Any]:
         """Add a ``scraped_images`` list to the item; failed downloads are omitted."""
         urls = [u for u in item.get("image_urls") or [] if isinstance(u, str)]
-        if not urls:
-            item[RESULT_FIELD] = []
-            return item
-        results = await asyncio.gather(*(self._get(u) for u in urls), return_exceptions=True)
+        results = await asyncio.gather(
+            *(self._results.get(u, lambda u=u: self._download(u)) for u in urls),
+            return_exceptions=True,
+        )
         item[RESULT_FIELD] = [r for r in results if isinstance(r, dict)]
         return item
 
-    async def _get(self, url: str) -> dict[str, Any] | None:
-        future = self._results.get(url)
-        if future is None:
-            future = self._results[url] = asyncio.get_running_loop().create_future()
-            try:
-                result = await self._download(url)
-            except BaseException:
-                future.set_result(None)
-                raise
-            future.set_result(result)
-        return await asyncio.shield(future)
+    def _list_existing(self) -> dict[str, Path]:
+        """Map image names to files already in the folder (read once per store)."""
+        if self.dir.is_dir():
+            return {path.stem: path for path in self.dir.iterdir()}
+        return {}
 
-    def _fresh(self, name: str) -> Path | None:
-        for path in self.dir.glob(f"{name}.*"):
-            age_days = (time.time() - path.stat().st_mtime) / 86400
-            if age_days < EXPIRES_DAYS:
-                return path
-        return None
+    async def _fresh(self, name: str) -> Path | None:
+        if self._existing is None:
+            self._existing = await asyncio.to_thread(self._list_existing)
+        path = self._existing.get(name)
+        if path is None:
+            return None
+        age_days = (time.time() - path.stat().st_mtime) / 86400
+        return path if age_days < EXPIRES_DAYS else None
 
     async def _download(self, url: str) -> dict[str, Any] | None:
         name = image_name(url)
-        existing = self._fresh(name)
+        existing = await self._fresh(name)
         if existing is not None:
-            return _record(url, existing, existing.read_bytes(), "uptodate")
+            body = await asyncio.to_thread(existing.read_bytes)
+            return _record(url, existing, body, "uptodate")
         try:
-            response = await self.session.get(url, kind="image", dedupe=False)
-        except (RequestFailed, StopStore) as exc:
+            response = await self.session.get(url, kind=IMAGE)
+        except RequestFailed as exc:
             return self._failed(url, str(exc))
         if response is None:
             return self._failed(url, "forbidden by robots.txt")
-        if not 200 <= response.status < 300:
+        if not response.ok:
             return self._failed(url, f"HTTP {response.status}")
         if not response.body:
             return self._failed(url, "empty body")
         path = self.dir / f"{name}{_extension(url, response.headers.get('content-type'))}"
         try:
-            self.dir.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(response.body)
+            await asyncio.to_thread(_save, path, response.body)
         except OSError as exc:
             return self._failed(url, f"can't save to {path}: {exc}")
         return _record(url, path, response.body, "downloaded")
@@ -104,6 +101,11 @@ class ImageDownloader:
         self.session.stats.images_failed += 1
         logger.warning("Image download failed: %s (%s)", url, reason)
         return None
+
+
+def _save(path: Path, body: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(body)
 
 
 def _record(url: str, path: Path, body: bytes, status: str) -> dict[str, Any]:

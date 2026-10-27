@@ -8,6 +8,7 @@ both public APIs read from that queue. No TaskGroup or timeout is ever held acro
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 import traceback
@@ -19,10 +20,19 @@ from typing import Any
 
 from shopify_spy import shopify, woocommerce
 from shopify_spy.fetch import FetcherFactory, HttpxFetcher
+from shopify_spy.images import RESULT_FIELD as IMAGES_FIELD
 from shopify_spy.images import ImageDownloader
 from shopify_spy.policy import IdentityPool, ThrottleSettings, retry_policy_for
 from shopify_spy.results import StoreResult, diagnose
-from shopify_spy.session import HostRegistry, StopStore, StoreContext, StoreSession
+from shopify_spy.session import (
+    Emit,
+    HostRegistry,
+    ShutdownRequested,
+    StopStore,
+    StoreContext,
+    StoreSession,
+    StoreStats,
+)
 
 logger = logging.getLogger("shopify_spy")
 
@@ -30,7 +40,7 @@ QUEUE_SIZE = 100
 IMAGE_ITEMS_PER_STORE = 8  # items waiting on image downloads at once, per store
 SHUTDOWN_GRACE = 10.0  # seconds in-flight requests get after a graceful shutdown
 
-ADAPTERS: dict[str, Callable[[StoreContext, Any], Awaitable[None]]] = {
+ADAPTERS: dict[str, Callable[[StoreContext, Emit], Awaitable[bool]]] = {
     "shopify": shopify.run,
     "woocommerce": woocommerce.run,
 }
@@ -61,32 +71,25 @@ class RunConfig:
 
 @dataclass
 class StoreState:
+    """One store's progress; ``ctx`` (once the store starts) holds its live state."""
+
     input_url: str
     url: str
-    items: int = 0
+    ctx: StoreContext | None = None
     finish_reason: str | None = None
     errored: bool = False
-    truncated: bool = False
+    truncated: bool = False  # the adapter stopped short of the catalog after items
     started: float | None = None
     ended: float | None = None
-    session: StoreSession | None = None
-    ctx: StoreContext | None = None
     errors: list[str] = field(default_factory=list)
 
+    @property
+    def items(self) -> int:
+        return self.ctx.items if self.ctx else 0
+
     def result(self, platform: str) -> StoreResult:
-        stats = self.session.stats if self.session else None
+        stats = self.ctx.session.stats if self.ctx else StoreStats()
         reason = self.finish_reason or "closed"
-        status = diagnose(
-            items=self.items,
-            errored=self.errored,
-            truncated=self.truncated,
-            finish_reason=reason,
-            successes=stats.successes if stats else 0,
-            responses=stats.responses if stats else 0,
-            by_status=dict(stats.by_status) if stats else {},
-            robots_disallowed=stats.robots_disallowed if stats else 0,
-            tls_errors=stats.tls_errors if stats else 0,
-        )
         duration = 0.0
         if self.started is not None:
             duration = (self.ended or time.monotonic()) - self.started
@@ -96,13 +99,19 @@ class StoreState:
             store=urllib.parse.urlsplit(self.url).netloc,
             platform=platform,
             items=self.items,
-            status=status,
+            status=diagnose(
+                items=self.items,
+                errored=self.errored,
+                truncated=self.truncated,
+                finish_reason=reason,
+                stats=stats,
+            ),
             complete=reason == "finished" and not self.errored and not self.truncated,
             finish_reason=reason,
-            hint=self.ctx.hint if self.ctx else None,
-            responses_by_status=dict(stats.by_status) if stats else {},
-            robots_disallowed=stats.robots_disallowed if stats else 0,
-            images_failed=stats.images_failed if stats else 0,
+            suggested_platform=self.ctx.suggested_platform if self.ctx else None,
+            responses_by_status=dict(stats.by_status),
+            robots_disallowed=stats.robots_disallowed,
+            images_failed=stats.images_failed,
             errors=list(self.errors),
             duration=duration,
         )
@@ -124,18 +133,10 @@ class Runner:
         self.states = [StoreState(input_url=i, url=u) for i, u in stores]
         self.queue: asyncio.Queue[Any] = asyncio.Queue(QUEUE_SIZE)
         self.shutdown = asyncio.Event()
-        self.started = time.monotonic()
         self._driver: asyncio.Task[None] | None = None
-        self._all_finished = asyncio.Event()
-        self._store_tasks: list[asyncio.Task[None]] = []
-        self._unfinished = len(self.states)
 
     def start(self) -> None:
         self._driver = asyncio.get_running_loop().create_task(self._drive())
-
-    @property
-    def done(self) -> bool:
-        return self._driver is not None and self._driver.done()
 
     async def next(self) -> dict[str, Any]:
         """Return the next item; raise StopAsyncIteration at the end."""
@@ -168,7 +169,12 @@ class Runner:
                 self.queue.get_nowait()
             self.queue.put_nowait(DONE)
 
+    def _stopped(self) -> str:
+        """Finish reason for a store that didn't end on its own."""
+        return "shutdown" if self.shutdown.is_set() else "closed"
+
     async def _drive(self) -> None:
+        watcher: asyncio.Task[None] | None = None
         try:
             factory = self.config.fetcher_factory or (
                 lambda: HttpxFetcher(verify=self.config.verify_tls)
@@ -183,42 +189,31 @@ class Runner:
                 limit = self.config.max_concurrent_stores
                 run_slots = asyncio.Semaphore(limit) if limit else None
                 async with asyncio.TaskGroup() as tg:
-                    if not self.states:
-                        self._all_finished.set()
-                    tg.create_task(self._watch_shutdown())
-                    for state in self.states:
-                        self._store_tasks.append(
-                            tg.create_task(self._store(state, fetcher, registry, run_slots))
-                        )
+                    tasks = [
+                        tg.create_task(self._store(state, fetcher, registry, run_slots))
+                        for state in self.states
+                    ]
+                    watcher = asyncio.create_task(self._enforce_shutdown_grace(tasks))
         except asyncio.CancelledError:
             raise
         except BaseException as exc:  # a bug in the runner itself
-            exc = _unwrap(exc)
-            await self.queue.put(_Failure(exc))
+            await self.queue.put(_Failure(_unwrap(exc)))
             return
         finally:
+            if watcher is not None:
+                watcher.cancel()
             for state in self.states:
                 if state.finish_reason is None:
-                    state.finish_reason = "shutdown" if self.shutdown.is_set() else "closed"
+                    state.finish_reason = self._stopped()
         await self.queue.put(DONE)
 
-    async def _watch_shutdown(self) -> None:
+    async def _enforce_shutdown_grace(self, tasks: list[asyncio.Task[None]]) -> None:
         """After a graceful shutdown request, cancel whatever is still running."""
-        shutdown = asyncio.ensure_future(self.shutdown.wait())
-        finished = asyncio.ensure_future(self._all_finished.wait())
-        try:
-            await asyncio.wait({shutdown, finished}, return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            shutdown.cancel()
-            finished.cancel()
-        if self._all_finished.is_set():
-            return
-        try:
-            await asyncio.wait_for(self._all_finished.wait(), SHUTDOWN_GRACE)
-        except TimeoutError:
-            logger.warning("Shutdown grace period over; cancelling remaining requests")
-            for task in self._store_tasks:
-                task.cancel()
+        await self.shutdown.wait()
+        await asyncio.sleep(SHUTDOWN_GRACE)
+        logger.warning("Shutdown grace period over; cancelling remaining requests")
+        for task in tasks:
+            task.cancel()
 
     async def _store(
         self,
@@ -227,16 +222,8 @@ class Runner:
         registry: HostRegistry,
         run_slots: asyncio.Semaphore | None,
     ) -> None:
-        try:
-            if run_slots is not None:
-                async with run_slots:
-                    await self._scrape_store(state, fetcher, registry)
-            else:
-                await self._scrape_store(state, fetcher, registry)
-        finally:
-            self._unfinished -= 1
-            if self._unfinished == 0:
-                self._all_finished.set()
+        async with run_slots or contextlib.nullcontext():
+            await self._scrape_store(state, fetcher, registry)
 
     async def _scrape_store(self, state: StoreState, fetcher: Any, registry: HostRegistry) -> None:
         config = self.config
@@ -250,15 +237,13 @@ class Runner:
             identity=IdentityPool(user_agent=config.user_agent),
             request_timeout=config.request_timeout,
         )
-        state.session = session
-        ctx = StoreContext(
+        ctx = state.ctx = StoreContext(
             session=session,
             url=state.url,
             products=config.products,
             collections=config.collections,
             images=config.images,
         )
-        state.ctx = ctx
         downloader = (
             ImageDownloader(session, config.images_dir)
             if config.images and config.images_dir is not None
@@ -266,11 +251,11 @@ class Runner:
         )
         # Each emitted item is handed to its own delivery task (image downloads, then
         # the queue). A slot is taken *before* the item is counted, so cancelling an
-        # adapter task (item limit, shutdown) can never orphan a counted item.
+        # adapter task (item limit, shutdown) can never orphan a counted item. Without
+        # images one slot is enough: it still gives queue backpressure.
         delivery_slots = asyncio.Semaphore(IMAGE_ITEMS_PER_STORE if downloader else 1)
         deliveries: set[asyncio.Task[None]] = set()
         loop = asyncio.get_running_loop()
-        bail = config.bail if config.bail else None
         timeout_cm = asyncio.timeout(None)
         limit = config.max_items_per_store
 
@@ -282,28 +267,25 @@ class Runner:
                     except Exception as exc:  # never lose the item over its images
                         logger.error("Image processing failed for %s: %r", state.url, exc)
                         state.errors.append(repr(exc))
-                        item.setdefault("scraped_images", [])
+                        item.setdefault(IMAGES_FIELD, [])
                 await self.queue.put(item)
             finally:
                 delivery_slots.release()
 
         async def emit(item: dict[str, Any]) -> None:
-            if limit is not None and state.items >= limit:
-                raise StopStore("item_limit")
             await delivery_slots.acquire()
-            if limit is not None and state.items >= limit:
+            if limit is not None and ctx.items >= limit:
                 delivery_slots.release()
                 raise StopStore("item_limit")
             # No awaits from here on: counting and handing off happen together
-            state.items += 1
-            ctx.items = state.items
-            if state.items == 1:
+            ctx.items += 1
+            if ctx.items == 1:
                 timeout_cm.reschedule(None)
                 session.bail_deadline = None
             task = loop.create_task(deliver(item))
             deliveries.add(task)
             task.add_done_callback(deliveries.discard)
-            if limit is not None and state.items >= limit:
+            if limit is not None and ctx.items >= limit:
                 raise StopStore("item_limit")
 
         adapter = ADAPTERS[config.platform]
@@ -311,18 +293,22 @@ class Runner:
         try:
             try:
                 async with timeout_cm:
-                    if bail is not None:
-                        timeout_cm.reschedule(loop.time() + bail)
-                        session.bail_deadline = loop.time() + bail
-                    await adapter(ctx, emit)
+                    if config.bail is not None:
+                        deadline = loop.time() + config.bail
+                        timeout_cm.reschedule(deadline)
+                        session.bail_deadline = deadline
+                    complete = await adapter(ctx, emit)
+                state.truncated = not complete and ctx.items > 0
                 state.finish_reason = "shutdown" if self.shutdown.is_set() else "finished"
             except TimeoutError:
                 if not timeout_cm.expired():
                     raise
-                logger.warning("No items scraped from %s in %ss, aborting", state.url, bail)
+                logger.warning("No items scraped from %s in %ss, aborting", state.url, config.bail)
                 state.finish_reason = "bail"
         except* StopStore as group:
             state.finish_reason = group.exceptions[0].reason  # type: ignore[attr-defined]
+        except* ShutdownRequested:
+            state.finish_reason = "shutdown"
         except* Exception as group:
             state.errored = True
             state.finish_reason = "error"
@@ -331,16 +317,15 @@ class Runner:
                 state.errors.append("".join(traceback.format_exception(exc)))
         finally:
             if deliveries:
-                if state.finish_reason in ("closed", None):
+                if state.finish_reason is None:  # being cancelled: the run was closed
                     for t in deliveries:
                         t.cancel()
                 await asyncio.gather(*deliveries, return_exceptions=True)
             state.ended = time.monotonic()
-            state.truncated = ctx.truncated
             if state.finish_reason is None:
-                state.finish_reason = "shutdown" if self.shutdown.is_set() else "closed"
+                state.finish_reason = self._stopped()
             logger.info(
-                "Store %s finished: %d items (%s)", state.url, state.items, state.finish_reason
+                "Store %s finished: %d items (%s)", state.url, ctx.items, state.finish_reason
             )
 
     def results(self) -> list[StoreResult]:
