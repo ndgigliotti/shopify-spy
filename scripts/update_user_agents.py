@@ -18,6 +18,7 @@ warns on any difference, which is how a vendor's format change gets noticed.
 
 from __future__ import annotations
 
+import ast
 import datetime
 import json
 import re
@@ -151,11 +152,31 @@ def check_format(agents: list[str]) -> None:
         print(f"Format check: all {len(ours)} shapes match {REFERENCE_LIST}")
 
 
+def current_agents() -> list[str] | None:
+    """USER_AGENTS as the module lists it now (parsed, not imported)."""
+    try:
+        tree = ast.parse(OUTPUT.read_text())
+    except (OSError, SyntaxError):
+        return None
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "USER_AGENTS" for t in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    return None
+
+
 def main() -> None:
     groups = build()
-    OUTPUT.write_text(render(groups))
-    print(f"Wrote {OUTPUT}")
-    check_format([agent for _, agents in groups for agent in agents])
+    agents = [agent for _, group in groups for agent in group]
+    # Leave the file (and its date) alone unless the list changed, so a clean
+    # git diff means there's nothing to update
+    if agents == current_agents():
+        print(f"Unchanged: {OUTPUT}")
+    else:
+        OUTPUT.write_text(render(groups))
+        print(f"Wrote {OUTPUT}")
+    check_format(agents)
 
 
 if __name__ == "__main__":
