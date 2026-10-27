@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import typer
 from scrapy.settings import Settings
+from twisted.internet import defer
 
 from shopify_spy.cli import (
     Platform,
@@ -395,14 +396,29 @@ def test_multi_url_crawls_each_url_with_its_own_crawler(tmp_path):
     assert [c.kwargs["url"] for c in calls] == urls
 
 
+def _mock_process_with_failure(crawlers, fail_index):
+    """Mock CrawlerProcess whose crawl() fails for crawlers[fail_index]."""
+    proc = MagicMock()
+    proc.create_crawler.side_effect = crawlers
+    proc.crawl.side_effect = [
+        defer.fail(ValueError("Invalid IPv6 URL")) if i == fail_index else defer.succeed(None)
+        for i in range(len(crawlers))
+    ]
+    return proc
+
+
 def test_multi_url_crawler_that_failed_to_start(tmp_path, capsys):
-    """A store whose spider failed to initialize is reported, not a crash.
+    """A store whose spider failed before getting stats is reported, not a crash.
 
     Only a later crawler is realistic here: if the first one fails, Scrapy never
     installs the reactor and every other crawler fails too (see #21).
     """
     config = Config(output=OutputConfig(dir=tmp_path))
     urls = ["https://store1.com", "https://[bad"]
+    crawlers = [
+        _make_crawler({"item_scraped_count": 4}),
+        MagicMock(stats=None, settings=Settings()),
+    ]
 
     mock_settings = MagicMock()
     with (
@@ -410,23 +426,24 @@ def test_multi_url_crawler_that_failed_to_start(tmp_path, capsys):
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
-        failed = MagicMock(stats=None, settings=Settings())
-        mock_cls.return_value.create_crawler.side_effect = [
-            _make_crawler({"item_scraped_count": 4}),
-            failed,
-        ]
+        mock_cls.return_value = _mock_process_with_failure(crawlers, 1)
         run_spider(urls, config)
 
     output = capsys.readouterr().out
     assert "store1.com: 4 items" in output
+    assert "https://[bad: failed" in output
     data = json.loads(next(tmp_path.glob("status/*_status.json")).read_text())
     assert data["urls"][0]["items"] == 4
-    assert data["urls"][1] == {"url": "https://[bad", "items": 0, "status": "failed to start"}
+    assert data["urls"][1] == {"url": "https://[bad", "items": 0, "status": "failed"}
 
 
-def test_all_crawlers_failed_to_start(tmp_path, capsys):
-    """The zero-item summary blames startup, not robots.txt or the network."""
+def test_crawler_that_failed_after_getting_stats(tmp_path, capsys):
+    """A crawler that raised after Scrapy created its stats is still marked failed."""
+    from scrapy.statscollectors import MemoryStatsCollector
+
     config = Config(output=OutputConfig(dir=tmp_path))
+    crawler = MagicMock(settings=Settings())
+    crawler.stats = MemoryStatsCollector(crawler)
 
     mock_settings = MagicMock()
     with (
@@ -434,15 +451,15 @@ def test_all_crawlers_failed_to_start(tmp_path, capsys):
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
-        mock_cls.return_value.create_crawler.side_effect = [
-            MagicMock(stats=None, settings=Settings()),
-        ]
+        mock_cls.return_value = _mock_process_with_failure([crawler], 0)
         with pytest.raises((SystemExit, typer.Exit)):
-            run_spider(["https://[bad"], config)
+            run_spider(["https://store.com"], config)
 
     output = capsys.readouterr().out
-    assert "1 store(s) failed to start" in output
+    assert "1 store(s) failed with an error" in output
     assert "robots.txt" not in output
+    data = json.loads(next(tmp_path.glob("status/*_status.json")).read_text())
+    assert data["urls"][0]["status"] == "failed"
 
 
 def test_single_url_success_no_per_url_breakdown(tmp_path, capsys):

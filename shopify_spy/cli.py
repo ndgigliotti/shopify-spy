@@ -30,8 +30,8 @@ app = typer.Typer(
 console = Console()
 logger = logging.getLogger(__name__)
 
-# finish_reason recorded for a crawler whose spider failed to initialize
-FAILED_TO_START = "failed_to_start"
+# finish_reason recorded for a crawler that raised instead of finishing
+CRAWLER_FAILED = "crawler_failed"
 
 
 def version_callback(value: bool) -> None:
@@ -497,15 +497,11 @@ def run_spider(
 
     # Crawl each URL; keep crawlers in URL order (process.crawlers is an unordered set)
     crawlers = []
-    for store_url in urls:
+    failed: set[int] = set()
+    for i, store_url in enumerate(urls):
         crawler = process.create_crawler(spider_cls)
         deferred = process.crawl(crawler, url=store_url, **spider_kwargs)
-        # Log startup failures to the log file instead of as unhandled Deferred tracebacks
-        deferred.addErrback(
-            lambda failure, url=store_url: logger.error(
-                "Spider failed for %s", url, exc_info=failure.value
-            )
-        )
+        deferred.addErrback(_record_failure, failed, i, store_url)
         crawlers.append(crawler)
 
     start = time.monotonic()
@@ -520,14 +516,15 @@ def run_spider(
     if stderr_handler is not None:
         logging.getLogger().removeHandler(stderr_handler)
 
-    # A crawler whose spider failed to initialize never gets stats; give it
-    # empty ones marked as failed so it is reported instead of crashing
+    # Mark crawlers that raised. One that failed before Scrapy created its stats
+    # gets empty ones so it is reported instead of crashing the summary.
     from scrapy.statscollectors import MemoryStatsCollector
 
-    for c in crawlers:
-        if c.stats is None:
-            c.stats = MemoryStatsCollector(c)
-            c.stats.set_value("finish_reason", FAILED_TO_START)
+    for i, c in enumerate(crawlers):
+        if i in failed or c.stats is None:
+            if c.stats is None:
+                c.stats = MemoryStatsCollector(c)
+            c.stats.set_value("finish_reason", CRAWLER_FAILED)
 
     total = sum(c.stats.get_value("item_scraped_count", 0) for c in crawlers)
     multi = len(urls) > 1
@@ -549,9 +546,7 @@ def run_spider(
                 console.print(f"  Log: {log_file}")
             if multi:
                 for url, c in zip(urls, crawlers):
-                    host = _host(url)
-                    count = c.stats.get_value("item_scraped_count", 0)
-                    console.print(f"  {host}: {count} items")
+                    console.print(f"  {_host(url)}: {_diagnose_crawler(c, config)}")
         return
 
     # Diagnose why nothing was scraped
@@ -566,8 +561,8 @@ def run_spider(
         for c in crawlers
     )
 
-    failed_to_start = sum(
-        c.stats.get_value("finish_reason", "") == FAILED_TO_START for c in crawlers
+    crawler_failures = sum(
+        c.stats.get_value("finish_reason", "") == CRAWLER_FAILED for c in crawlers
     )
 
     console.print("[yellow]Warning: Scraped 0 items.[/yellow]")
@@ -577,9 +572,9 @@ def run_spider(
             status = _diagnose_crawler(c, config)
             console.print(f"  {host}: {status}")
 
-    if failed_to_start:
+    if crawler_failures:
         console.print(
-            f"  {failed_to_start} store(s) failed to start. Check the URLs; details are in the log."
+            f"  {crawler_failures} store(s) failed with an error. Details are in the log."
         )
     elif timed_out:
         console.print(
@@ -614,6 +609,16 @@ def run_spider(
     raise typer.Exit(1)
 
 
+def _record_failure(failure: object, failed: set[int], index: int, url: str) -> None:
+    """Errback for process.crawl(): log the error to the log file and mark the store failed."""
+    logger.error(
+        "Spider failed for %s",
+        url,
+        exc_info=(failure.type, failure.value, failure.getTracebackObject()),
+    )
+    failed.add(index)
+
+
 def _host(url: str) -> str:
     """Return the URL's host for display, or the URL itself if it is malformed."""
     try:
@@ -627,8 +632,8 @@ def _diagnose_crawler(crawler: object, config: Config) -> str:
     items = crawler.stats.get_value("item_scraped_count", 0)
     if items > 0:
         return f"{items} items"
-    if crawler.stats.get_value("finish_reason", "") == FAILED_TO_START:
-        return "failed to start"
+    if crawler.stats.get_value("finish_reason", "") == CRAWLER_FAILED:
+        return "failed"
     if crawler.stats.get_value("finish_reason", "") == "bail":
         return "timed out"
     h403 = crawler.stats.get_value("downloader/response_status_count/403", 0)
