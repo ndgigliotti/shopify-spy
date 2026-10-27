@@ -279,6 +279,12 @@ def test_get_urls_from_file(tmp_path):
     assert urls == ["https://store1.com", "https://store2.com"]
 
 
+def test_get_urls_blank_arguments_fall_back_to_file(tmp_path):
+    url_file = tmp_path / "urls.txt"
+    url_file.write_text("store.com\n")
+    assert get_urls(["", " "], url_file) == ["store.com"]
+
+
 def test_get_urls_strips_arguments():
     assert get_urls([" store.com ", "  "], None) == ["store.com"]
 
@@ -322,6 +328,8 @@ def test_cli_scrape_skips_invalid_urls():
         "http://localhost:8000",
         "https://127.0.0.1",
         "https://bücher.de",
+        "https://my_store.example.com",
+        "store.com:",
     ],
 )
 def test_is_valid_url_accepts(url):
@@ -346,7 +354,7 @@ def test_is_valid_url_accepts(url):
         "https://@store.com",
         "https://user:pass@store.com",
         "https://store.com\\",
-        "https://-store.com",
+        "https://[fe80::1%25eth0]",
     ],
 )
 def test_is_valid_url_rejects(url):

@@ -1,4 +1,3 @@
-import ipaddress
 import logging
 import re
 import urllib.parse
@@ -11,10 +10,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# A leading "name:" is a scheme unless a port number follows (store.com:8080)
-_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:(?!\d)")
-# DNS hostname: dot-separated labels of letters, digits and inner hyphens
-_HOSTNAME_RE = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))*\.?$")
+# A leading "name:" is a scheme unless a port number (store.com:8080) or nothing
+# (store.com:) follows
+_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:(?!\d|$)")
 
 
 def normalize_url(url: str) -> urllib.parse.ParseResult:
@@ -26,7 +24,11 @@ def normalize_url(url: str) -> urllib.parse.ParseResult:
 
 
 def is_valid_url(url: str) -> bool:
-    """Return True if the URL is an http(s) URL with a real host and a usable port."""
+    """Return True if the URL is an http(s) URL with a host and a usable port.
+
+    This rejects what would make a spider fail or request nonsense; it doesn't try
+    to decide which hostnames DNS will resolve.
+    """
     if any(c.isspace() or not c.isprintable() or c == "\\" for c in url):
         return False
     try:
@@ -36,21 +38,15 @@ def is_valid_url(url: str) -> bool:
         return False
     if parsed.scheme not in ("http", "https") or port == 0 or "@" in parsed.netloc:
         return False
-    return _is_valid_host(parsed.hostname or "")
+    host = parsed.hostname or ""
+    # "%" is an IPv6 zone ID, which Twisted can't connect to
+    return any(c.isalnum() for c in host) and "%" not in host
 
 
-def _is_valid_host(host: str) -> bool:
-    """Return True for an IP address or a DNS hostname (internationalized names allowed)."""
-    try:
-        ipaddress.ip_address(host)
-        return True
-    except ValueError:
-        pass
-    try:
-        host = host.encode("idna").decode("ascii")
-    except UnicodeError:
-        return False
-    return bool(_HOSTNAME_RE.match(host))
+def read_url_file(path: str) -> list[str]:
+    """Read URLs from a file, one per line, skipping blank lines."""
+    with open(path) as f:
+        return [line.strip() for line in f if line.strip()]
 
 
 def split_valid_urls(urls: list[str]) -> tuple[list[str], list[str]]:
@@ -88,8 +84,7 @@ def load_store_urls(url: str | None, url_file: str | None) -> list[str]:
     if url:
         urls = [url.strip()]
     elif url_file:
-        with open(url_file) as f:
-            urls = [line.strip() for line in f if line.strip()]
+        urls = read_url_file(url_file)
     else:
         return []
     valid, invalid = split_valid_urls(urls)
