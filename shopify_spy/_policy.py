@@ -10,8 +10,8 @@ from dataclasses import dataclass, field
 
 from protego import Protego
 
-from shopify_spy.fetch import FetcherCapabilities, Identity
-from shopify_spy.user_agents import USER_AGENTS
+from shopify_spy._fetch import FetcherCapabilities, Identity
+from shopify_spy._user_agents import USER_AGENTS
 
 # Headers Scrapy sends by default; kept so servers see the same requests as before
 DEFAULT_HEADERS = {

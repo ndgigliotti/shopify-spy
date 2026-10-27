@@ -16,8 +16,8 @@ from collections.abc import AsyncIterator, Callable
 from defusedxml import ElementTree
 from defusedxml.common import DefusedXmlException
 
-from shopify_spy.fetch import FetchTooLarge, decompress
-from shopify_spy.session import RequestFailed, StoreSession
+from shopify_spy._fetch import FetchTooLarge, decompress
+from shopify_spy._session import RequestFailed, StoreSession
 
 logger = logging.getLogger("shopify_spy")
 

@@ -1,6 +1,6 @@
 import pytest
 
-from shopify_spy.utils import find_all_values, normalize_url, read_url_file
+from shopify_spy._utils import find_all_values, normalize_url, read_url_file
 
 # --- find_all_values tests ---
 

@@ -4,15 +4,15 @@ import asyncio
 
 import pytest
 
-from shopify_spy.fetch import (
+from shopify_spy._fetch import (
     FakeFetcher,
     FetchConnectionError,
     FetchTimeout,
     FetchTLSError,
     Seq,
 )
-from shopify_spy.policy import IdentityPool, RetryPolicy, ThrottleSettings, now
-from shopify_spy.session import (
+from shopify_spy._policy import IdentityPool, RetryPolicy, ThrottleSettings, now
+from shopify_spy._session import (
     IMAGE,
     MAX_REDIRECTS,
     PROBE,

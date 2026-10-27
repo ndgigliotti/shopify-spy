@@ -6,9 +6,9 @@ import time
 
 import pytest
 
-from shopify_spy import policy
-from shopify_spy.fetch import FetcherCapabilities
-from shopify_spy.policy import (
+from shopify_spy import _policy as policy
+from shopify_spy._fetch import FetcherCapabilities
+from shopify_spy._policy import (
     RETRY_MAX_DELAY,
     HostSlot,
     IdentityPool,

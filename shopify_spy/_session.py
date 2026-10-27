@@ -15,7 +15,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
 
-from shopify_spy.fetch import (
+from shopify_spy._fetch import (
     Fetcher,
     FetchError,
     FetchInvalidURL,
@@ -24,7 +24,7 @@ from shopify_spy.fetch import (
     Request,
     Response,
 )
-from shopify_spy.policy import (
+from shopify_spy._policy import (
     ROBOTS_TOKEN,
     HostSlot,
     IdentityPool,
@@ -34,7 +34,7 @@ from shopify_spy.policy import (
     now,
     parse_retry_after,
 )
-from shopify_spy.utils import canonicalize_url, origin
+from shopify_spy._utils import canonicalize_url, origin
 
 logger = logging.getLogger("shopify_spy")
 

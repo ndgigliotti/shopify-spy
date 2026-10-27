@@ -17,18 +17,18 @@ import typer
 from rich.console import Console
 from rich.markup import escape
 
-from shopify_spy.api import AsyncScrapeRun, scrape_async
-from shopify_spy.config import (
+from shopify_spy._api import AsyncScrapeRun, scrape_async
+from shopify_spy._config import (
     Config,
     OutputFormat,
     Platform,
     create_default_config,
     load_config,
 )
-from shopify_spy.export import EXTENSIONS, ItemWriter, write_status
-from shopify_spy.fetch import FetcherFactory
-from shopify_spy.results import _PLATFORM_NAMES, RunResult, StoreResult, StoreStatus
-from shopify_spy.utils import normalize_url, read_url_file, split_valid_urls
+from shopify_spy._export import EXTENSIONS, ItemWriter, write_status
+from shopify_spy._fetch import FetcherFactory
+from shopify_spy._results import _PLATFORM_NAMES, RunResult, StoreResult, StoreStatus
+from shopify_spy._utils import normalize_url, read_url_file, split_valid_urls
 
 app = typer.Typer(
     name="shopify-spy",

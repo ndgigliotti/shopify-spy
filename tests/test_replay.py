@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 import shopify_spy as spy
-from shopify_spy.fetch import ReplayFetcher, load_corpus
+from shopify_spy._fetch import ReplayFetcher, load_corpus
 
 CORPUS = Path(__file__).parent / "fixtures" / "corpus"
 SNAPSHOTS = CORPUS / "snapshots.json"

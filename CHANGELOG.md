@@ -17,7 +17,8 @@ file; you don't need to change how you run it.
 
 - **Python library:** `scrape()` for scripts, `scrape_async()` for async code and
   notebooks, per-store `StoreResult`s with a `status` and `hint`, `ScrapeFailed` when
-  every store fails, `write_items()`, `read_url_file()` and `summarize()`.
+  every store fails, `write_items()`, `read_url_file()` and `summarize()`. Import
+  them from `shopify_spy`; its submodules are private.
 - `--insecure` turns off TLS certificate verification, which is now on by default.
 - `--max-stores` limits how many stores are scraped at once (default 16).
 - Zero-item diagnostics suggest the right `--platform` when a store looks like the

@@ -11,7 +11,7 @@ import urllib.parse
 from pathlib import Path
 from typing import Any
 
-from shopify_spy.session import (
+from shopify_spy._session import (
     IMAGE,
     RequestFailed,
     ShutdownRequested,

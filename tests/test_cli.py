@@ -14,14 +14,14 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-import shopify_spy.config as config_module
-import shopify_spy.runner as engine
+import shopify_spy._config as config_module
+import shopify_spy._runner as engine
 from shopify_spy import cli as cli_module
+from shopify_spy._config import Config, Platform
+from shopify_spy._fetch import FakeFetcher, FetchConnectionError, FetchTLSError, Seq
+from shopify_spy._results import StoreResult, StoreStatus, run_finish_reason
+from shopify_spy._utils import is_valid_url
 from shopify_spy.cli import app, apply_cli_overrides, get_urls
-from shopify_spy.config import Config, Platform
-from shopify_spy.fetch import FakeFetcher, FetchConnectionError, FetchTLSError, Seq
-from shopify_spy.results import StoreResult, StoreStatus, run_finish_reason
-from shopify_spy.utils import is_valid_url
 
 from .conftest import runner, strip_ansi
 

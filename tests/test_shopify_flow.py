@@ -2,7 +2,7 @@
 
 import pytest
 
-from shopify_spy.fetch import FetchConnectionError
+from shopify_spy._fetch import FetchConnectionError
 from tests.flow_support import (
     STORE,
     bulk_url,

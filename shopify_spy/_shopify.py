@@ -7,9 +7,9 @@ import logging
 import urllib.parse
 from typing import Any
 
-from shopify_spy import sitemap
-from shopify_spy.session import Emit, RequestFailed, StoreContext
-from shopify_spy.utils import find_all_values, next_page_url, normalize_url
+from shopify_spy import _sitemap as sitemap
+from shopify_spy._session import Emit, RequestFailed, StoreContext
+from shopify_spy._utils import find_all_values, next_page_url, normalize_url
 
 logger = logging.getLogger("shopify_spy")
 

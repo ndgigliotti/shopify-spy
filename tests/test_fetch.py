@@ -15,7 +15,7 @@ import httpx
 import pytest
 import respx
 
-from shopify_spy.fetch import (
+from shopify_spy._fetch import (
     ACCEPT_ENCODING,
     FakeFetcher,
     FetchConnectionError,
