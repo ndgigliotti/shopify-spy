@@ -1,3 +1,4 @@
+import re
 from unittest.mock import Mock, patch
 
 from scrapy.http import Request, Response
@@ -28,6 +29,21 @@ def test_user_agents_no_duplicates():
 def test_user_agents_look_like_browsers():
     for ua in USER_AGENTS:
         assert ua.startswith("Mozilla/5.0"), f"Unexpected UA format: {ua}"
+
+
+def test_user_agents_version_tokens_consistent():
+    """Version tokens match the way real browsers format them."""
+    for ua in USER_AGENTS:
+        if "Firefox/" in ua:
+            rv = re.search(r"rv:(\d+\.\d+)\)", ua)
+            assert rv and f"Firefox/{rv.group(1)}" in ua, ua
+        if "Edg/" in ua:
+            edge = re.search(r"Edg/(\d+)\.", ua).group(1)
+            assert re.search(rf"Chrome/{edge}\.0\.0\.0 ", ua), ua
+        if "Version/" in ua:
+            assert re.search(r"Version/\d+\.\d+ Safari/", ua), ua
+        if "Chrome/" in ua:
+            assert re.search(r"Chrome/\d+\.0\.0\.0 Safari/537\.36", ua), ua
 
 
 # --- UserAgentMiddleware init tests ---
