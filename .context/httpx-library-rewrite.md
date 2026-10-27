@@ -543,18 +543,20 @@ bottom layer.
 
 ### 4.6 Policy: `HostRegistry` and `StoreSession`
 
-**`HostRegistry` (one per run).** Keys follow Scrapy:
+**`HostRegistry` (one per run).** All per-host state is keyed by origin
+(scheme + host + port):
 
 | State | Key | Value |
 |---|---|---|
-| robots.txt cache | scheme + host + port | parsed rules |
-| Concurrency semaphore | hostname (no port) | `concurrent_requests` |
-| AutoThrottle slot | hostname (no port) | delay state |
+| robots.txt cache | origin | parsed rules |
+| Concurrency semaphore | origin | `concurrent_requests` |
+| AutoThrottle slot | origin | delay state |
 
 Shared hosts like `cdn.shopify.com` get one robots fetch and one politeness
-budget for the whole run (D10). Because robots is keyed with the port, local
-test servers on different ports (`test_e2e_diagnosis.py`) keep separate
-robots rules, as in Scrapy.
+budget for the whole run (D10). Scrapy keys slots by hostname, but per store;
+sharing across stores by hostname alone would make the e2e test stores (all on
+`127.0.0.1`, different ports) throttle each other. For real stores, origin and
+hostname keys behave the same.
 
 **`StoreSession` (one per store):** identity and rotation, cookie jar,
 dedupe set, a store-level cap of **16 concurrent requests** (fixed, like

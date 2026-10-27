@@ -12,7 +12,8 @@ import asyncio
 import sys
 import time
 import warnings
-from collections.abc import Callable, Iterable, Iterator
+import weakref
+from collections.abc import Callable, Generator, Iterable, Iterator
 from pathlib import Path
 from typing import Any, Literal
 
@@ -189,7 +190,7 @@ class _BaseRun:
             stores = self._runner.results() if self._runner else []
             self._result = RunResult(
                 stores=stores,
-                finish_reason=run_finish_reason(stores, self._opts.max_items_per_store),
+                finish_reason=run_finish_reason(stores),
                 duration=time.monotonic() - self._started,
             )
         if items is not None:
@@ -260,14 +261,17 @@ class ScrapeRun(_BaseRun):
 
     def __init__(self, *args: Any) -> None:
         super().__init__(*args)
-        self._gen: Iterator[dict[str, Any]] | None = None
+        # Weak, so a bare `for ...: break` drops the last reference and the
+        # generator's cleanup runs right away
+        self._gen: weakref.ref[Generator[dict[str, Any]]] | None = None
 
     def __iter__(self) -> Iterator[dict[str, Any]]:
         self._claim()
-        self._gen = self._iterate()
-        return self._gen
+        gen = self._iterate()
+        self._gen = weakref.ref(gen)
+        return gen
 
-    def _iterate(self) -> Iterator[dict[str, Any]]:
+    def _iterate(self) -> Generator[dict[str, Any]]:
         _ensure_no_running_loop()
 
         async def start() -> Runner:
@@ -289,8 +293,9 @@ class ScrapeRun(_BaseRun):
 
     def close(self) -> None:
         """Stop the run now if it is still going; unfinished stores end as "closed"."""
-        if self._gen is not None:
-            self._gen.close()
+        gen = self._gen() if self._gen is not None else None
+        if gen is not None:
+            gen.close()
 
     def __enter__(self) -> ScrapeRun:
         return self
