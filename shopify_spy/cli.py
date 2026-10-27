@@ -27,7 +27,7 @@ from shopify_spy.constants import (
     STORE_RESPONSE_STATUS_COUNT,
     STORE_SUCCESS_COUNT,
 )
-from shopify_spy.utils import normalize_url
+from shopify_spy.utils import is_valid_url, normalize_url
 
 app = typer.Typer(
     name="shopify-spy",
@@ -185,38 +185,6 @@ def scrape(
         bail=bail,
     )
 
-    # Warn about Shopify-only flags used with WooCommerce
-    if platform == Platform.woocommerce:
-        if collections is True:
-            console.print(
-                "[yellow]Warning: --collections has no effect with WooCommerce "
-                "(collections are not supported).[/yellow]"
-            )
-        if products is False:
-            console.print(
-                "[yellow]Warning: --no-products has no effect with WooCommerce "
-                "(WooCommerce always scrapes products).[/yellow]"
-            )
-
-    # Get URLs
-    all_urls = get_urls(urls, url_file)
-    if not all_urls:
-        console.print("[red]Error: No URLs provided.[/red]")
-        console.print("Provide a URL argument, --url-file, or run interactively.")
-        raise typer.Exit(1)
-
-    # Skip malformed URLs; a spider that fails to start stops the whole run
-    valid_urls = []
-    for u in all_urls:
-        if _is_valid_url(u):
-            valid_urls.append(u)
-        else:
-            err_console.print(f"[yellow]Warning: Skipping invalid URL: {u}[/yellow]")
-    if not valid_urls:
-        err_console.print("[red]Error: No valid URLs provided.[/red]")
-        raise typer.Exit(1)
-    all_urls = valid_urls
-
     # --peek implies limit=1, quiet logging, no images
     if peek:
         if config.scrape.limit is None:
@@ -227,8 +195,40 @@ def scrape(
 
     # Validate flag combinations
     if verbose and quiet:
-        console.print("[red]Error: Cannot use both --verbose and --quiet[/red]")
+        err_console.print("[red]Error: Cannot use both --verbose and --quiet[/red]")
         raise typer.Exit(1)
+
+    # Warn about Shopify-only flags used with WooCommerce
+    if platform == Platform.woocommerce:
+        if collections is True:
+            err_console.print(
+                "[yellow]Warning: --collections has no effect with WooCommerce "
+                "(collections are not supported).[/yellow]"
+            )
+        if products is False:
+            err_console.print(
+                "[yellow]Warning: --no-products has no effect with WooCommerce "
+                "(WooCommerce always scrapes products).[/yellow]"
+            )
+
+    # Get URLs
+    all_urls = get_urls(urls, url_file)
+    if not all_urls:
+        err_console.print("[red]Error: No URLs provided.[/red]")
+        err_console.print("Provide a URL argument, --url-file, or run interactively.")
+        raise typer.Exit(1)
+
+    # Skip malformed URLs; a spider that fails to start stops the whole run
+    valid_urls = []
+    for u in all_urls:
+        if is_valid_url(u):
+            valid_urls.append(u)
+        else:
+            err_console.print(f"[yellow]Warning: Skipping invalid URL: {u}[/yellow]")
+    if not valid_urls:
+        err_console.print("[red]Error: No valid URLs provided.[/red]")
+        raise typer.Exit(1)
+    all_urls = valid_urls
 
     # Run the spider
     run_spider(all_urls, config, peek=peek, verbose=verbose, quiet=quiet)
@@ -317,7 +317,7 @@ def apply_cli_overrides(
 def get_urls(urls: list[str] | None, url_file: Path | None) -> list[str]:
     """Get URLs from arguments or file, with interactive fallback."""
     if urls:
-        return list(urls)
+        return [u.strip() for u in urls if u.strip()]
 
     if url_file:
         with open(url_file) as f:
@@ -325,25 +325,11 @@ def get_urls(urls: list[str] | None, url_file: Path | None) -> list[str]:
 
     # Interactive prompt if stdin is a TTY
     if sys.stdin.isatty():
-        url = typer.prompt("Enter Shopify store URL")
+        url = typer.prompt("Enter Shopify store URL").strip()
         if url:
             return [url]
 
     return []
-
-
-def _is_valid_url(url: str) -> bool:
-    """Return True if the URL is an http(s) URL with a host and a valid port."""
-    try:
-        parsed = normalize_url(url)
-        parsed.port  # Raises ValueError for a non-numeric or out-of-range port
-    except ValueError:
-        return False
-    return (
-        parsed.scheme in ("http", "https")
-        and bool(parsed.hostname)
-        and not any(c.isspace() for c in url)
-    )
 
 
 def _log_dir() -> Path:
