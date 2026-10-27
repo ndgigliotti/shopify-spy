@@ -336,6 +336,8 @@ class StoreSession:
                     kind.name,
                 )
                 if not self.retry.should_retry_status(response.status, attempt):
+                    if response.status in RATE_LIMIT_STATUSES:
+                        slot.pause(0)  # no retry left, but the host still slows down
                     return response
                 if response.status in self.retry.rotate_on and self.identity.rotates:
                     self.identity.rotate()

@@ -420,7 +420,8 @@ _SCRAPE_DOC = """
             (None or 0 disables).
         concurrent_requests: Max concurrent requests per host across the run.
         request_timeout: Seconds allowed for one request (not the whole run).
-        retries: Retries for 403/429/5xx responses and network errors.
+        retries: Retries for 403/429/5xx responses and network errors. A 429 or 503
+            also pauses and slows every request to that host.
         user_agent: Fixed User-Agent; by default a random browser UA is used and
             swapped after a 403.
         respect_robots_txt: Obey robots.txt (default True).
