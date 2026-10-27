@@ -40,6 +40,39 @@ def test_shipped_list_is_well_formed():
         assert any(browser in a for a in USER_AGENTS), browser
 
 
+def test_shipped_list_version_tokens_are_consistent():
+    # Same rules as master's test_user_agents_version_tokens_consistent
+    assert gen.consistency_errors(USER_AGENTS) == []
+
+
+@pytest.mark.parametrize(
+    "agent",
+    [
+        "Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 Version/27 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; rv:153.0) Gecko/20100101 Firefox/158.0",
+        "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/156.0.0.0 Safari/537.36 "
+        "Edg/155.0.0.0",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/156.0.7600.12 Safari/537.36",
+    ],
+    ids=["safari-bare-major", "firefox-rv-mismatch", "edge-chrome-mismatch", "chrome-unreduced"],
+)
+def test_inconsistent_version_tokens_are_caught(agent):
+    assert gen.consistency_errors([agent])
+
+
+def test_safari_patch_versions_are_valid():
+    # Real Safari sends these too (useragents.me, 2026-10)
+    safari = "Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 Version/{} Safari/605.1.15"
+    assert gen.consistency_errors([safari.format("26.6.1"), safari.format("26.0")]) == []
+
+
+def test_main_refuses_to_write_inconsistent_tokens(fixed_versions, output, monkeypatch):
+    monkeypatch.setattr(gen, "SAFARI_VERSION", "27")
+    monkeypatch.setattr(gen, "get_json", lambda url: generated(gen.build()))
+    assert gen.main() == 2
+    assert not output.exists()
+
+
 def test_shipped_list_comes_from_the_generator(fixed_versions):
     # Hand edits that break a template show up as a format the generator never makes
     templates = {gen.shape(a) for a in generated(gen.build())}
