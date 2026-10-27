@@ -511,6 +511,39 @@ def test_per_store_line_escapes_markup(tmp_path, capsys):
     assert "https://[/bad]: failed" in capsys.readouterr().out
 
 
+def test_peek_reports_failed_store_on_stderr(tmp_path, capsys):
+    """With --peek, a failed store is still reported, on stderr."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    crawlers = [
+        _make_crawler({"item_scraped_count": 1}),
+        MagicMock(stats=None, settings=Settings()),
+    ]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_process_with_failure(crawlers, 1)
+        run_spider(["https://store1.com", "https://[bad"], config, peek=True)
+
+    captured = capsys.readouterr()
+    assert "failed with an error" not in captured.out
+    assert "1 store(s) failed with an error" in captured.err
+
+
+def test_finish_reason_reports_crawler_failure():
+    from scrapy.statscollectors import MemoryStatsCollector
+
+    failed = MagicMock(settings=Settings())
+    failed.stats = MemoryStatsCollector(failed)
+    failed.stats.set_value("shopify_spy/crawler_failed", True)
+    ok = _make_crawler({"finish_reason": "finished", "item_scraped_count": 5})
+    config = Config(scrape=ScrapeConfig(limit=5))
+    assert _finish_reason([ok, failed], config) == "crawler_failed"
+
+
 def test_single_url_success_no_per_url_breakdown(tmp_path, capsys):
     """Single-URL success should NOT print a per-URL line."""
     config = Config(output=OutputConfig(dir=tmp_path))
