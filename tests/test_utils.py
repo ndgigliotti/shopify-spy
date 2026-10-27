@@ -1,43 +1,6 @@
-from unittest.mock import Mock
-
 import pytest
 
-from shopify_spy.utils import as_bool, find_all_values, load_store_urls, normalize_url, uri_params
-
-# --- as_bool tests ---
-
-
-def test_as_bool():
-    pos_inputs = ["y", "yes", "t", "T", "TRue", "on", "ON", "1", True, 1]
-    neg_inputs = ["n", "NO", "f", "false", "OfF", "0", "null", "na", "nan", False, 0, None]
-
-    for value in pos_inputs:
-        assert as_bool(value) is True
-
-    for value in neg_inputs:
-        assert as_bool(value) is False
-
-
-def test_as_bool_invalid():
-    with pytest.raises(ValueError, match="Could not interpret"):
-        as_bool("maybe")
-
-    with pytest.raises(ValueError, match="Could not interpret"):
-        as_bool("invalid")
-
-
-# --- uri_params tests ---
-
-
-def test_uri_params():
-    mock_spider = Mock()
-    mock_spider.name = "test_spider"
-
-    params = {"key": "value", "time": "2026-01-01"}
-    result = uri_params(params, mock_spider)
-
-    assert result == {"key": "value", "time": "2026-01-01", "spider_name": "test_spider"}
-
+from shopify_spy.utils import find_all_values, normalize_url, read_url_file
 
 # --- find_all_values tests ---
 
@@ -147,8 +110,7 @@ def test_normalize_url(url, netloc):
     assert parsed.scheme == ("http" if url.startswith("http://") else "https")
 
 
-def test_load_store_urls_skips_invalid(tmp_path, caplog):
+def test_read_url_file_skips_blanks_and_comments(tmp_path):
     url_file = tmp_path / "urls.txt"
-    url_file.write_text("store.com\nhttps://[bad\n\nother.com:8080\n")
-    assert load_store_urls(None, str(url_file)) == ["store.com", "other.com:8080"]
-    assert "Skipping invalid URL: https://[bad" in caplog.text
+    url_file.write_text("store.com\n\n# a comment\n  other.com:8080  \n")
+    assert read_url_file(url_file) == ["store.com", "other.com:8080"]

@@ -35,7 +35,11 @@ CASES: dict[str, tuple[str, list[str], dict[str, Any]]] = {
         ["https://www.snowdevil.ca"],
         {"images": True, "max_items_per_store": 3},
     ),
-    "woocommerce": ("woocommerce.json.gz", ["https://porterandyork.com"], {"platform": "woocommerce"}),
+    "woocommerce": (
+        "woocommerce.json.gz",
+        ["https://porterandyork.com"],
+        {"platform": "woocommerce"},
+    ),
     "robots_blocked": (
         "robots_blocked.json.gz",
         ["https://woocommerce.com"],

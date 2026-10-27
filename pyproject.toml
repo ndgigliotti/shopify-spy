@@ -1,7 +1,7 @@
 [project]
 name = "shopify-spy"
-version = "0.2.1"
-description = "Simple CLI to scrape product data, images, and collections from Shopify and WooCommerce stores"
+version = "0.3.0"
+description = "Python library and CLI to scrape product data, images, and collections from Shopify and WooCommerce stores"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -12,8 +12,8 @@ keywords = [
     "shopify",
     "woocommerce",
     "scraper",
-    "scrapy",
     "spider",
+    "library",
     "ecommerce",
     "web-scraping",
     "product-data",
@@ -21,7 +21,7 @@ keywords = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
-    "Framework :: Scrapy",
+    "Framework :: AsyncIO",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
@@ -33,8 +33,6 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
 ]
 dependencies = [
-    "scrapy>=2.13",
-    "pillow>=10.0",
     "typer>=0.15",
     "rich>=13.0",
     "pyyaml>=6.0",
@@ -52,7 +50,6 @@ Repository = "https://github.com/ndgigliotti/shopify-spy"
 
 [project.scripts]
 shopify-spy = "shopify_spy.cli:app"
-shopify-spy-next = "shopify_spy._cli_next:app"
 
 [build-system]
 requires = ["hatchling"]
@@ -82,7 +79,7 @@ filterwarnings = [
 ]
 markers = [
     "integration: marks tests that hit external services (deselect with '-m not integration')",
-    "e2e: runs the CLI against local HTTP servers to check diagnoses (slow; run with '-m e2e')",
+    "e2e: runs the CLI against local HTTP servers to check diagnoses (run with '-m e2e')",
 ]
 addopts = "-m 'not integration and not e2e'"
 asyncio_mode = "auto"
