@@ -133,3 +133,17 @@ def test_woocommerce_zero_min_price_kept():
     s = spy.summarize({**WOO_PRODUCT, "prices": prices})
     assert s.min_price == Decimal("0")
     assert s.max_price == Decimal("10")
+
+
+def test_image_urls_come_from_the_payload_when_images_are_off():
+    # Live items have empty image_urls unless images are downloaded
+    shopify = copy.deepcopy(SHOPIFY_PRODUCT)
+    shopify["image_urls"] = []
+    shopify["product"]["images"] = [{"src": "https://cdn.test/a.jpg"}, {"src": None}]
+    collection = copy.deepcopy(SHOPIFY_COLLECTION)
+    collection["collection"]["image"] = {"src": "https://cdn.test/c.jpg"}
+    woo = {**WOO_PRODUCT, "image_urls": []}
+    assert spy.summarize(shopify).image_urls == ["https://cdn.test/a.jpg"]
+    assert spy.summarize(collection).image_urls == ["https://cdn.test/c.jpg"]
+    assert spy.summarize(woo).image_urls == ["https://woo.test/mug.jpg"]
+    assert spy.summarize({**woo, "images": None}).image_urls == []
