@@ -551,60 +551,59 @@ def run_spider(
         return
 
     # Diagnose why nothing was scraped
-    timed_out = any(
-        c.stats.get_value("finish_reason", "") == NO_ITEM_TIMEOUT_REASON for c in crawlers
-    )
-    http_403 = sum(c.stats.get_value("downloader/response_status_count/403", 0) for c in crawlers)
-    http_404 = sum(c.stats.get_value("downloader/response_status_count/404", 0) for c in crawlers)
-    response_count = sum(c.stats.get_value("downloader/response_count", 0) for c in crawlers)
-    robotstxt_blocked = any(
-        c.stats.get_value("downloader/response_count", 0)
-        == c.stats.get_value("robotstxt/response_count", 0)
-        and config.network.respect_robots_txt
-        for c in crawlers
-    )
+    statuses = [_diagnose_crawler(c, config) for c in crawlers]
 
     console.print("[yellow]Warning: Scraped 0 items.[/yellow]")
     if multi:
-        for url, c in zip(urls, crawlers):
-            host = escape(_host(url))
-            status = _diagnose_crawler(c, config)
-            console.print(f"  {host}: {status}")
+        for url, status in zip(urls, statuses):
+            console.print(f"  {escape(_host(url))}: {status}")
 
-    if crawler_failures:
-        console.print(f"  {crawler_failures} store(s) failed with an error.")
-    # Specific causes first: a blocked store often keeps retrying until --bail fires
-    elif robotstxt_blocked and response_count <= len(crawlers):
-        console.print(
-            "  Likely blocked by robots.txt. "
-            "Retry with [bold]--ignore-robots[/bold] (-i) to bypass."
-        )
-    elif http_403 > 0:
-        console.print(
-            f"  Received {http_403} HTTP 403 (Forbidden) response(s). "
-            "The server is actively blocking scrapers."
-        )
-        if config.network.respect_robots_txt:
-            console.print("  Try [bold]--ignore-robots[/bold] (-i) to bypass robots.txt.")
-    elif http_404 > 0:
-        console.print(
-            f"  Received {http_404} HTTP 404 (Not Found) response(s). "
-            "Check the URL and --platform flag."
-        )
-    elif timed_out:
-        console.print(
-            f"  Timed out after {config.scrape.bail}s with no items. "
-            "Use [bold]--bail 0[/bold] to disable."
-        )
-    elif response_count == 0:
-        console.print("  No responses received. Check the URL and your network connection.")
-    else:
-        console.print("  The store may be empty or the endpoint returned no products.")
+    for hint in _summary_hints(crawlers, statuses, config):
+        console.print(f"  {hint}")
 
     if log_file:
         console.print(f"  Log: {log_file}")
 
     raise typer.Exit(1)
+
+
+def _summary_hints(crawlers: list, statuses: list[str], config: Config) -> list[str]:
+    """Return one hint per distinct zero-item status, in _diagnose_crawler's order."""
+
+    def total(status: str, code: int) -> int:
+        return sum(_store_status_count(c, code) for c, s in zip(crawlers, statuses) if s == status)
+
+    present = set(statuses)
+    hints = []
+    if "failed" in present:
+        n = statuses.count("failed")
+        hints.append(f"{n} store(s) failed with an error.")
+    if "403 Forbidden" in present:
+        hints.append(
+            f"Received {total('403 Forbidden', 403)} HTTP 403 (Forbidden) response(s). "
+            "The server is actively blocking scrapers."
+        )
+        if config.network.respect_robots_txt:
+            hints.append("Try [bold]--ignore-robots[/bold] (-i) to bypass robots.txt.")
+    if "404 Not Found" in present:
+        hints.append(
+            f"Received {total('404 Not Found', 404)} HTTP 404 (Not Found) response(s). "
+            "Check the URL and --platform flag."
+        )
+    if "blocked by robots.txt" in present:
+        hints.append(
+            "Likely blocked by robots.txt. Retry with [bold]--ignore-robots[/bold] (-i) to bypass."
+        )
+    if "timed out" in present:
+        hints.append(
+            f"Timed out after {config.scrape.bail}s with no items. "
+            "Use [bold]--bail 0[/bold] to disable."
+        )
+    if "no response" in present:
+        hints.append("No responses received. Check the URL and your network connection.")
+    if "0 items" in present:
+        hints.append("The store may be empty or the endpoint returned no products.")
+    return hints
 
 
 def _record_failure(failure: object, crawler: object, url: str) -> None:
@@ -633,18 +632,28 @@ def _host(url: str) -> str:
         return url
 
 
+def _store_status_count(crawler: object, status: int) -> int:
+    """Count responses with this HTTP status, excluding the robots.txt request."""
+    return crawler.stats.get_value(
+        f"downloader/response_status_count/{status}", 0
+    ) - crawler.stats.get_value(f"robotstxt/response_status_count/{status}", 0)
+
+
 def _diagnose_crawler(crawler: object, config: Config) -> str:
-    """Return a short status string for a single crawler."""
+    """Return a short status string for a single crawler.
+
+    Specific causes are checked before the timeout: a blocked store often keeps
+    retrying until --bail fires. _summary_hints relies on this being the only
+    place that decides a store's status.
+    """
     if crawler.stats.get_value(CRAWLER_FAILED_STAT, False):
         return "failed"
     items = crawler.stats.get_value("item_scraped_count", 0)
     if items > 0:
         return f"{items} items"
-    h403 = crawler.stats.get_value("downloader/response_status_count/403", 0)
-    if h403 > 0:
+    if _store_status_count(crawler, 403) > 0:
         return "403 Forbidden"
-    h404 = crawler.stats.get_value("downloader/response_status_count/404", 0)
-    if h404 > 0:
+    if _store_status_count(crawler, 404) > 0:
         return "404 Not Found"
     resp = crawler.stats.get_value("downloader/response_count", 0)
     robots = crawler.stats.get_value("robotstxt/response_count", 0)

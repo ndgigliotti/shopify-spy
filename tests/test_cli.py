@@ -625,6 +625,59 @@ def test_diagnose_crawler_404():
     assert _diagnose_crawler(c, Config()) == "404 Not Found"
 
 
+def test_robots_txt_404_does_not_hide_timeout(tmp_path, capsys):
+    """A store without a robots.txt (404) that then times out is reported as timed out."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    stats = [
+        {
+            "finish_reason": "no_item_timeout",
+            "downloader/response_count": 1,
+            "downloader/response_status_count/404": 1,
+            "robotstxt/response_count": 0,
+            "robotstxt/response_status_count/404": 1,
+        }
+    ]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process(stats)
+        with pytest.raises((SystemExit, typer.Exit)):
+            run_spider(["https://slow.com"], config)
+
+    output = capsys.readouterr().out
+    assert "Timed out after" in output
+    assert "HTTP 404" not in output
+
+
+def test_summary_has_a_hint_per_distinct_problem(tmp_path, capsys):
+    """One store's problem does not hide another's hint."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    stats = [
+        {"downloader/response_status_count/403": 2, "downloader/response_count": 2},
+        {},
+    ]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process(stats)
+        with pytest.raises((SystemExit, typer.Exit)):
+            run_spider(["https://blocked.com", "https://down.invalid"], config)
+
+    output = capsys.readouterr().out
+    assert "blocked.com: 403 Forbidden" in output
+    assert "down.invalid: no response" in output
+    assert "Received 2 HTTP 403" in output
+    assert "No responses received" in output
+
+
 def test_diagnose_crawler_timed_out():
     c = _make_crawler({"finish_reason": "no_item_timeout"})
     assert _diagnose_crawler(c, Config()) == "timed out"
