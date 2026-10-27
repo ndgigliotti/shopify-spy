@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import email.utils
+import json
 import random
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from protego import Protego
 
 from shopify_spy._fetch import FetcherCapabilities, Identity
-from shopify_spy._user_agents import USER_AGENTS
 
 # Headers Scrapy sends by default; kept so servers see the same requests as before
 DEFAULT_HEADERS = {
@@ -168,6 +169,19 @@ def retry_policy_for(capabilities: FetcherCapabilities, retries: int, backoff: b
     """Pick retry behavior for a transport. Browsers don't rotate identities."""
     rotate = frozenset() if not capabilities.applies_identity_headers else ROTATE_ON_STATUSES
     return RetryPolicy(retries=retries, rotate_on=rotate, backoff=backoff)
+
+
+def load_user_agents() -> list[str]:
+    """Browser user agents from user_agents.json (browser -> platform -> strings).
+
+    scripts/update_user_agents.py maintains the JSON. A plain file read:
+    importlib.resources would add ~4 ms to `import shopify_spy`.
+    """
+    data = json.loads(Path(__file__).with_name("user_agents.json").read_text("utf-8"))
+    return [a for platforms in data["agents"].values() for p in platforms.values() for a in p]
+
+
+USER_AGENTS = load_user_agents()
 
 
 @dataclass
