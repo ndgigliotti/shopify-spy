@@ -607,26 +607,47 @@ def test_single_url_failure_no_per_url_breakdown(tmp_path, capsys):
     assert "403" in output
 
 
+def test_no_responses_not_reported_as_robots(tmp_path, capsys):
+    """Zero responses means a network problem, not a robots.txt block."""
+    config = Config(
+        network=NetworkConfig(respect_robots_txt=True), output=OutputConfig(dir=tmp_path)
+    )
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process([{}, {}])
+        with pytest.raises((SystemExit, typer.Exit)):
+            run_spider(["https://down1.invalid", "https://down2.invalid"], config)
+
+    output = capsys.readouterr().out
+    assert "robots.txt" not in output
+    assert "No responses received" in output
+
+
 # --- _diagnose_crawler unit tests ---
 
 
 def test_diagnose_crawler_items():
     c = _make_crawler({"item_scraped_count": 5})
-    assert _diagnose_crawler(c, Config()) == "5 items"
+    assert _diagnose_crawler(c) == "5 items"
 
 
 def test_diagnose_crawler_403():
     c = _make_crawler(
         {"shopify_spy/store_response_status_count/403": 2, "downloader/response_count": 2}
     )
-    assert _diagnose_crawler(c, Config()) == "403 Forbidden"
+    assert _diagnose_crawler(c) == "403 Forbidden"
 
 
 def test_diagnose_crawler_404():
     c = _make_crawler(
         {"shopify_spy/store_response_status_count/404": 1, "downloader/response_count": 1}
     )
-    assert _diagnose_crawler(c, Config()) == "404 Not Found"
+    assert _diagnose_crawler(c) == "404 Not Found"
 
 
 def test_robots_txt_404_does_not_hide_timeout(tmp_path, capsys):
@@ -687,7 +708,7 @@ def test_summary_has_a_hint_per_distinct_problem(tmp_path, capsys):
 
 def test_diagnose_crawler_timed_out():
     c = _make_crawler({"finish_reason": "no_item_timeout"})
-    assert _diagnose_crawler(c, Config()) == "timed out"
+    assert _diagnose_crawler(c) == "timed out"
 
 
 def test_timeout_shows_bail_hint(tmp_path, capsys):
@@ -739,14 +760,78 @@ def test_timeout_does_not_hide_403(tmp_path, capsys):
 
 
 def test_diagnose_crawler_robots():
-    c = _make_crawler({"downloader/response_count": 1, "robotstxt/response_count": 1})
-    config = Config(network=NetworkConfig(respect_robots_txt=True))
-    assert _diagnose_crawler(c, config) == "blocked by robots.txt"
+    # products.json and the sitemap fallback both forbidden; the store never answered
+    c = _make_crawler({"robotstxt/forbidden": 2})
+    assert _diagnose_crawler(c) == "blocked by robots.txt"
+
+
+def test_diagnose_crawler_robots_after_store_redirect():
+    """store.com 301s to www.store.com, whose robots.txt forbids the crawl."""
+    c = _make_crawler(
+        {
+            "robotstxt/forbidden": 2,
+            "shopify_spy/store_response_count": 2,
+            "shopify_spy/store_response_status_count/301": 2,
+        }
+    )
+    assert _diagnose_crawler(c) == "blocked by robots.txt"
+
+
+def test_diagnose_crawler_robots_before_fallback_404():
+    """products.json forbidden, and the allowed sitemap fallback 404s."""
+    c = _make_crawler(
+        {
+            "robotstxt/forbidden": 1,
+            "shopify_spy/store_response_count": 1,
+            "shopify_spy/store_response_status_count/404": 1,
+        }
+    )
+    assert _diagnose_crawler(c) == "blocked by robots.txt"
+
+
+def test_diagnose_crawler_robots_incidental_forbid():
+    """A disallowed URL in a crawl where the store answered is not a block."""
+    c = _make_crawler(
+        {
+            "robotstxt/forbidden": 1,
+            "shopify_spy/store_response_count": 200,
+            "shopify_spy/store_success_count": 200,
+        }
+    )
+    assert _diagnose_crawler(c) == "0 items"
+
+
+def test_diagnose_crawler_robots_allowed_then_no_response():
+    """robots.txt answered and allowed the crawl, but the store never responded."""
+    assert _diagnose_crawler(_make_crawler({})) == "no response"
+
+
+def test_robots_block_not_blamed_for_other_store(tmp_path, capsys):
+    """One robots-blocked store does not hide an unreachable one."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    stats = [
+        {"robotstxt/forbidden": 1},
+        {},
+    ]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process(stats)
+        with pytest.raises((SystemExit, typer.Exit)):
+            run_spider(["https://blocked.com", "https://down.invalid"], config)
+
+    output = capsys.readouterr().out
+    assert "blocked.com: blocked by robots.txt" in output
+    assert "down.invalid: no response" in output
 
 
 def test_diagnose_crawler_no_response():
     c = _make_crawler({})
-    assert _diagnose_crawler(c, Config()) == "no response"
+    assert _diagnose_crawler(c) == "no response"
 
 
 def test_diagnose_crawler_zero_items():
@@ -757,7 +842,7 @@ def test_diagnose_crawler_zero_items():
             "shopify_spy/store_success_count": 5,
         }
     )
-    assert _diagnose_crawler(c, Config()) == "0 items"
+    assert _diagnose_crawler(c) == "0 items"
 
 
 def test_diagnose_crawler_recovered_403_is_not_blocking():
@@ -771,7 +856,7 @@ def test_diagnose_crawler_recovered_403_is_not_blocking():
             "shopify_spy/store_response_status_count/200": 1,
         }
     )
-    assert _diagnose_crawler(c, Config()) == "timed out"
+    assert _diagnose_crawler(c) == "timed out"
 
 
 def test_diagnose_crawler_fallback_404_is_not_blocking():
@@ -785,7 +870,7 @@ def test_diagnose_crawler_fallback_404_is_not_blocking():
             "shopify_spy/store_response_status_count/200": 1,
         }
     )
-    assert _diagnose_crawler(c, Config()) == "timed out"
+    assert _diagnose_crawler(c) == "timed out"
 
 
 # --- Status file tests ---
