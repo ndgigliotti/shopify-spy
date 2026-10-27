@@ -1,3 +1,4 @@
+import ipaddress
 import logging
 import re
 import urllib.parse
@@ -12,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 # A leading "name:" is a scheme unless a port number follows (store.com:8080)
 _SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:(?!\d)")
+# DNS hostname: dot-separated labels of letters, digits and inner hyphens
+_HOSTNAME_RE = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))*\.?$")
 
 
 def normalize_url(url: str) -> urllib.parse.ParseResult:
@@ -23,18 +26,40 @@ def normalize_url(url: str) -> urllib.parse.ParseResult:
 
 
 def is_valid_url(url: str) -> bool:
-    """Return True if the URL is an http(s) URL with a host and a usable port."""
+    """Return True if the URL is an http(s) URL with a real host and a usable port."""
+    if any(c.isspace() or not c.isprintable() or c == "\\" for c in url):
+        return False
     try:
         parsed = normalize_url(url)
         port = parsed.port  # Raises ValueError for a non-numeric or out-of-range port
     except ValueError:
         return False
-    return (
-        parsed.scheme in ("http", "https")
-        and bool(parsed.hostname)
-        and port != 0
-        and not any(c.isspace() for c in url)
-    )
+    if parsed.scheme not in ("http", "https") or port == 0 or "@" in parsed.netloc:
+        return False
+    return _is_valid_host(parsed.hostname or "")
+
+
+def _is_valid_host(host: str) -> bool:
+    """Return True for an IP address or a DNS hostname (internationalized names allowed)."""
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    try:
+        host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return False
+    return bool(_HOSTNAME_RE.match(host))
+
+
+def split_valid_urls(urls: list[str]) -> tuple[list[str], list[str]]:
+    """Split URLs into (valid, invalid) lists, preserving order."""
+    valid: list[str] = []
+    invalid: list[str] = []
+    for u in urls:
+        (valid if is_valid_url(u) else invalid).append(u)
+    return valid, invalid
 
 
 def find_all_values(key: str, obj: Any) -> Iterator[Any]:
@@ -67,12 +92,9 @@ def load_store_urls(url: str | None, url_file: str | None) -> list[str]:
             urls = [line.strip() for line in f if line.strip()]
     else:
         return []
-    valid = []
-    for u in urls:
-        if is_valid_url(u):
-            valid.append(u)
-        else:
-            logger.warning("Skipping invalid URL: %s", u)
+    valid, invalid = split_valid_urls(urls)
+    for u in invalid:
+        logger.warning("Skipping invalid URL: %s", u)
     return valid
 
 

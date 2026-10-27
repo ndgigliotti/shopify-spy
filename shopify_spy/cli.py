@@ -27,7 +27,7 @@ from shopify_spy.constants import (
     STORE_RESPONSE_STATUS_COUNT,
     STORE_SUCCESS_COUNT,
 )
-from shopify_spy.utils import is_valid_url, normalize_url
+from shopify_spy.utils import normalize_url, split_valid_urls
 
 app = typer.Typer(
     name="shopify-spy",
@@ -219,19 +219,17 @@ def scrape(
         raise typer.Exit(1)
 
     # Skip malformed URLs; a spider that fails to start stops the whole run
-    valid_urls = []
-    for u in all_urls:
-        if is_valid_url(u):
-            valid_urls.append(u)
-        else:
-            err_console.print(f"[yellow]Warning: Skipping invalid URL: {u}[/yellow]")
+    valid_urls, invalid_urls = split_valid_urls(all_urls)
+    for u in invalid_urls:
+        err_console.print(f"[yellow]Warning: Skipping invalid URL: {escape(u)}[/yellow]")
     if not valid_urls:
         err_console.print("[red]Error: No valid URLs provided.[/red]")
         raise typer.Exit(1)
-    all_urls = valid_urls
 
     # Run the spider
-    run_spider(all_urls, config, peek=peek, verbose=verbose, quiet=quiet)
+    run_spider(
+        valid_urls, config, peek=peek, verbose=verbose, quiet=quiet, skipped_urls=invalid_urls
+    )
 
 
 @app.command()
@@ -365,6 +363,7 @@ def _write_status_file(
     duration: float,
     log_file: Path | None,
     total: int,
+    skipped_urls: list[str],
 ) -> None:
     """Write a _status.json file alongside the output."""
     url_entries = []
@@ -373,6 +372,7 @@ def _write_status_file(
         failed = crawler.stats.get_value(CRAWLER_FAILED_STAT, False)
         status = "ok" if items > 0 and not failed else _diagnose_crawler(crawler)
         url_entries.append({"url": url, "items": items, "status": status})
+    url_entries += [{"url": url, "items": 0, "status": "invalid URL"} for url in skipped_urls]
 
     data = {
         "items_scraped": total,
@@ -390,8 +390,12 @@ def run_spider(
     peek: bool = False,
     verbose: bool = False,
     quiet: bool = False,
+    skipped_urls: list[str] | None = None,
 ) -> None:
-    """Run the appropriate spider with the given configuration."""
+    """Run the appropriate spider with the given configuration.
+
+    skipped_urls are invalid inputs the caller dropped; they are recorded in the status file.
+    """
     # Deferred imports to avoid loading Scrapy until needed
     from scrapy.crawler import CrawlerProcess
     from scrapy.utils.project import get_project_settings
@@ -548,7 +552,9 @@ def run_spider(
         status_dir = output_dir / "status"
         status_dir.mkdir(parents=True, exist_ok=True)
         status_path = status_dir / f"{name}_{timestamp}_status.json"
-        _write_status_file(status_path, crawlers, urls, config, duration, log_file, total)
+        _write_status_file(
+            status_path, crawlers, urls, config, duration, log_file, total, skipped_urls or []
+        )
 
     if total > 0:
         if not peek:
@@ -569,17 +575,19 @@ def run_spider(
 
     # Diagnose why nothing was scraped
     statuses = [_diagnose_crawler(c) for c in crawlers]
+    # --peek reserves stdout for JSONL
+    out = err_console if peek else console
 
-    console.print("[yellow]Warning: Scraped 0 items.[/yellow]")
+    out.print("[yellow]Warning: Scraped 0 items.[/yellow]")
     if multi:
         for url, status in zip(urls, statuses):
-            console.print(f"  {escape(_host(url))}: {status}")
+            out.print(f"  {escape(_host(url))}: {status}")
 
     for hint in _summary_hints(crawlers, statuses, config):
-        console.print(f"  {hint}")
+        out.print(f"  {hint}")
 
     if log_file:
-        console.print(f"  Log: {log_file}")
+        out.print(f"  Log: {log_file}")
 
     raise typer.Exit(1)
 
