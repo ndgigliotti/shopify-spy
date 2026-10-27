@@ -11,13 +11,13 @@ from shopify_spy.cli import (
     Platform,
     _diagnose_crawler,
     _finish_reason,
-    _is_valid_url,
     app,
     apply_cli_overrides,
     get_urls,
     run_spider,
 )
 from shopify_spy.config import Config, NetworkConfig, OutputConfig, ScrapeConfig
+from shopify_spy.utils import is_valid_url
 
 from .conftest import runner, strip_ansi
 
@@ -96,34 +96,34 @@ def test_cli_scrape_no_url():
     """Test that scrape fails when no URL provided (non-interactive)."""
     result = runner.invoke(app, ["scrape"])
     assert result.exit_code == 1
-    assert "No URLs provided" in strip_ansi(result.stdout)
+    assert "No URLs provided" in strip_ansi(result.stderr)
 
 
 def test_cli_scrape_warns_collections_woocommerce():
     """--collections with --platform woocommerce warns about unsupported flag."""
     result = runner.invoke(app, ["scrape", "--platform", "woocommerce", "--collections"])
-    output = strip_ansi(result.stdout)
+    output = strip_ansi(result.stderr)
     assert "--collections has no effect with WooCommerce" in output
 
 
 def test_cli_scrape_warns_no_products_woocommerce():
     """--no-products with --platform woocommerce warns about unsupported flag."""
     result = runner.invoke(app, ["scrape", "--platform", "woocommerce", "--no-products"])
-    output = strip_ansi(result.stdout)
+    output = strip_ansi(result.stderr)
     assert "--no-products has no effect with WooCommerce" in output
 
 
 def test_cli_scrape_no_warn_shopify_collections():
     """--collections with shopify (default) should not produce a warning."""
     result = runner.invoke(app, ["scrape", "--collections"])
-    output = strip_ansi(result.stdout)
+    output = strip_ansi(result.stderr)
     assert "--collections has no effect" not in output
 
 
 def test_cli_scrape_no_warn_woocommerce_without_flags():
     """--platform woocommerce without --collections/--no-products should not warn."""
     result = runner.invoke(app, ["scrape", "--platform", "woocommerce"])
-    output = strip_ansi(result.stdout)
+    output = strip_ansi(result.stderr)
     assert "has no effect" not in output
 
 
@@ -279,6 +279,17 @@ def test_get_urls_from_file(tmp_path):
     assert urls == ["https://store1.com", "https://store2.com"]
 
 
+def test_get_urls_strips_arguments():
+    assert get_urls([" store.com ", "  "], None) == ["store.com"]
+
+
+def test_cli_scrape_flag_conflict_checked_before_urls():
+    result = runner.invoke(app, ["scrape", "-v", "-q", "https://[bad"])
+    assert result.exit_code == 1
+    assert "Cannot use both --verbose and --quiet" in strip_ansi(result.stderr)
+    assert "Skipping invalid URL" not in strip_ansi(result.stderr)
+
+
 def test_get_urls_empty():
     """Test that empty input returns empty list (non-interactive)."""
     urls = get_urls(None, None)
@@ -307,10 +318,11 @@ def test_cli_scrape_skips_invalid_urls():
         "localhost:8080",
         "//store.com",
         "https://[::1]:8443",
+        "store.com/collections/all?ref=https://x.com",
     ],
 )
 def test_is_valid_url_accepts(url):
-    assert _is_valid_url(url)
+    assert is_valid_url(url)
 
 
 @pytest.mark.parametrize(
@@ -324,10 +336,12 @@ def test_is_valid_url_accepts(url):
         "https://store.com:abc",
         "ftp://store.com",
         "http://exa mple.com",
+        "http:/store.com",
+        "https://store.com:0",
     ],
 )
 def test_is_valid_url_rejects(url):
-    assert not _is_valid_url(url)
+    assert not is_valid_url(url)
 
 
 def test_cli_scrape_all_urls_invalid():

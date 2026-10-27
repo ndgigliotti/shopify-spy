@@ -2,7 +2,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from shopify_spy.utils import as_bool, find_all_values, normalize_url, uri_params
+from shopify_spy.utils import as_bool, find_all_values, load_store_urls, normalize_url, uri_params
 
 # --- as_bool tests ---
 
@@ -138,9 +138,17 @@ def test_find_all_values_mixed_types():
         ("store.com:8080", "store.com:8080"),
         ("//store.com", "store.com"),
         ("http://store.com", "store.com"),
+        ("store.com/a?ref=https://x.com", "store.com"),
     ],
 )
 def test_normalize_url(url, netloc):
     parsed = normalize_url(url)
     assert parsed.netloc == netloc
     assert parsed.scheme == ("http" if url.startswith("http://") else "https")
+
+
+def test_load_store_urls_skips_invalid(tmp_path, caplog):
+    url_file = tmp_path / "urls.txt"
+    url_file.write_text("store.com\nhttps://[bad\n\nother.com:8080\n")
+    assert load_store_urls(None, str(url_file)) == ["store.com", "other.com:8080"]
+    assert "Skipping invalid URL: https://[bad" in caplog.text
