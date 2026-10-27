@@ -10,12 +10,17 @@ major versions change. They come from official sources:
 - Edge: Microsoft's Edge update API (newest stable major)
 - Safari: no machine-readable feed; SAFARI_VERSION is updated by hand from
   Apple's release notes (https://developer.apple.com/documentation/safari-release-notes)
+
+The strings themselves are templates. After writing, the script compares their
+format (versions masked) with an informal list of real-world user agents and
+warns on any difference, which is how a vendor's format change gets noticed.
 """
 
 from __future__ import annotations
 
 import datetime
 import json
+import re
 import urllib.request
 from pathlib import Path
 
@@ -28,6 +33,9 @@ CHROME_API = (
 )
 FIREFOX_API = "https://product-details.mozilla.org/1.0/firefox_versions.json"
 EDGE_API = "https://edgeupdates.microsoft.com/api/products"
+# Informal list of current real-world user agents, used only to detect format changes
+REFERENCE_LIST = "https://jnrbsn.github.io/user-agents/user-agents.json"
+VERSION_RE = re.compile(r"(Chrome/|Firefox/|rv:|Edg/|Version/)[\d.]+")
 
 # Frozen platform tokens, as each browser sends them whatever the real OS version
 CHROME = {
@@ -118,9 +126,36 @@ def render(groups: list[tuple[str, list[str]]]) -> str:
     return "\n".join(lines)
 
 
+def shape(agent: str) -> str:
+    """The user agent with browser version numbers replaced, leaving only its format."""
+    return VERSION_RE.sub(lambda m: f"{m.group(1)}N", agent)
+
+
+def check_format(agents: list[str]) -> None:
+    """Warn when our templates no longer match the shapes real browsers send.
+
+    The informal list follows real-world strings, so a vendor's format change
+    shows up there; the official feeds still decide the versions.
+    """
+    try:
+        reference = get_json(REFERENCE_LIST)
+    except Exception as exc:  # the check is advisory; never block regeneration
+        print(f"Format check skipped: {REFERENCE_LIST}: {exc}")
+        return
+    ours = {shape(a) for a in agents}
+    theirs = {shape(a) for a in reference if isinstance(a, str)}
+    for label, missing in (("only ours", ours - theirs), ("only theirs", theirs - ours)):
+        for agent in sorted(missing):
+            print(f"WARNING format differs ({label}): {agent}")
+    if ours == theirs:
+        print(f"Format check: all {len(ours)} shapes match {REFERENCE_LIST}")
+
+
 def main() -> None:
-    OUTPUT.write_text(render(build()))
+    groups = build()
+    OUTPUT.write_text(render(groups))
     print(f"Wrote {OUTPUT}")
+    check_format([agent for _, agents in groups for agent in agents])
 
 
 if __name__ == "__main__":
