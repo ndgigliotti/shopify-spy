@@ -45,8 +45,14 @@ def _decimal(value: Any) -> Decimal | None:
         return None
 
 
-def _images(item: dict[str, Any]) -> list[str]:
-    return [u for u in item.get("image_urls") or [] if isinstance(u, str)]
+def _images(item: dict[str, Any], payload: dict[str, Any]) -> list[str]:
+    # image_urls is only filled when images are downloaded; fall back to the payload
+    urls = item.get("image_urls") or [
+        image.get("src")
+        for image in [*(payload.get("images") or []), payload.get("image")]
+        if isinstance(image, dict)
+    ]
+    return [u for u in urls if isinstance(u, str)]
 
 
 def summarize(item: dict[str, Any]) -> ItemSummary:
@@ -78,7 +84,7 @@ def _shopify(item: dict[str, Any]) -> ItemSummary:
         currency=None,
         html_url=html_url,
         store=store,
-        image_urls=_images(item),
+        image_urls=_images(item, data),
     )
 
 
@@ -104,5 +110,5 @@ def _woocommerce(item: dict[str, Any]) -> ItemSummary:
         currency=prices.get("currency_code"),
         html_url=item.get("permalink"),
         store=item.get("store"),
-        image_urls=_images(item),
+        image_urls=_images(item, item),
     )
