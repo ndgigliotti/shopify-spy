@@ -6,8 +6,8 @@ import logging
 import urllib.parse
 from typing import Any
 
-from shopify_spy.session import Emit, RequestFailed, StoreContext
-from shopify_spy.utils import next_page_url, normalize_url
+from shopify_spy._session import Emit, RequestFailed, StoreContext
+from shopify_spy._utils import next_page_url, normalize_url
 
 __all__ = ["get_api_url", "next_page_url", "run"]
 

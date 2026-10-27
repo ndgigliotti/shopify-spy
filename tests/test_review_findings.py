@@ -8,9 +8,9 @@ import time
 import warnings
 
 import shopify_spy as spy
-from shopify_spy.fetch import FakeFetcher, Seq
-from shopify_spy.images import ImageDownloader
-from shopify_spy.sitemap import parse
+from shopify_spy._fetch import FakeFetcher, Seq
+from shopify_spy._images import ImageDownloader
+from shopify_spy._sitemap import parse
 from tests.flow_support import (
     FAST,
     STORE,

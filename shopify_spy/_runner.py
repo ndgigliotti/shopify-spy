@@ -18,13 +18,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from shopify_spy import shopify, woocommerce
-from shopify_spy.fetch import FetcherFactory, HttpxFetcher
-from shopify_spy.images import RESULT_FIELD as IMAGES_FIELD
-from shopify_spy.images import ImageDownloader
-from shopify_spy.policy import IdentityPool, ThrottleSettings, retry_policy_for
-from shopify_spy.results import StoreResult, diagnose
-from shopify_spy.session import (
+from shopify_spy import _shopify as shopify
+from shopify_spy import _woocommerce as woocommerce
+from shopify_spy._fetch import FetcherFactory, HttpxFetcher
+from shopify_spy._images import RESULT_FIELD as IMAGES_FIELD
+from shopify_spy._images import ImageDownloader
+from shopify_spy._policy import IdentityPool, ThrottleSettings, retry_policy_for
+from shopify_spy._results import StoreResult, diagnose
+from shopify_spy._session import (
     Emit,
     HostRegistry,
     ShutdownRequested,

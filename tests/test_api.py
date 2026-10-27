@@ -10,7 +10,7 @@ import warnings
 import pytest
 
 import shopify_spy as spy
-from shopify_spy.fetch import FakeFetcher, FetchConnectionError, FetchTLSError
+from shopify_spy._fetch import FakeFetcher, FetchConnectionError, FetchTLSError
 from tests.flow_support import FAST, STORE, bulk_url, products, scrape, urlset
 
 OTHER = "https://other.test"

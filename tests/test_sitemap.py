@@ -5,11 +5,11 @@ import gzip
 
 import pytest
 
-from shopify_spy import sitemap
-from shopify_spy.fetch import FakeFetcher, FetchTimeout
-from shopify_spy.policy import IdentityPool, RetryPolicy, ThrottleSettings
-from shopify_spy.session import HostRegistry, StoreSession
-from shopify_spy.sitemap import iter_locs, parse
+from shopify_spy import _sitemap as sitemap
+from shopify_spy._fetch import FakeFetcher, FetchTimeout
+from shopify_spy._policy import IdentityPool, RetryPolicy, ThrottleSettings
+from shopify_spy._session import HostRegistry, StoreSession
+from shopify_spy._sitemap import iter_locs, parse
 
 NS = 'xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"'
 

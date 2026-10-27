@@ -1,12 +1,12 @@
 """URL helpers for the Shopify and WooCommerce adapters."""
 
-from shopify_spy.shopify import (
+from shopify_spy._shopify import (
     get_bulk_products_url,
     get_sitemap_url,
     next_bulk_page_url,
     product_handle,
 )
-from shopify_spy.woocommerce import get_api_url, next_page_url
+from shopify_spy._woocommerce import get_api_url, next_page_url
 
 
 def test_get_sitemap_url():

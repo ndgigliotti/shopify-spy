@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Self
 
-from shopify_spy.utils import canonicalize_url
+from shopify_spy._utils import canonicalize_url
 
 if TYPE_CHECKING:
     import httpx

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from shopify_spy.config import (
+from shopify_spy._config import (
     Config,
     OutputConfig,
     ScrapeConfig,

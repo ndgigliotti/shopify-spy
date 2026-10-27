@@ -13,9 +13,9 @@ import pytest
 import respx
 
 import shopify_spy as spy
-from shopify_spy.config import Config
-from shopify_spy.export import write_items
-from shopify_spy.fetch import FakeFetcher, HttpxFetcher, Identity, Request
+from shopify_spy._config import Config
+from shopify_spy._export import write_items
+from shopify_spy._fetch import FakeFetcher, HttpxFetcher, Identity, Request
 from tests.flow_support import FAST, STORE, bulk_url, products, scrape, urlset, woo_url
 
 

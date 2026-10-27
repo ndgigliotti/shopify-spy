@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from shopify_spy.export import ItemWriter, format_for, write_items, write_status
-from shopify_spy.results import StoreResult, StoreStatus
+from shopify_spy._export import ItemWriter, format_for, write_items, write_status
+from shopify_spy._results import StoreResult, StoreStatus
 
 FIXTURES = Path(__file__).parent / "fixtures" / "exporters"
 ITEMS = json.loads((FIXTURES / "items.json").read_text())

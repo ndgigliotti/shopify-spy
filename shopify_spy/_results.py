@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from shopify_spy.session import StoreStats
+    from shopify_spy._session import StoreStats
 
 
 class StoreStatus(StrEnum):

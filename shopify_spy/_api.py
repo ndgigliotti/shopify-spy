@@ -21,10 +21,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from shopify_spy.policy import ThrottleSettings
-from shopify_spy.results import RunResult, ScrapeFailed, StoreResult, run_finish_reason
-from shopify_spy.runner import RunConfig, Runner
-from shopify_spy.utils import is_valid_url, normalize_url, origin
+from shopify_spy._policy import ThrottleSettings
+from shopify_spy._results import RunResult, ScrapeFailed, StoreResult, run_finish_reason
+from shopify_spy._runner import RunConfig, Runner
+from shopify_spy._utils import is_valid_url, normalize_url, origin
 
 RUNNING_LOOP_ERROR = (
     "An event loop is already running (e.g. Jupyter or async code). "

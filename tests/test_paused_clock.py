@@ -4,8 +4,8 @@ import asyncio
 import time
 
 import shopify_spy as spy
-from shopify_spy.api import _PausedClockLoop
-from shopify_spy.fetch import FakeFetcher, FetchTimeout
+from shopify_spy._api import _PausedClockLoop
+from shopify_spy._fetch import FakeFetcher, FetchTimeout
 from tests.flow_support import STORE, bulk_url, products, scrape
 
 SLOW = "https://slow.test"

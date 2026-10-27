@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import shopify_spy as spy
-from shopify_spy.fetch import FakeFetcher
+from shopify_spy._fetch import FakeFetcher
 
 STORE = "https://shop.test"
 WOO_API = "/wp-json/wc/store/v1/products"
