@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -377,7 +378,7 @@ def test_status_file_lists_skipped_urls(tmp_path):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -394,7 +395,7 @@ def test_peek_zero_items_summary_goes_to_stderr(tmp_path, capsys):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -437,7 +438,7 @@ def test_run_spider_passes_limit_to_woocommerce(tmp_path):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_process_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -455,7 +456,7 @@ def test_run_spider_passes_limit_to_crawl(tmp_path):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_process_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -481,6 +482,35 @@ def _mock_multi_crawler_process(stats_list):
     return proc
 
 
+@pytest.mark.parametrize("foreign_project", [False, True])
+def test_run_spider_loads_package_settings_from_any_dir(tmp_path, monkeypatch, foreign_project):
+    """Installed copies load our settings without the repo's scrapy.cfg, and ignore another
+    Scrapy project's scrapy.cfg or SCRAPY_SETTINGS_MODULE."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("SCRAPY_SETTINGS_MODULE", raising=False)
+    if foreign_project:
+        (tmp_path / "scrapy.cfg").write_text("[settings]\ndefault = otherproject.settings\n")
+        monkeypatch.setenv("SCRAPY_SETTINGS_MODULE", "otherproject.settings")
+    config = Config(output=OutputConfig(dir=tmp_path / "out"))
+
+    with (
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process([{"item_scraped_count": 1}])
+        run_spider(["https://store.com"], config)
+
+    assert os.environ.get("SCRAPY_SETTINGS_MODULE") == (
+        "otherproject.settings" if foreign_project else None
+    )
+    settings = mock_cls.call_args.args[0]
+    assert settings["BOT_NAME"] == "shopify_spy"
+    middlewares = settings.getdict("DOWNLOADER_MIDDLEWARES")
+    assert "shopify_spy.middlewares.StoreResponseStats" in middlewares
+    assert "shopify_spy.extensions.NoItemTimeout" in settings.getdict("EXTENSIONS")
+    assert 403 in settings.getlist("RETRY_HTTP_CODES")
+
+
 # --- Per-URL breakdown tests (multi-URL) ---
 
 
@@ -495,7 +525,7 @@ def test_multi_url_success_shows_per_url_counts(tmp_path, capsys):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -515,7 +545,7 @@ def test_multi_url_crawls_each_url_with_its_own_crawler(tmp_path):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -555,7 +585,7 @@ def test_multi_url_crawler_that_failed_to_start(tmp_path, capsys):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -580,7 +610,7 @@ def test_crawler_that_failed_after_getting_stats(tmp_path, capsys):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -608,7 +638,7 @@ def test_crawler_that_failed_after_scraping_items(tmp_path, capsys):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -634,7 +664,7 @@ def test_per_store_line_escapes_markup(tmp_path, capsys):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -654,7 +684,7 @@ def test_peek_reports_failed_store_on_stderr(tmp_path, capsys):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -683,7 +713,7 @@ def test_single_url_success_no_per_url_breakdown(tmp_path, capsys):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -706,7 +736,7 @@ def test_multi_url_failure_shows_per_url_status(tmp_path, capsys):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -726,7 +756,7 @@ def test_single_url_failure_no_per_url_breakdown(tmp_path, capsys):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -748,7 +778,7 @@ def test_no_responses_not_reported_as_robots(tmp_path, capsys):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -801,7 +831,7 @@ def test_robots_txt_404_does_not_hide_timeout(tmp_path, capsys):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -824,7 +854,7 @@ def test_summary_has_a_hint_per_distinct_problem(tmp_path, capsys):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -852,7 +882,7 @@ def test_timeout_shows_bail_hint(tmp_path, capsys):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -878,7 +908,7 @@ def test_timeout_does_not_hide_403(tmp_path, capsys):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -949,7 +979,7 @@ def test_robots_block_not_blamed_for_other_store(tmp_path, capsys):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -1016,7 +1046,7 @@ def test_status_file_written_on_success(tmp_path):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -1043,7 +1073,7 @@ def test_status_file_written_on_failure(tmp_path):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -1069,7 +1099,7 @@ def test_status_file_multi_url(tmp_path):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -1089,7 +1119,7 @@ def test_no_status_file_in_peek_mode(tmp_path):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -1109,7 +1139,7 @@ def test_log_file_setting_configured(tmp_path):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -1129,7 +1159,7 @@ def test_no_log_file_in_peek_mode(tmp_path):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
@@ -1146,7 +1176,7 @@ def test_status_file_log_path_matches(tmp_path):
 
     mock_settings = MagicMock()
     with (
-        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("shopify_spy.cli._load_settings", return_value=mock_settings),
         patch("scrapy.crawler.CrawlerProcess") as mock_cls,
         _patch_log_dir(tmp_path),
     ):
