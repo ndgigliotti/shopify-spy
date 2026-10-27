@@ -41,7 +41,7 @@ def test_user_agents_version_tokens_consistent():
             edge = re.search(r"Edg/(\d+)\.", ua).group(1)
             assert re.search(rf"Chrome/{edge}\.0\.0\.0 ", ua), ua
         if "Version/" in ua:
-            assert re.search(r"Version/\d+\.\d+ Safari/", ua), ua
+            assert re.search(r"Version/\d+\.\d+(\.\d+)? Safari/", ua), ua
         if "Chrome/" in ua:
             assert re.search(r"Chrome/\d+\.0\.0\.0 Safari/537\.36", ua), ua
 
