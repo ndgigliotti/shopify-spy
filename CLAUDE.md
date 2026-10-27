@@ -37,6 +37,8 @@ Tests marked `e2e` (`tests/test_e2e_diagnosis.py`) run the CLI against local HTT
 uv run pytest -m e2e
 ```
 
+Before a release, `scripts/contract_test.py` diffs the CLI against the previous release on local stores (usage in its docstring).
+
 ## Git Conventions
 
 Feature branches: `feat/<description>`
