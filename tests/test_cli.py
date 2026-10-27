@@ -319,6 +319,9 @@ def test_cli_scrape_skips_invalid_urls():
         "//store.com",
         "https://[::1]:8443",
         "store.com/collections/all?ref=https://x.com",
+        "http://localhost:8000",
+        "https://127.0.0.1",
+        "https://bücher.de",
     ],
 )
 def test_is_valid_url_accepts(url):
@@ -338,10 +341,62 @@ def test_is_valid_url_accepts(url):
         "http://exa mple.com",
         "http:/store.com",
         "https://store.com:0",
+        "https://sto\x00re.com",
+        "https://.",
+        "https://@store.com",
+        "https://user:pass@store.com",
+        "https://store.com\\",
+        "https://-store.com",
     ],
 )
 def test_is_valid_url_rejects(url):
     assert not is_valid_url(url)
+
+
+def test_cli_scrape_warning_escapes_markup():
+    """A URL that looks like Rich markup is printed literally instead of crashing."""
+    with patch("shopify_spy.cli.run_spider") as mock_run:
+        result = runner.invoke(app, ["scrape", "https://[/bad]", "store.com"])
+
+    assert result.exit_code == 0
+    assert "Skipping invalid URL: https://[/bad]" in strip_ansi(result.stderr)
+    assert mock_run.call_args.kwargs["skipped_urls"] == ["https://[/bad]"]
+
+
+def test_status_file_lists_skipped_urls(tmp_path):
+    """Skipped invalid URLs are recorded in the status file."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process([{"item_scraped_count": 2}])
+        run_spider(["https://store.com"], config, skipped_urls=["https://[bad"])
+
+    data = json.loads(next(tmp_path.glob("status/*_status.json")).read_text())
+    assert data["urls"][1] == {"url": "https://[bad", "items": 0, "status": "invalid URL"}
+
+
+def test_peek_zero_items_summary_goes_to_stderr(tmp_path, capsys):
+    """With --peek, stdout is reserved for JSONL, so the zero-item summary uses stderr."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process([{}])
+        with pytest.raises((SystemExit, typer.Exit)):
+            run_spider(["https://down.invalid"], config, peek=True)
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Scraped 0 items" in captured.err
 
 
 def test_cli_scrape_all_urls_invalid():
