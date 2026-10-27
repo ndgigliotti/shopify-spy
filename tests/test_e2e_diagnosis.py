@@ -1,8 +1,8 @@
 """End-to-end diagnosis tests: run the real CLI against local HTTP servers.
 
-Each server port plays one store scenario, so the diagnosis is checked against the
-stats Scrapy actually records (robots.txt retries, redirects, fallbacks), not
-hand-written ones. Run with: uv run pytest -m e2e
+Each server port plays one store scenario, so the diagnosis is checked against real
+HTTP traffic (robots.txt retries, redirects, fallbacks), not hand-written stats.
+Run with: uv run pytest -m e2e
 """
 
 import http.server
@@ -16,9 +16,6 @@ import time
 import pytest
 
 pytestmark = pytest.mark.e2e
-
-# Both CLIs run the same scenarios until the httpx engine replaces Scrapy
-CLI_MODULES = ["shopify_spy.cli", "shopify_spy._cli_next"]
 
 BAIL = 4
 DISALLOW_ALL = b"User-agent: *\nDisallow: /\n"
@@ -116,17 +113,12 @@ def stores():
         server.shutdown()
 
 
-@pytest.fixture(params=CLI_MODULES)
-def cli_module(request):
-    return request.param
-
-
-def _run(tmp_path, cli_module, urls, *args):
+def _run(tmp_path, urls, *args):
     result = subprocess.run(
         [
             sys.executable,
             "-m",
-            cli_module,
+            "shopify_spy.cli",
             "scrape",
             *urls,
             "--output",
@@ -158,15 +150,15 @@ EXPECTED_SHOPIFY = {
 }
 
 
-def test_shopify_diagnosis(tmp_path, stores, cli_module):
+def test_shopify_diagnosis(tmp_path, stores):
     urls = {scenario: stores(scenario) for scenario in EXPECTED_SHOPIFY}
-    statuses = _run(tmp_path, cli_module, list(urls.values()))
+    statuses = _run(tmp_path, list(urls.values()))
     actual = {scenario: statuses[url] for scenario, url in urls.items()}
     assert actual == EXPECTED_SHOPIFY
 
 
-def test_woocommerce_single_request_robots_redirect(tmp_path, stores, cli_module):
+def test_woocommerce_single_request_robots_redirect(tmp_path, stores):
     """WooCommerce makes one API request, so robots.txt forbids exactly one request."""
     url = stores("robots_redirect_disallow")
-    statuses = _run(tmp_path, cli_module, [url], "--platform", "woocommerce")
+    statuses = _run(tmp_path, [url], "--platform", "woocommerce")
     assert statuses[url] == "blocked by robots.txt"

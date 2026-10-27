@@ -1,15 +1,10 @@
-import logging
+"""URL and data helpers shared by the library and the CLI."""
+
 import os
 import re
 import urllib.parse
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    # Type-only: the CLI imports this module and defers Scrapy to keep startup fast
-    import scrapy
-
-logger = logging.getLogger(__name__)
+from typing import Any
 
 # A leading "name:" is a scheme unless a port number (store.com:8080) or nothing
 # (store.com:) follows
@@ -27,8 +22,8 @@ def normalize_url(url: str) -> urllib.parse.ParseResult:
 def is_valid_url(url: str) -> bool:
     """Return True if the URL is an http(s) URL with a host and a usable port.
 
-    This rejects what would make a spider fail or request nonsense; it doesn't try
-    to decide which hostnames DNS will resolve.
+    This rejects what can't be requested; it doesn't try to decide which hostnames
+    DNS will resolve.
     """
     if any(c.isspace() or not c.isprintable() or c == "\\" for c in url):
         return False
@@ -40,7 +35,7 @@ def is_valid_url(url: str) -> bool:
     if parsed.scheme not in ("http", "https") or port == 0 or "@" in parsed.netloc:
         return False
     host = parsed.hostname or ""
-    # "%" is an IPv6 zone ID, which Twisted can't connect to
+    # "%" is an IPv6 zone ID, which can't be part of a request URL's host
     return any(c.isalnum() for c in host) and "%" not in host
 
 
@@ -89,45 +84,3 @@ def find_all_values(key: str, obj: Any) -> Iterator[Any]:
     elif isinstance(obj, list):
         for item in obj:
             yield from find_all_values(key, item)
-
-
-def uri_params(params: dict[str, Any], spider: "scrapy.Spider") -> dict[str, Any]:
-    """Returns URI parameters as dict."""
-    return {**params, "spider_name": spider.name}
-
-
-def load_store_urls(url: str | None, url_file: str | None) -> list[str]:
-    """Load store URLs from a single URL or a file of URLs (one per line).
-
-    Invalid URLs are skipped with a warning, since one that fails in a spider's
-    __init__ stops the whole crawl.
-    """
-    if url:
-        urls = [url.strip()]
-    elif url_file:
-        urls = read_url_file(url_file)
-    else:
-        return []
-    valid, invalid = split_valid_urls(urls)
-    for u in invalid:
-        logger.warning("Skipping invalid URL: %s", u)
-    return valid
-
-
-def as_bool(value: Any) -> bool:
-    """Interpret a string representation of a truth value as True or False.
-
-    True values are 'y', 'yes', 't', 'true', 'on', and '1'; false values
-    are 'n', 'no', 'f', 'false', 'off', '0', 'none', 'nan', 'na', and 'null'.
-    Case insensitive. Raises ValueError if `value` is anything else. Expects
-    a string or something castable as a string.
-
-    Inspired by the former distutils.util.strtobool (removed in Python 3.12).
-    """
-    str_value = str(value).lower()
-    if str_value in {"y", "yes", "t", "true", "on", "1"}:
-        return True
-    elif str_value in {"n", "no", "f", "false", "off", "0", "none", "nan", "na", "null"}:
-        return False
-    else:
-        raise ValueError(f"Could not interpret '{value}' as bool.")

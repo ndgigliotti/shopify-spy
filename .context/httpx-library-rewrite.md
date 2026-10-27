@@ -253,13 +253,13 @@ import shopify_spy as spy
 
 # 1. Script: data plus failures (README hero example)
 run = spy.scrape(["a.com", "b.com"], on_failure="warn")
-spy.write_items(run, "products.jsonl")        # streams any iterable
+spy.write_items(run, "products.jsonl")  # streams any iterable
 for s in run.result.failed:
     print(s.input_url, s.status, s.hint)
 
 # 2. Learn the schema
-item = spy.scrape("a.com").first()   # raises ScrapeFailed with diagnostics if 0 items
-print(spy.summarize(item))           # same fields on both platforms
+item = spy.scrape("a.com").first()  # raises ScrapeFailed with diagnostics if 0 items
+print(spy.summarize(item))  # same fields on both platforms
 
 # 3. Filter across platforms, write CSV
 rows = (spy.summarize(i) for i in spy.scrape(urls))
@@ -472,38 +472,43 @@ case) and `nest_asyncio` (patches asyncio internals, unmaintained).
 
 ```python
 @dataclass(frozen=True)
-class Identity:            # what a request presents as
+class Identity:  # what a request presents as
     user_agent: str | None
     headers: Mapping[str, str]
-    impersonate: str | None = None   # for curl_cffi later
+    impersonate: str | None = None  # for curl_cffi later
+
 
 @dataclass(frozen=True)
 class Request:
     method: str
     url: str
     identity: Identity
-    timeout: float                                   # from request_timeout
+    timeout: float  # from request_timeout
     headers: Mapping[str, str] = field(default_factory=dict)
     body: bytes | None = None
     cookies: Mapping[str, str] = field(default_factory=dict)
 
+
 @dataclass(frozen=True)
 class Response:
-    url: str                     # final URL
+    url: str  # final URL
     status: int
     headers: Mapping[str, str]
     body: bytes
-    latency: float               # seconds to headers
+    latency: float  # seconds to headers
     set_cookies: Mapping[str, str]
+
 
 @dataclass(frozen=True)
 class FetcherCapabilities:
-    applies_identity_headers: bool   # False for browsers that bring their own
-    can_impersonate: bool            # curl_cffi
-    renders_js: bool                 # browsers
+    applies_identity_headers: bool  # False for browsers that bring their own
+    can_impersonate: bool  # curl_cffi
+    renders_js: bool  # browsers
+
 
 class Fetcher(Protocol):
     capabilities: FetcherCapabilities
+
     async def __aenter__(self) -> Self: ...
     async def __aexit__(self, *exc) -> None: ...
     async def fetch(self, request: Request) -> Response: ...
