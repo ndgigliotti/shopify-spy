@@ -359,7 +359,7 @@ def _write_status_file(
     for url, crawler in zip(urls, crawlers):
         items = crawler.stats.get_value("item_scraped_count", 0)
         failed = crawler.stats.get_value(CRAWLER_FAILED_STAT, False)
-        status = "ok" if items > 0 and not failed else _diagnose_crawler(crawler, config)
+        status = "ok" if items > 0 and not failed else _diagnose_crawler(crawler)
         url_entries.append({"url": url, "items": items, "status": status})
 
     data = {
@@ -548,7 +548,7 @@ def run_spider(
                 console.print(f"  Log: {log_file}")
             if multi:
                 for url, c in zip(urls, crawlers):
-                    console.print(f"  {escape(_host(url))}: {_diagnose_crawler(c, config)}")
+                    console.print(f"  {escape(_host(url))}: {_diagnose_crawler(c)}")
         if crawler_failures:
             (err_console if peek else console).print(
                 f"[yellow]Warning: {crawler_failures} store(s) failed with an error.[/yellow]"
@@ -556,7 +556,7 @@ def run_spider(
         return
 
     # Diagnose why nothing was scraped
-    statuses = [_diagnose_crawler(c, config) for c in crawlers]
+    statuses = [_diagnose_crawler(c) for c in crawlers]
 
     console.print("[yellow]Warning: Scraped 0 items.[/yellow]")
     if multi:
@@ -640,7 +640,7 @@ def _store_status_count(crawler: object, status: int) -> int:
     return crawler.stats.get_value(STORE_RESPONSE_STATUS_COUNT.format(status), 0)
 
 
-def _diagnose_crawler(crawler: object, config: Config) -> str:
+def _diagnose_crawler(crawler: object) -> str:
     """Return a short status string for a single crawler.
 
     Specific causes are checked before the timeout: a blocked store often keeps
@@ -652,17 +652,18 @@ def _diagnose_crawler(crawler: object, config: Config) -> str:
     items = crawler.stats.get_value("item_scraped_count", 0)
     if items > 0:
         return f"{items} items"
-    # A 403 the UA swap recovered from, or the products.json 404 that triggers the
-    # sitemap fallback, is not the reason a store that also got a 2xx came up empty
-    succeeded = crawler.stats.get_value(STORE_SUCCESS_COUNT, 0) > 0
-    if not succeeded and _store_status_count(crawler, 403) > 0:
-        return "403 Forbidden"
-    if not succeeded and _store_status_count(crawler, 404) > 0:
-        return "404 Not Found"
-    resp = crawler.stats.get_value("downloader/response_count", 0)
-    robots = crawler.stats.get_value("robotstxt/response_count", 0)
-    if resp > 0 and resp == robots and config.network.respect_robots_txt:
-        return "blocked by robots.txt"
+    # Blocking causes only count if the store never answered with a 2xx: a 403 the UA
+    # swap recovered from, or the products.json 404 that triggers the sitemap
+    # fallback, is not why a store that also got a 2xx came up empty
+    if crawler.stats.get_value(STORE_SUCCESS_COUNT, 0) == 0:
+        # robots.txt first: when it stopped the store's requests, any 403/404 came
+        # from fallbacks it allowed
+        if crawler.stats.get_value("robotstxt/forbidden", 0) > 0:
+            return "blocked by robots.txt"
+        if _store_status_count(crawler, 403) > 0:
+            return "403 Forbidden"
+        if _store_status_count(crawler, 404) > 0:
+            return "404 Not Found"
     if crawler.stats.get_value("finish_reason", "") == NO_ITEM_TIMEOUT_REASON:
         return "timed out"
     if crawler.stats.get_value(STORE_RESPONSE_COUNT, 0) == 0:
