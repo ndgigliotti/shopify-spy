@@ -462,6 +462,55 @@ def test_crawler_that_failed_after_getting_stats(tmp_path, capsys):
     assert data["urls"][0]["status"] == "failed"
 
 
+def test_crawler_that_failed_after_scraping_items(tmp_path, capsys):
+    """A crawler that raised after scraping items is reported as failed, not ok."""
+    from scrapy.statscollectors import MemoryStatsCollector
+
+    config = Config(output=OutputConfig(dir=tmp_path))
+    partial = MagicMock(settings=Settings())
+    partial.stats = MemoryStatsCollector(partial)
+    partial.stats.set_value("item_scraped_count", 3)
+    partial.stats.set_value("finish_reason", "shutdown")
+    crawlers = [_make_crawler({"item_scraped_count": 4}), partial]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_process_with_failure(crawlers, 1)
+        run_spider(["https://store1.com", "https://store2.com"], config)
+
+    output = capsys.readouterr().out
+    assert "store2.com: failed" in output
+    assert "1 store(s) failed with an error" in output
+    data = json.loads(next(tmp_path.glob("status/*_status.json")).read_text())
+    assert data["urls"][1] == {"url": "https://store2.com", "items": 3, "status": "failed"}
+    # Scrapy's own finish_reason is kept
+    assert partial.stats.get_value("finish_reason") == "shutdown"
+
+
+def test_per_store_line_escapes_markup(tmp_path, capsys):
+    """A malformed URL with brackets is printed literally, not parsed as Rich markup."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    crawlers = [
+        _make_crawler({"item_scraped_count": 1}),
+        MagicMock(stats=None, settings=Settings()),
+    ]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_process_with_failure(crawlers, 1)
+        run_spider(["https://store1.com", "https://[/bad]"], config)
+
+    assert "https://[/bad]: failed" in capsys.readouterr().out
+
+
 def test_single_url_success_no_per_url_breakdown(tmp_path, capsys):
     """Single-URL success should NOT print a per-URL line."""
     config = Config(output=OutputConfig(dir=tmp_path))
