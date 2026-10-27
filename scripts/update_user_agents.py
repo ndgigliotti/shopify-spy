@@ -17,7 +17,8 @@ which is how a vendor's format change gets noticed.
 
 Exit status: 0 when the file is current or was updated (stdout says which;
 NOTICE lines need a human look but don't block), 2 when a template no longer
-matches real browsers (WARNING lines; nothing is written).
+matches real browsers or a string's version tokens disagree (WARNING lines;
+nothing is written).
 """
 
 from __future__ import annotations
@@ -30,7 +31,9 @@ import sys
 import urllib.request
 from pathlib import Path
 
-SAFARI_VERSION = "27"
+# major.minor, as Safari always sends it (jnrbsn's list drops the ".0"; a bare
+# "Version/27" matches no real browser)
+SAFARI_VERSION = "27.0"
 
 OUTPUT = Path(__file__).resolve().parent.parent / "shopify_spy" / "_user_agents.py"
 CHROME_API = (
@@ -149,6 +152,31 @@ def safari_major(agents: list[str]) -> int | None:
     return max(versions, default=None)
 
 
+def consistency_errors(agents: list[str]) -> list[str]:
+    """Tokens a real browser always sends together; a mismatch is an easy fake-UA tell.
+
+    Checked here rather than against the reference list, which itself drops
+    Safari's minor version.
+    """
+    errors = []
+    for a in agents:
+        chrome = re.search(r"Chrome/([\d.]+) Safari/537\.36", a)
+        if "Chrome/" in a and not (chrome and re.fullmatch(r"\d+\.0\.0\.0", chrome.group(1))):
+            errors.append(f"Chrome not in reduced 'Chrome/N.0.0.0 Safari/537.36' form: {a}")
+        if "Edg/" in a:
+            edge = re.search(r"Edg/(\d+)\.0\.0\.0$", a)
+            if not (edge and chrome and chrome.group(1).split(".")[0] == edge.group(1)):
+                errors.append(f"Edge major doesn't match its Chrome major: {a}")
+        if "Firefox/" in a:
+            rv, ff = re.search(r"rv:([\d.]+)\)", a), re.search(r"Firefox/([\d.]+)$", a)
+            if not (rv and ff and rv.group(1) == ff.group(1)):
+                errors.append(f"Firefox rv: doesn't equal its Firefox/ version: {a}")
+        # major.minor, sometimes with a patch (Version/26.0, Version/26.6.1); never bare
+        if "Version/" in a and not re.search(r"Version/\d+\.\d+(\.\d+)? Safari/", a):
+            errors.append(f"Safari Version/ isn't major.minor: {a}")
+    return errors
+
+
 def check_format(agents: list[str], reference: list[str]) -> tuple[list[str], list[str]]:
     """Compare our formats with real-world ones: (warnings, notices).
 
@@ -195,6 +223,7 @@ def main() -> int:
         warnings, notices = check_format(agents, reference)
         if not warnings and not notices:
             print(f"Format check: every format matches {REFERENCE_LIST}")
+    warnings += [f"WARNING {e}" for e in consistency_errors(agents)]
     for line in [*warnings, *notices]:
         print(line)
     if warnings:
