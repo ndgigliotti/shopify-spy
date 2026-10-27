@@ -3,6 +3,7 @@
 import logging
 import random
 
+from shopify_spy.constants import STORE_RESPONSE_COUNT, STORE_RESPONSE_STATUS_COUNT
 from shopify_spy.user_agents import USER_AGENTS
 
 logger = logging.getLogger(__name__)
@@ -34,4 +35,27 @@ class UserAgentMiddleware:
     def process_response(self, request, response):
         if response.status in SWAP_ON_STATUSES:
             request.meta["retry_reason"] = response.status
+        return response
+
+
+class StoreResponseStats:
+    """Count responses to the store's own requests, excluding robots.txt traffic.
+
+    Scrapy's downloader stats also count the robots.txt fetch, including its retries
+    and redirect hops, so they can't tell "only robots.txt answered" from "the store
+    answered". RobotsTxtMiddleware marks its request with ``dont_obey_robotstxt``,
+    and retries and redirects copy that meta.
+    """
+
+    def __init__(self, stats):
+        self.stats = stats
+
+    @classmethod
+    def from_crawler(cls, crawler):
+        return cls(crawler.stats)
+
+    def process_response(self, request, response):
+        if not request.meta.get("dont_obey_robotstxt"):
+            self.stats.inc_value(STORE_RESPONSE_COUNT)
+            self.stats.inc_value(STORE_RESPONSE_STATUS_COUNT.format(response.status))
         return response
