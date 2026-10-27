@@ -25,6 +25,7 @@ from shopify_spy._fetch import (
     Response,
 )
 from shopify_spy._policy import (
+    RATE_LIMIT_STATUSES,
     ROBOTS_TOKEN,
     HostSlot,
     IdentityPool,
@@ -357,8 +358,9 @@ class StoreSession:
                     raise RequestFailed(url, error) from error
                 retry_after = None
                 reason = name
-            delay = self.retry.delay(attempt, retry_after, self._retry_cap())
-            if response is not None and response.status == 429:
+            rate_limited = response is not None and response.status in RATE_LIMIT_STATUSES
+            delay = self.retry.delay(attempt, retry_after, self._retry_cap(), rate_limited)
+            if rate_limited:
                 slot.pause(delay)
             attempt += 1
             logger.info("Retrying %s (attempt %d, %s) in %.1fs", url, attempt, reason, delay)

@@ -337,7 +337,7 @@ async def test_429_pauses_the_whole_host():
     session, _ = make_session(
         {f"{STORE}/a": Seq([(429, ""), (200, "ok")]), f"{STORE}/b": (200, "ok")},
         robots=False,
-        retry=RetryPolicy(retries=1, backoff=True, base_delay=0.6),  # waits 0.3-0.9s
+        retry=RetryPolicy(retries=1, backoff=True, rate_limit_base_delay=0.6),  # waits 0.3-0.9s
     )
     loop = asyncio.get_running_loop()
     first = asyncio.create_task(get(session, f"{STORE}/a"))

@@ -135,6 +135,19 @@ async def test_pause_holds_requests_and_slows_the_throttle():
     assert s.delay == 0.5  # doubled, clamped to max_delay
 
 
+async def test_pause_sets_a_floor_that_autothrottle_keeps():
+    # Fast responses after a rate limit must not bring back the refused rate
+    s = slot(start_delay=1.0, max_delay=60.0)
+    s.delay = 0.2
+    s.pause(0)
+    assert s.delay == s.floor == 1.0  # doubled 0.4, raised to start_delay
+    for _ in range(10):
+        s.adjust(latency=0.05, status=200)
+    assert s.delay == 1.0
+    s.pause(0)
+    assert s.floor == 2.0  # each rate limit doubles it again
+
+
 async def test_pause_without_throttle_keeps_zero_delay():
     s = slot(enabled=False)
     s.pause(0.05)
@@ -200,6 +213,18 @@ def test_retry_delay_jitter_range():
 def test_retry_delay_honors_retry_after(no_jitter):
     retry = RetryPolicy(base_delay=0.5)
     assert retry.delay(0, 10.0, None) == 10.0
+
+
+def test_rate_limited_retry_waits_longer_without_retry_after(no_jitter):
+    retry = RetryPolicy(base_delay=0.5, rate_limit_base_delay=5.0)
+    assert retry.delay(0, None, None, rate_limited=True) == 5.0
+    assert retry.delay(2, None, None, rate_limited=True) == 20.0
+    assert retry.delay(0, None, None) == 0.5  # other errors keep the short backoff
+
+
+def test_rate_limited_retry_follows_retry_after(no_jitter):
+    retry = RetryPolicy(base_delay=0.5, rate_limit_base_delay=5.0)
+    assert retry.delay(0, 1.0, None, rate_limited=True) == 1.0  # the server knows best
 
 
 def test_retry_delay_capped_by_max_delay(no_jitter):
