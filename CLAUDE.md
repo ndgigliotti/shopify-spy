@@ -48,6 +48,12 @@ Scrapy defaults: autothrottle on, 16 concurrent requests per domain, robots.txt 
 uv run pytest -m integration
 ```
 
+Tests marked `e2e` (`tests/test_e2e_diagnosis.py`) run the CLI against local HTTP servers that each play one store scenario (robots.txt blocks, redirects, retried 403s, hangs) and check the per-store status Scrapy's real stats produce. They take about half a minute and are also deselected by default. Run them after changing the diagnosis or `StoreResponseStats`:
+
+```bash
+uv run pytest -m e2e
+```
+
 ## Git Conventions
 
 Feature branches: `feat/<description>`

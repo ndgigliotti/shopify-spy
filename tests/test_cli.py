@@ -4,6 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import typer
+from scrapy.settings import Settings
+from twisted.internet import defer
 
 from shopify_spy.cli import (
     Platform,
@@ -15,6 +17,7 @@ from shopify_spy.cli import (
     run_spider,
 )
 from shopify_spy.config import Config, NetworkConfig, OutputConfig, ScrapeConfig
+from shopify_spy.utils import is_valid_url
 
 from .conftest import runner, strip_ansi
 
@@ -93,34 +96,34 @@ def test_cli_scrape_no_url():
     """Test that scrape fails when no URL provided (non-interactive)."""
     result = runner.invoke(app, ["scrape"])
     assert result.exit_code == 1
-    assert "No URLs provided" in strip_ansi(result.stdout)
+    assert "No URLs provided" in strip_ansi(result.stderr)
 
 
 def test_cli_scrape_warns_collections_woocommerce():
     """--collections with --platform woocommerce warns about unsupported flag."""
     result = runner.invoke(app, ["scrape", "--platform", "woocommerce", "--collections"])
-    output = strip_ansi(result.stdout)
+    output = strip_ansi(result.stderr)
     assert "--collections has no effect with WooCommerce" in output
 
 
 def test_cli_scrape_warns_no_products_woocommerce():
     """--no-products with --platform woocommerce warns about unsupported flag."""
     result = runner.invoke(app, ["scrape", "--platform", "woocommerce", "--no-products"])
-    output = strip_ansi(result.stdout)
+    output = strip_ansi(result.stderr)
     assert "--no-products has no effect with WooCommerce" in output
 
 
 def test_cli_scrape_no_warn_shopify_collections():
     """--collections with shopify (default) should not produce a warning."""
     result = runner.invoke(app, ["scrape", "--collections"])
-    output = strip_ansi(result.stdout)
+    output = strip_ansi(result.stderr)
     assert "--collections has no effect" not in output
 
 
 def test_cli_scrape_no_warn_woocommerce_without_flags():
     """--platform woocommerce without --collections/--no-products should not warn."""
     result = runner.invoke(app, ["scrape", "--platform", "woocommerce"])
-    output = strip_ansi(result.stdout)
+    output = strip_ansi(result.stderr)
     assert "has no effect" not in output
 
 
@@ -276,10 +279,142 @@ def test_get_urls_from_file(tmp_path):
     assert urls == ["https://store1.com", "https://store2.com"]
 
 
+def test_get_urls_blank_arguments_fall_back_to_file(tmp_path):
+    url_file = tmp_path / "urls.txt"
+    url_file.write_text("store.com\n")
+    assert get_urls(["", " "], url_file) == ["store.com"]
+
+
+def test_get_urls_strips_arguments():
+    assert get_urls([" store.com ", "  "], None) == ["store.com"]
+
+
+def test_cli_scrape_flag_conflict_checked_before_urls():
+    result = runner.invoke(app, ["scrape", "-v", "-q", "https://[bad"])
+    assert result.exit_code == 1
+    assert "Cannot use both --verbose and --quiet" in strip_ansi(result.stderr)
+    assert "Skipping invalid URL" not in strip_ansi(result.stderr)
+
+
 def test_get_urls_empty():
     """Test that empty input returns empty list (non-interactive)."""
     urls = get_urls(None, None)
     assert urls == []
+
+
+def test_cli_scrape_skips_invalid_urls():
+    """Malformed URLs are skipped with a warning; valid ones are still scraped."""
+    with patch("shopify_spy.cli.run_spider") as mock_run:
+        result = runner.invoke(app, ["scrape", "https://[bad", "https://", "store.com"])
+
+    stderr = strip_ansi(result.stderr)
+    assert "Skipping invalid URL: https://[bad" in stderr
+    assert "Skipping invalid URL: https://" in stderr
+    assert "Skipping" not in result.stdout
+    assert mock_run.call_args.args[0] == ["store.com"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "store.com",
+        "https://store.com",
+        "http://store.com/collections/all",
+        "store.com:8080",
+        "localhost:8080",
+        "//store.com",
+        "https://[::1]:8443",
+        "store.com/collections/all?ref=https://x.com",
+        "http://localhost:8000",
+        "https://127.0.0.1",
+        "https://bücher.de",
+        "https://my_store.example.com",
+        "store.com:",
+    ],
+)
+def test_is_valid_url_accepts(url):
+    assert is_valid_url(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://[bad",
+        "https://",
+        "http://:80",
+        "://store.com",
+        "https://store.com:99999",
+        "https://store.com:abc",
+        "ftp://store.com",
+        "http://exa mple.com",
+        "http:/store.com",
+        "https://store.com:0",
+        "https://sto\x00re.com",
+        "https://.",
+        "https://@store.com",
+        "https://user:pass@store.com",
+        "https://store.com\\",
+        "https://[fe80::1%25eth0]",
+    ],
+)
+def test_is_valid_url_rejects(url):
+    assert not is_valid_url(url)
+
+
+def test_cli_scrape_warning_escapes_markup():
+    """A URL that looks like Rich markup is printed literally instead of crashing."""
+    with patch("shopify_spy.cli.run_spider") as mock_run:
+        result = runner.invoke(app, ["scrape", "https://[/bad]", "store.com"])
+
+    assert result.exit_code == 0
+    assert "Skipping invalid URL: https://[/bad]" in strip_ansi(result.stderr)
+    assert mock_run.call_args.kwargs["skipped_urls"] == ["https://[/bad]"]
+
+
+def test_status_file_lists_skipped_urls(tmp_path):
+    """Skipped invalid URLs are recorded in the status file."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process([{"item_scraped_count": 2}])
+        run_spider(["https://store.com"], config, skipped_urls=["https://[bad"])
+
+    data = json.loads(next(tmp_path.glob("status/*_status.json")).read_text())
+    assert data["urls"][1] == {"url": "https://[bad", "items": 0, "status": "invalid URL"}
+
+
+def test_peek_zero_items_summary_goes_to_stderr(tmp_path, capsys):
+    """With --peek, stdout is reserved for JSONL, so the zero-item summary uses stderr."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process([{}])
+        with pytest.raises((SystemExit, typer.Exit)):
+            run_spider(["https://down.invalid"], config, peek=True)
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Scraped 0 items" in captured.err
+
+
+def test_cli_scrape_all_urls_invalid():
+    """The run fails if every URL is malformed."""
+    with patch("shopify_spy.cli.run_spider") as mock_run:
+        result = runner.invoke(app, ["scrape", "https://[bad"])
+
+    assert result.exit_code == 1
+    assert "No valid URLs provided" in strip_ansi(result.stderr)
+    mock_run.assert_not_called()
 
 
 def _mock_crawler_process(item_count=1):
@@ -289,7 +424,7 @@ def _mock_crawler_process(item_count=1):
     mock_crawler.stats.get_value.side_effect = lambda key, default=0: (
         item_count if key == "item_scraped_count" else default
     )
-    mock_process.crawlers = [mock_crawler]
+    mock_process.create_crawler.return_value = mock_crawler
     return mock_process
 
 
@@ -342,7 +477,7 @@ def _make_crawler(stats_dict):
 def _mock_multi_crawler_process(stats_list):
     """Create a mock CrawlerProcess with one crawler per entry in stats_list."""
     proc = MagicMock()
-    proc.crawlers = [_make_crawler(s) for s in stats_list]
+    proc.create_crawler.side_effect = [_make_crawler(s) for s in stats_list]
     return proc
 
 
@@ -373,6 +508,175 @@ def test_multi_url_success_shows_per_url_counts(tmp_path, capsys):
     assert "store2.com: 5 items" in output
 
 
+def test_multi_url_crawls_each_url_with_its_own_crawler(tmp_path):
+    """Each URL is crawled with the crawler whose stats are reported for it."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    urls = ["https://store1.com", "https://store2.com", "https://store3.com"]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        crawlers = [_make_crawler({"item_scraped_count": 1}) for _ in urls]
+        proc = mock_cls.return_value
+        proc.create_crawler.side_effect = crawlers
+        run_spider(urls, config)
+
+    calls = proc.crawl.call_args_list
+    assert [c.args[0] for c in calls] == crawlers
+    assert [c.kwargs["url"] for c in calls] == urls
+
+
+def _mock_process_with_failure(crawlers, fail_index):
+    """Mock CrawlerProcess whose crawl() fails for crawlers[fail_index]."""
+    proc = MagicMock()
+    proc.create_crawler.side_effect = crawlers
+    proc.crawl.side_effect = [
+        defer.fail(ValueError("Invalid IPv6 URL")) if i == fail_index else defer.succeed(None)
+        for i in range(len(crawlers))
+    ]
+    return proc
+
+
+def test_multi_url_crawler_that_failed_to_start(tmp_path, capsys):
+    """A store whose spider failed before getting stats is reported, not a crash.
+
+    Only a later crawler is realistic here: if the first one fails, Scrapy never
+    installs the reactor and every other crawler fails too (see #21).
+    """
+    config = Config(output=OutputConfig(dir=tmp_path))
+    urls = ["https://store1.com", "https://[bad"]
+    crawlers = [
+        _make_crawler({"item_scraped_count": 4}),
+        MagicMock(stats=None, settings=Settings()),
+    ]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_process_with_failure(crawlers, 1)
+        run_spider(urls, config)
+
+    output = capsys.readouterr().out
+    assert "store1.com: 4 items" in output
+    assert "https://[bad: failed" in output
+    data = json.loads(next(tmp_path.glob("status/*_status.json")).read_text())
+    assert data["urls"][0]["items"] == 4
+    assert data["urls"][1] == {"url": "https://[bad", "items": 0, "status": "failed"}
+
+
+def test_crawler_that_failed_after_getting_stats(tmp_path, capsys):
+    """A crawler that raised after Scrapy created its stats is still marked failed."""
+    from scrapy.statscollectors import MemoryStatsCollector
+
+    config = Config(output=OutputConfig(dir=tmp_path))
+    crawler = MagicMock(settings=Settings())
+    crawler.stats = MemoryStatsCollector(crawler)
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_process_with_failure([crawler], 0)
+        with pytest.raises((SystemExit, typer.Exit)):
+            run_spider(["https://store.com"], config)
+
+    output = capsys.readouterr().out
+    assert "1 store(s) failed with an error" in output
+    assert "robots.txt" not in output
+    data = json.loads(next(tmp_path.glob("status/*_status.json")).read_text())
+    assert data["urls"][0]["status"] == "failed"
+
+
+def test_crawler_that_failed_after_scraping_items(tmp_path, capsys):
+    """A crawler that raised after scraping items is reported as failed, not ok."""
+    from scrapy.statscollectors import MemoryStatsCollector
+
+    config = Config(output=OutputConfig(dir=tmp_path))
+    partial = MagicMock(settings=Settings())
+    partial.stats = MemoryStatsCollector(partial)
+    partial.stats.set_value("item_scraped_count", 3)
+    partial.stats.set_value("finish_reason", "shutdown")
+    crawlers = [_make_crawler({"item_scraped_count": 4}), partial]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_process_with_failure(crawlers, 1)
+        run_spider(["https://store1.com", "https://store2.com"], config)
+
+    output = capsys.readouterr().out
+    assert "store2.com: failed" in output
+    assert "1 store(s) failed with an error" in output
+    data = json.loads(next(tmp_path.glob("status/*_status.json")).read_text())
+    assert data["urls"][1] == {"url": "https://store2.com", "items": 3, "status": "failed"}
+    # Scrapy's own finish_reason is kept
+    assert partial.stats.get_value("finish_reason") == "shutdown"
+
+
+def test_per_store_line_escapes_markup(tmp_path, capsys):
+    """A malformed URL with brackets is printed literally, not parsed as Rich markup."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    crawlers = [
+        _make_crawler({"item_scraped_count": 1}),
+        MagicMock(stats=None, settings=Settings()),
+    ]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_process_with_failure(crawlers, 1)
+        run_spider(["https://store1.com", "https://[/bad]"], config)
+
+    assert "https://[/bad]: failed" in capsys.readouterr().out
+
+
+def test_peek_reports_failed_store_on_stderr(tmp_path, capsys):
+    """With --peek, a failed store is still reported, on stderr."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    crawlers = [
+        _make_crawler({"item_scraped_count": 1}),
+        MagicMock(stats=None, settings=Settings()),
+    ]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_process_with_failure(crawlers, 1)
+        run_spider(["https://store1.com", "https://[bad"], config, peek=True)
+
+    captured = capsys.readouterr()
+    assert "failed with an error" not in captured.out
+    assert "1 store(s) failed with an error" in captured.err
+
+
+def test_finish_reason_reports_crawler_failure():
+    from scrapy.statscollectors import MemoryStatsCollector
+
+    failed = MagicMock(settings=Settings())
+    failed.stats = MemoryStatsCollector(failed)
+    failed.stats.set_value("shopify_spy/crawler_failed", True)
+    ok = _make_crawler({"finish_reason": "finished", "item_scraped_count": 5})
+    config = Config(scrape=ScrapeConfig(limit=5))
+    assert _finish_reason([ok, failed], config) == "crawler_failed"
+
+
 def test_single_url_success_no_per_url_breakdown(tmp_path, capsys):
     """Single-URL success should NOT print a per-URL line."""
     config = Config(output=OutputConfig(dir=tmp_path))
@@ -395,8 +699,8 @@ def test_multi_url_failure_shows_per_url_status(tmp_path, capsys):
     """Failure path prints per-URL diagnostics when multiple URLs are given."""
     config = Config(output=OutputConfig(dir=tmp_path))
     stats = [
-        {"downloader/response_status_count/403": 1, "downloader/response_count": 1},
-        {"downloader/response_status_count/404": 1, "downloader/response_count": 1},
+        {"shopify_spy/store_response_status_count/403": 1, "downloader/response_count": 1},
+        {"shopify_spy/store_response_status_count/404": 1, "downloader/response_count": 1},
     ]
     urls = ["https://blocked.com", "https://missing.com"]
 
@@ -418,7 +722,7 @@ def test_multi_url_failure_shows_per_url_status(tmp_path, capsys):
 def test_single_url_failure_no_per_url_breakdown(tmp_path, capsys):
     """Single-URL failure should NOT print a per-URL line."""
     config = Config(output=OutputConfig(dir=tmp_path))
-    stats = [{"downloader/response_status_count/403": 1, "downloader/response_count": 1}]
+    stats = [{"shopify_spy/store_response_status_count/403": 1, "downloader/response_count": 1}]
 
     mock_settings = MagicMock()
     with (
@@ -436,43 +740,270 @@ def test_single_url_failure_no_per_url_breakdown(tmp_path, capsys):
     assert "403" in output
 
 
+def test_no_responses_not_reported_as_robots(tmp_path, capsys):
+    """Zero responses means a network problem, not a robots.txt block."""
+    config = Config(
+        network=NetworkConfig(respect_robots_txt=True), output=OutputConfig(dir=tmp_path)
+    )
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process([{}, {}])
+        with pytest.raises((SystemExit, typer.Exit)):
+            run_spider(["https://down1.invalid", "https://down2.invalid"], config)
+
+    output = capsys.readouterr().out
+    assert "robots.txt" not in output
+    assert "No responses received" in output
+
+
 # --- _diagnose_crawler unit tests ---
 
 
 def test_diagnose_crawler_items():
     c = _make_crawler({"item_scraped_count": 5})
-    assert _diagnose_crawler(c, Config()) == "5 items"
+    assert _diagnose_crawler(c) == "5 items"
 
 
 def test_diagnose_crawler_403():
-    c = _make_crawler({"downloader/response_status_count/403": 2, "downloader/response_count": 2})
-    assert _diagnose_crawler(c, Config()) == "403 Forbidden"
+    c = _make_crawler(
+        {"shopify_spy/store_response_status_count/403": 2, "downloader/response_count": 2}
+    )
+    assert _diagnose_crawler(c) == "403 Forbidden"
 
 
 def test_diagnose_crawler_404():
-    c = _make_crawler({"downloader/response_status_count/404": 1, "downloader/response_count": 1})
-    assert _diagnose_crawler(c, Config()) == "404 Not Found"
+    c = _make_crawler(
+        {"shopify_spy/store_response_status_count/404": 1, "downloader/response_count": 1}
+    )
+    assert _diagnose_crawler(c) == "404 Not Found"
+
+
+def test_robots_txt_404_does_not_hide_timeout(tmp_path, capsys):
+    """A store without a robots.txt (404) that then times out is reported as timed out."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    stats = [
+        {
+            # robots.txt 404, one store response, then the store hangs until --bail
+            "finish_reason": "no_item_timeout",
+            "downloader/response_count": 2,
+            "downloader/response_status_count/404": 1,
+            "robotstxt/response_count": 1,
+            "robotstxt/response_status_count/404": 1,
+            "shopify_spy/store_response_count": 1,
+            "shopify_spy/store_response_status_count/200": 1,
+        }
+    ]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process(stats)
+        with pytest.raises((SystemExit, typer.Exit)):
+            run_spider(["https://slow.com"], config)
+
+    output = capsys.readouterr().out
+    assert "Timed out after" in output
+    assert "HTTP 404" not in output
+
+
+def test_summary_has_a_hint_per_distinct_problem(tmp_path, capsys):
+    """One store's problem does not hide another's hint."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    stats = [
+        {"shopify_spy/store_response_status_count/403": 2, "downloader/response_count": 2},
+        {},
+    ]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process(stats)
+        with pytest.raises((SystemExit, typer.Exit)):
+            run_spider(["https://blocked.com", "https://down.invalid"], config)
+
+    output = capsys.readouterr().out
+    assert "blocked.com: 403 Forbidden" in output
+    assert "down.invalid: no response" in output
+    assert "Received 2 HTTP 403" in output
+    assert "No responses received" in output
 
 
 def test_diagnose_crawler_timed_out():
-    c = _make_crawler({"finish_reason": "bail"})
-    assert _diagnose_crawler(c, Config()) == "timed out"
+    c = _make_crawler({"finish_reason": "no_item_timeout"})
+    assert _diagnose_crawler(c) == "timed out"
+
+
+def test_timeout_shows_bail_hint(tmp_path, capsys):
+    """A no-item timeout prints the --bail hint, not another diagnosis."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    stats = [{"finish_reason": "no_item_timeout", "downloader/response_count": 3}]
+    # 3 responses, none blocked or missing: nothing more specific than the timeout
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process(stats)
+        with pytest.raises((SystemExit, typer.Exit)):
+            run_spider(["https://slow.com"], config)
+
+    output = capsys.readouterr().out
+    assert "Timed out after" in output
+
+
+def test_timeout_does_not_hide_403(tmp_path, capsys):
+    """A store blocked with 403s until --bail fires is reported as blocked."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    stats = [
+        {"item_scraped_count": 0, "finish_reason": "finished"},
+        {
+            "finish_reason": "no_item_timeout",
+            "shopify_spy/store_response_status_count/403": 5,
+            "downloader/response_count": 5,
+        },
+    ]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process(stats)
+        with pytest.raises((SystemExit, typer.Exit)):
+            run_spider(["https://empty.com", "https://blocked.com"], config)
+
+    output = capsys.readouterr().out
+    assert "blocked.com: 403 Forbidden" in output
+    assert "Received 5 HTTP 403" in output
+    assert "Timed out after" not in output
 
 
 def test_diagnose_crawler_robots():
-    c = _make_crawler({"downloader/response_count": 1, "robotstxt/response_count": 1})
-    config = Config(network=NetworkConfig(respect_robots_txt=True))
-    assert _diagnose_crawler(c, config) == "blocked by robots.txt"
+    # products.json and the sitemap fallback both forbidden; the store never answered
+    c = _make_crawler({"robotstxt/forbidden": 2})
+    assert _diagnose_crawler(c) == "blocked by robots.txt"
+
+
+def test_diagnose_crawler_robots_after_store_redirect():
+    """store.com 301s to www.store.com, whose robots.txt forbids the crawl."""
+    c = _make_crawler(
+        {
+            "robotstxt/forbidden": 2,
+            "shopify_spy/store_response_count": 2,
+            "shopify_spy/store_response_status_count/301": 2,
+        }
+    )
+    assert _diagnose_crawler(c) == "blocked by robots.txt"
+
+
+def test_diagnose_crawler_robots_before_fallback_404():
+    """products.json forbidden, and the allowed sitemap fallback 404s."""
+    c = _make_crawler(
+        {
+            "robotstxt/forbidden": 1,
+            "shopify_spy/store_response_count": 1,
+            "shopify_spy/store_response_status_count/404": 1,
+        }
+    )
+    assert _diagnose_crawler(c) == "blocked by robots.txt"
+
+
+def test_diagnose_crawler_robots_incidental_forbid():
+    """A disallowed URL in a crawl where the store answered is not a block."""
+    c = _make_crawler(
+        {
+            "robotstxt/forbidden": 1,
+            "shopify_spy/store_response_count": 200,
+            "shopify_spy/store_success_count": 200,
+        }
+    )
+    assert _diagnose_crawler(c) == "0 items"
+
+
+def test_diagnose_crawler_robots_allowed_then_no_response():
+    """robots.txt answered and allowed the crawl, but the store never responded."""
+    assert _diagnose_crawler(_make_crawler({})) == "no response"
+
+
+def test_robots_block_not_blamed_for_other_store(tmp_path, capsys):
+    """One robots-blocked store does not hide an unreachable one."""
+    config = Config(output=OutputConfig(dir=tmp_path))
+    stats = [
+        {"robotstxt/forbidden": 1},
+        {},
+    ]
+
+    mock_settings = MagicMock()
+    with (
+        patch("scrapy.utils.project.get_project_settings", return_value=mock_settings),
+        patch("scrapy.crawler.CrawlerProcess") as mock_cls,
+        _patch_log_dir(tmp_path),
+    ):
+        mock_cls.return_value = _mock_multi_crawler_process(stats)
+        with pytest.raises((SystemExit, typer.Exit)):
+            run_spider(["https://blocked.com", "https://down.invalid"], config)
+
+    output = capsys.readouterr().out
+    assert "blocked.com: blocked by robots.txt" in output
+    assert "down.invalid: no response" in output
 
 
 def test_diagnose_crawler_no_response():
     c = _make_crawler({})
-    assert _diagnose_crawler(c, Config()) == "no response"
+    assert _diagnose_crawler(c) == "no response"
 
 
 def test_diagnose_crawler_zero_items():
-    c = _make_crawler({"downloader/response_count": 5})
-    assert _diagnose_crawler(c, Config()) == "0 items"
+    c = _make_crawler(
+        {
+            "downloader/response_count": 5,
+            "shopify_spy/store_response_count": 5,
+            "shopify_spy/store_success_count": 5,
+        }
+    )
+    assert _diagnose_crawler(c) == "0 items"
+
+
+def test_diagnose_crawler_recovered_403_is_not_blocking():
+    """A 403 the UA swap recovered from (a later 2xx) doesn't hide the timeout."""
+    c = _make_crawler(
+        {
+            "finish_reason": "no_item_timeout",
+            "shopify_spy/store_response_count": 2,
+            "shopify_spy/store_success_count": 1,
+            "shopify_spy/store_response_status_count/403": 1,
+            "shopify_spy/store_response_status_count/200": 1,
+        }
+    )
+    assert _diagnose_crawler(c) == "timed out"
+
+
+def test_diagnose_crawler_fallback_404_is_not_blocking():
+    """products.json 404 followed by a working sitemap is the normal fallback."""
+    c = _make_crawler(
+        {
+            "finish_reason": "no_item_timeout",
+            "shopify_spy/store_response_count": 2,
+            "shopify_spy/store_success_count": 1,
+            "shopify_spy/store_response_status_count/404": 1,
+            "shopify_spy/store_response_status_count/200": 1,
+        }
+    )
+    assert _diagnose_crawler(c) == "timed out"
 
 
 # --- Status file tests ---
@@ -508,7 +1039,7 @@ def test_status_file_written_on_success(tmp_path):
 def test_status_file_written_on_failure(tmp_path):
     """Status file is written even when scraping fails (0 items)."""
     config = Config(output=OutputConfig(dir=tmp_path))
-    stats = [{"downloader/response_status_count/403": 1, "downloader/response_count": 1}]
+    stats = [{"shopify_spy/store_response_status_count/403": 1, "downloader/response_count": 1}]
 
     mock_settings = MagicMock()
     with (
@@ -532,7 +1063,7 @@ def test_status_file_multi_url(tmp_path):
     config = Config(output=OutputConfig(dir=tmp_path))
     stats = [
         {"item_scraped_count": 10, "finish_reason": "finished"},
-        {"downloader/response_status_count/403": 1, "downloader/response_count": 1},
+        {"shopify_spy/store_response_status_count/403": 1, "downloader/response_count": 1},
     ]
     urls = ["https://ok.com", "https://blocked.com"]
 
