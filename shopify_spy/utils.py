@@ -1,8 +1,10 @@
 import urllib.parse
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import scrapy
+if TYPE_CHECKING:
+    # Type-only: the CLI imports this module and defers Scrapy to keep startup fast
+    import scrapy
 
 
 def normalize_url(url: str) -> urllib.parse.ParseResult:
@@ -25,7 +27,7 @@ def find_all_values(key: str, obj: Any) -> Iterator[Any]:
             yield from find_all_values(key, item)
 
 
-def uri_params(params: dict[str, Any], spider: scrapy.Spider) -> dict[str, Any]:
+def uri_params(params: dict[str, Any], spider: "scrapy.Spider") -> dict[str, Any]:
     """Returns URI parameters as dict."""
     return {**params, "spider_name": spider.name}
 
