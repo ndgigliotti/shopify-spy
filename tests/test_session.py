@@ -362,6 +362,17 @@ async def test_429_without_retries_left_still_slows_the_host():
     assert registry.slot(STORE).floor >= 1.0
 
 
+async def test_429_without_retries_left_honors_retry_after():
+    # The host's other requests must wait out the server's Retry-After too
+    session, _ = make_session(
+        {f"{STORE}/p": (429, "", {"Retry-After": "30"})},
+        robots=False,
+        retry=RetryPolicy(retries=0),
+    )
+    assert (await get(session, f"{STORE}/p")).status == 429
+    assert session.registry.slot(STORE).paused_until - now() >= 25
+
+
 async def test_retry_after_capped_by_max_delay():
     session, _ = make_session(
         {f"{STORE}/p": Seq([(503, "", {"Retry-After": "30"}), (200, "ok")])},

@@ -161,32 +161,56 @@ async def test_pause_sets_a_floor_that_eases_back_down():
 
 
 @pytest.mark.parametrize("pause", [5.0, 0.0], ids=["backoff", "no-pause"])
-def test_rate_limits_in_one_episode_double_once(clock, pause):
-    # A burst of 429s from requests already in flight is one signal, not many, even
-    # when the pause itself is zero (no backoff, a tiny Retry-After)
+def test_rate_limits_from_requests_sent_before_a_slowdown_double_once(clock, pause):
+    # A burst of 429s for requests sent at the old rate is one signal, not many,
+    # however short the pause (no backoff, a tiny Retry-After) and however late
+    # the stragglers arrive
     s = slot(start_delay=1.0, max_delay=60.0)
-    for _ in range(5):
-        s.pause(pause)
-        clock.t += 0.1
+    sent = [clock.t - 0.5, clock.t - 0.3, clock.t - 0.1]
+    for sent_at in sent:
+        s.pause(pause, sent_at)
+        clock.t += 3.0  # a slow straggler lands well after the pause ended
     assert s.floor == 2.0  # 1.0 doubled once
-    clock.t += max(pause, 2.0)  # past the pause and one delay: a new episode
-    s.pause(pause)
+
+
+def test_rate_limit_on_a_request_sent_after_the_slowdown_doubles_again(clock):
+    # Even inside the pause window: the slower rate was refused too
+    s = slot(start_delay=1.0, max_delay=60.0)
+    s.pause(10.0, sent_at=clock.t - 0.1)
+    clock.t += 0.5
+    s.pause(1.0, sent_at=clock.t - 0.1)  # sent after the first slowdown
     assert s.floor == 4.0
 
 
-def test_adjust_ignores_rate_limits():
-    # pause() owns rate limits; a fast 429 must not also move the delay
+async def test_wait_turn_honors_a_pause_extended_while_waiting():
+    s = slot(enabled=False)
+    loop = asyncio.get_running_loop()
+    s.pause(0.1)
+    t0 = loop.time()
+    waiter = asyncio.create_task(s.wait_turn())
+    await asyncio.sleep(0.05)
+    s.pause(0.2)  # extended to ~0.25 from t0 while the waiter sleeps
+    async with asyncio.timeout(2):
+        sent_at = await waiter
+    assert sent_at - t0 >= 0.2
+
+
+def test_adjust_ignores_429_but_follows_slow_503():
+    # pause() owns 429s; a slow 503 still says the host is overloaded
     s = slot(start_delay=1.0)
     s.adjust(30.0, 429)
     assert s.delay == 1.0
+    s.adjust(12.0, 503)
+    assert s.delay == 12.0
 
 
-def test_floor_eases_on_non_error_responses(clock):
+def test_floor_eases_only_when_the_host_answered_normally(clock):
     s = slot(start_delay=1.0)
     s.pause(0)
     s.adjust(0.05, 404)  # a missing page is still the host answering fine
     assert s.floor == pytest.approx(2.0 * 0.98)
-    s.adjust(0.05, 500)
+    for blocked in (500, 403, 430):  # errors and blocks aren't a reason to speed up
+        s.adjust(0.05, blocked)
     assert s.floor == pytest.approx(2.0 * 0.98)
 
 

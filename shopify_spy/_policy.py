@@ -8,7 +8,7 @@ import json
 import random
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
+from importlib import resources
 
 from protego import Protego
 
@@ -52,12 +52,13 @@ class HostSlot:
     One request leaves the slot per gate pass; with a non-zero delay, passes are
     spaced by ``uniform(0.5, 1.5) * delay`` since the previous request.
 
-    Rate limits work like TCP congestion control: each episode doubles a delay
-    floor (multiplicative decrease of the rate), and each success lowers the floor
-    a little, so the host speeds up gradually until it pushes back again.
+    Rate limits work like TCP congestion control: each one doubles a delay floor
+    (multiplicative decrease of the rate), unless its request was sent before the
+    last doubling, and each answered request lowers the floor a little, so the host
+    speeds up gradually until it pushes back again.
     """
 
-    FLOOR_DECAY = 0.98  # per non-error response: the floor halves in ~34 of them
+    FLOOR_DECAY = 0.98  # per answered request: the floor halves in ~34 of them
     MIN_RATE_LIMITED_DELAY = 1.0  # a rate limit slows the host to at least this
 
     def __init__(self, concurrency: int, throttle: ThrottleSettings) -> None:
@@ -67,26 +68,27 @@ class HostSlot:
         self.floor = 0.0  # raised by pause(); adjust() never goes below it
         self.last_seen: float | None = None
         self.paused_until = 0.0
-        self.episode_until = 0.0  # rate limits before this belong to the last episode
+        self.slowed_at = float("-inf")  # when pause() last doubled the delay
         self._gate = asyncio.Lock()
 
-    async def wait_turn(self) -> None:
-        """Wait until the throttle allows the next request to leave this slot."""
+    async def wait_turn(self) -> float:
+        """Wait until the throttle allows the next request to leave; return its send time."""
         async with self._gate:
-            pause = self.paused_until - now()
-            if pause > 0:
+            # A rate limit can extend the pause while we sleep, so check again
+            while (pause := self.paused_until - now()) > 0:
                 await asyncio.sleep(pause)
             if self.delay > 0 and self.last_seen is not None:
                 wait = self.delay * random.uniform(0.5, 1.5) - (now() - self.last_seen)
                 if wait > 0:
                     await asyncio.sleep(wait)
             self.last_seen = now()
+            return self.last_seen
 
     def adjust(self, latency: float, status: int) -> None:
         """AutoThrottle: move the delay toward latency / target_concurrency."""
-        if not self.throttle.enabled or status in RATE_LIMIT_STATUSES:
-            return  # pause() handles rate limits; a quick refusal says nothing about load
-        if status < 500:
+        if not self.throttle.enabled or status == 429:
+            return  # pause() handles 429s; a quick refusal says nothing about load
+        if status < 400 or status == 404:  # answered normally (403/430 are blocks)
             self.floor *= self.FLOOR_DECAY
         target = latency / self.throttle.target_concurrency
         new = max(target, (self.delay + target) / 2.0)
@@ -96,25 +98,25 @@ class HostSlot:
             return
         self.delay = new
 
-    def pause(self, seconds: float) -> None:
+    def pause(self, seconds: float, sent_at: float | None = None) -> None:
         """Hold every request to this host for ``seconds`` and slow it down.
 
         For a rate limit: otherwise only the limited request waits, while the host's
         other requests keep arriving and use up their own retries. The doubled delay
         becomes the host's floor, so AutoThrottle can't jump straight back to the
-        rate that was refused. Rate limits that arrive within the episode come from
-        requests sent before it, at the old rate, so they don't double it again.
+        rate that was refused. A rate-limited request sent before the last slowdown
+        (``sent_at``, from wait_turn) was sent at the old rate, so it pauses but
+        doesn't double the delay again; one sent after it means the slower rate is
+        still too fast.
         """
         t = now()
         self.paused_until = max(self.paused_until, t + seconds)
-        if t < self.episode_until:
+        if sent_at is not None and sent_at < self.slowed_at:
             return
         if self.throttle.enabled:
             doubled = max(self.delay * 2, self.throttle.start_delay, self.MIN_RATE_LIMITED_DELAY)
             self.delay = self.floor = min(doubled, self.throttle.max_delay)
-        # Requests already in flight answer within about one delay, even if the pause
-        # is short or zero (no backoff, a tiny Retry-After)
-        self.episode_until = max(self.paused_until, t + self.delay)
+        self.slowed_at = t
 
 
 def parse_retry_after(value: str | None) -> float | None:
@@ -174,10 +176,11 @@ def retry_policy_for(capabilities: FetcherCapabilities, retries: int, backoff: b
 def load_user_agents() -> list[str]:
     """Browser user agents from user_agents.json (browser -> platform -> strings).
 
-    scripts/update_user_agents.py maintains the JSON. A plain file read:
-    importlib.resources would add ~4 ms to `import shopify_spy`.
+    scripts/update_user_agents.py maintains the JSON. importlib.resources (not a
+    path next to __file__) so it also loads from zipped installs.
     """
-    data = json.loads(Path(__file__).with_name("user_agents.json").read_text("utf-8"))
+    text = resources.files("shopify_spy").joinpath("user_agents.json").read_text("utf-8")
+    data = json.loads(text)
     return [a for platforms in data["agents"].values() for p in platforms.values() for a in p]
 
 
