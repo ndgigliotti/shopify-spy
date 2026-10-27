@@ -11,9 +11,13 @@ major versions change. They come from official sources:
 - Safari: no machine-readable feed; SAFARI_VERSION is updated by hand from
   Apple's release notes (https://developer.apple.com/documentation/safari-release-notes)
 
-The strings themselves are templates. After writing, the script compares their
-format (versions masked) with an informal list of real-world user agents and
-warns on any difference, which is how a vendor's format change gets noticed.
+The strings themselves are templates. Before writing, the script compares their
+format (major versions masked) with an informal list of real-world user agents,
+which is how a vendor's format change gets noticed.
+
+Exit status: 0 when the file is current or was updated (stdout says which;
+NOTICE lines need a human look but don't block), 2 when a template no longer
+matches real browsers (WARNING lines; nothing is written).
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ import ast
 import datetime
 import json
 import re
+import sys
 import urllib.request
 from pathlib import Path
 
@@ -36,7 +41,10 @@ FIREFOX_API = "https://product-details.mozilla.org/1.0/firefox_versions.json"
 EDGE_API = "https://edgeupdates.microsoft.com/api/products"
 # Informal list of current real-world user agents, used only to detect format changes
 REFERENCE_LIST = "https://jnrbsn.github.io/user-agents/user-agents.json"
-VERSION_RE = re.compile(r"(Chrome/|Firefox/|rv:|Edg/|Version/)[\d.]+")
+# Mask major versions only: frozen parts like Chrome's ".0.0.0" are part of the format.
+# Safari's Version/ has a real minor version, so it's masked whole.
+VERSION_RE = re.compile(r"(Chrome/|Edg/|Firefox/|rv:)\d+|(Version/)[\d.]+")
+SAFARI_RE = re.compile(r"Version/(\d+)")
 
 # Frozen platform tokens, as each browser sends them whatever the real OS version
 CHROME = {
@@ -128,28 +136,37 @@ def render(groups: list[tuple[str, list[str]]]) -> str:
 
 
 def shape(agent: str) -> str:
-    """The user agent with browser version numbers replaced, leaving only its format."""
-    return VERSION_RE.sub(lambda m: f"{m.group(1)}N", agent)
+    """The user agent with major versions replaced, leaving only its format."""
+    return VERSION_RE.sub(lambda m: f"{m.group(1) or m.group(2)}N", agent)
 
 
-def check_format(agents: list[str]) -> None:
-    """Warn when our templates no longer match the shapes real browsers send.
+def safari_major(agents: list[str]) -> int | None:
+    versions = [
+        int(m.group(1))
+        for a in agents
+        if "Safari/" in a and "Chrome/" not in a and (m := SAFARI_RE.search(a))
+    ]
+    return max(versions, default=None)
 
-    The informal list follows real-world strings, so a vendor's format change
-    shows up there; the official feeds still decide the versions.
+
+def check_format(agents: list[str], reference: list[str]) -> tuple[list[str], list[str]]:
+    """Compare our formats with real-world ones: (warnings, notices).
+
+    A warning means one of our templates no longer appears among real browsers'
+    user agents (a vendor changed its format), so the new list shouldn't be used.
+    Notices need a look but don't block: a format only the reference has (e.g. a
+    browser we don't template) or a newer Safari than SAFARI_VERSION.
     """
-    try:
-        reference = get_json(REFERENCE_LIST)
-    except Exception as exc:  # the check is advisory; never block regeneration
-        print(f"Format check skipped: {REFERENCE_LIST}: {exc}")
-        return
     ours = {shape(a) for a in agents}
-    theirs = {shape(a) for a in reference if isinstance(a, str)}
-    for label, missing in (("only ours", ours - theirs), ("only theirs", theirs - ours)):
-        for agent in sorted(missing):
-            print(f"WARNING format differs ({label}): {agent}")
-    if ours == theirs:
-        print(f"Format check: all {len(ours)} shapes match {REFERENCE_LIST}")
+    theirs = {shape(a) for a in reference}
+    warnings = [
+        f"WARNING format no longer seen in real browsers: {s}" for s in sorted(ours - theirs)
+    ]
+    notices = [f"NOTICE format we don't generate: {s}" for s in sorted(theirs - ours)]
+    their_safari, our_safari = safari_major(reference), safari_major(agents)
+    if their_safari and our_safari and their_safari > our_safari:
+        notices.append(f"NOTICE Safari {their_safari} is out; update SAFARI_VERSION ({our_safari})")
+    return warnings, notices
 
 
 def current_agents() -> list[str] | None:
@@ -166,9 +183,23 @@ def current_agents() -> list[str] | None:
     return None
 
 
-def main() -> None:
+def main() -> int:
     groups = build()
     agents = [agent for _, group in groups for agent in group]
+    try:
+        reference = [a for a in get_json(REFERENCE_LIST) if isinstance(a, str)]
+    except Exception as exc:  # advisory: the official feeds alone still give a valid list
+        print(f"NOTICE format check skipped: {REFERENCE_LIST}: {exc}")
+        warnings, notices = [], []
+    else:
+        warnings, notices = check_format(agents, reference)
+        if not warnings and not notices:
+            print(f"Format check: every format matches {REFERENCE_LIST}")
+    for line in [*warnings, *notices]:
+        print(line)
+    if warnings:
+        print(f"Not writing {OUTPUT}: fix the templates in this script first")
+        return 2
     # Leave the file (and its date) alone unless the list changed, so a clean
     # git diff means there's nothing to update
     if agents == current_agents():
@@ -176,8 +207,8 @@ def main() -> None:
     else:
         OUTPUT.write_text(render(groups))
         print(f"Wrote {OUTPUT}")
-    check_format(agents)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
