@@ -9,6 +9,30 @@ This is an experiment on a clean branch. Nothing lands on `master` until the
 branch reaches parity and the owner decides to adopt it; if it doesn't pan out,
 the branch is deleted.
 
+**Status (2026-10-27): milestones 0–8 implemented** on `feat/httpx-library`;
+milestone 9 (merge and release 0.3.0) is the owner's decision. Parity was 9/9
+on the replay suite before Scrapy was removed; two post-implementation reviews
+(correctness, plan conformance) were addressed. Where the build differs from
+the text below:
+
+- **Import boundary:** httpx imports `rich` itself when it's installed (its own
+  CLI), so the boundary test covers `typer`, `yaml` and `scrapy` only.
+- **CLI imports:** besides the public API, the CLI shares internal helpers
+  (URL validation, `FetcherFactory`, writer extensions).
+- **Adapters** are `run(ctx, emit)` coroutines, not async generators, so they can
+  use TaskGroups freely; each emitted item gets its own delivery task, counted
+  only once a delivery slot is held (no `aclosing` needed).
+- **Async runs** have no `weakref.finalize` backstop; use `async with` or
+  `aclose()`. Sync runs hold their generator weakly, so a bare `break` cleans up.
+- **Replay corpus:** five recorded corpora (multi-store with a dead domain,
+  collections, images, WooCommerce, robots-blocked) are pinned as snapshots in
+  `tests/test_replay.py`. Sitemap fallback, 403 and the §3.10 bug cases are
+  covered by FakeFetcher flow tests and the e2e local servers instead, since
+  no real store reliably produces them.
+- **Parity tooling** (`_parity/`, `scripts/parity.py`) was deleted at
+  switchover, as planned.
+- **Per-host state** is keyed by origin (see §4.6).
+
 ## 1. Goals and non-goals
 
 **Goals**

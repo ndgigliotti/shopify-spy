@@ -88,17 +88,21 @@ class RunResult:
 
     @property
     def ok(self) -> list[StoreResult]:
+        """Stores that didn't fail (including empty and partial ones)."""
         return [s for s in self.stores if not s.failed]
 
     @property
     def failed(self) -> list[StoreResult]:
+        """Stores whose status is a failure (see ``StoreStatus.is_failure``)."""
         return [s for s in self.stores if s.failed]
 
     @property
     def total_items(self) -> int:
+        """Items produced by all stores."""
         return sum(s.items for s in self.stores)
 
     def failures(self, strict: bool = False) -> list[StoreResult]:
+        """Failed stores; with ``strict=True`` partial stores count too."""
         return [s for s in self.stores if s.failed or (strict and s.status == StoreStatus.partial)]
 
     def raise_for_status(self, strict: bool = False) -> None:

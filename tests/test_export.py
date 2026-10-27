@@ -1,4 +1,5 @@
-"""Writers match Scrapy's feed exporters byte for byte (fixtures captured from Scrapy)."""
+"""Writers match Scrapy's feed exporters byte for byte (JSONL/JSON/XML fixtures were
+captured from Scrapy 2.14 before it was removed; CSV differs on purpose, D2)."""
 
 import csv
 import json
@@ -18,6 +19,14 @@ def test_matches_scrapy_exporter(tmp_path, fmt):
     path = tmp_path / f"out.{fmt}"
     assert write_items(ITEMS, path) == len(ITEMS)
     assert path.read_bytes() == (FIXTURES / f"scrapy.{fmt}").read_bytes()
+
+
+def test_csv_matches_golden_file(tmp_path):
+    # D2: CSV deliberately differs from Scrapy's (nested values are JSON), so the
+    # golden file comes from this writer
+    path = tmp_path / "out.csv"
+    write_items(ITEMS, path)
+    assert path.read_bytes() == (FIXTURES / "expected.csv").read_bytes()
 
 
 def test_csv_encodes_nested_values_as_json(tmp_path):

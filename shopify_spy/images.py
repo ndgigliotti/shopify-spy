@@ -11,7 +11,7 @@ import urllib.parse
 from pathlib import Path
 from typing import Any
 
-from shopify_spy.session import RequestFailed, StoreSession
+from shopify_spy.session import RequestFailed, StopStore, StoreSession
 
 logger = logging.getLogger("shopify_spy")
 
@@ -54,8 +54,8 @@ class ImageDownloader:
         if not urls:
             item[RESULT_FIELD] = []
             return item
-        results = await asyncio.gather(*(self._get(u) for u in urls))
-        item[RESULT_FIELD] = [r for r in results if r is not None]
+        results = await asyncio.gather(*(self._get(u) for u in urls), return_exceptions=True)
+        item[RESULT_FIELD] = [r for r in results if isinstance(r, dict)]
         return item
 
     async def _get(self, url: str) -> dict[str, Any] | None:
@@ -84,7 +84,7 @@ class ImageDownloader:
             return _record(url, existing, existing.read_bytes(), "uptodate")
         try:
             response = await self.session.get(url, kind="image", dedupe=False)
-        except RequestFailed as exc:
+        except (RequestFailed, StopStore) as exc:
             return self._failed(url, str(exc))
         if response is None:
             return self._failed(url, "forbidden by robots.txt")
@@ -93,8 +93,11 @@ class ImageDownloader:
         if not response.body:
             return self._failed(url, "empty body")
         path = self.dir / f"{name}{_extension(url, response.headers.get('content-type'))}"
-        self.dir.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(response.body)
+        try:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(response.body)
+        except OSError as exc:
+            return self._failed(url, f"can't save to {path}: {exc}")
         return _record(url, path, response.body, "downloaded")
 
     def _failed(self, url: str, reason: str) -> None:

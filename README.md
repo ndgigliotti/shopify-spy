@@ -342,6 +342,10 @@ for store in run.result.failed:
 item = spy.scrape("a.com").first()
 print(spy.summarize(item))  # title, prices as Decimal, URL: same fields on both platforms
 
+# Filter across platforms and write a CSV
+rows = (spy.summarize(i) for i in spy.scrape(urls))
+spy.write_items((r.asdict() for r in rows if r.min_price and r.min_price < 50), "cheap.csv")
+
 # Retry stores that robots.txt blocked
 result = spy.scrape(spy.read_url_file("stores.txt"), on_failure="ignore").collect()
 blocked = [s.input_url for s in result.failed if s.status == "robots_blocked"]
@@ -350,6 +354,7 @@ spy.write_items(spy.scrape(blocked, respect_robots_txt=False), "products.jsonl",
 
 - **Failures are never silent.** By default `scrape()` raises `ScrapeFailed` (listing each store's status) when every store failed; `on_failure="warn"` or `"ignore"` relax that, and `strict=True` raises when any store failed. Each `StoreResult` has a `status`, an item count and sometimes a `hint`, such as a likely wrong `platform`.
 - **Options** match the CLI: `platform`, `products`, `collections`, `images` (with `images_dir`), `max_items_per_store` (per store; use `itertools.islice` for a total), `bail`, `concurrent_requests`, `request_timeout`, `retries`, `user_agent`, `respect_robots_txt`, `verify_tls`, `max_concurrent_stores` and the `throttle_*` settings.
+- **Images:** `images=True, images_dir="images"` saves files under `images/full/`; each item's `scraped_images` records have a `path` relative to `images_dir`, so the file is `Path(images_dir) / record["path"]`.
 - **No side effects:** nothing is written unless `images=True`, no config file is read, and nothing is printed (logs go to the `shopify_spy` logger).
 - **Async code and notebooks** use `scrape_async()`, which takes the same options:
 

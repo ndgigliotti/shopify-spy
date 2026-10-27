@@ -15,6 +15,8 @@ Async code and notebooks::
         ...
 """
 
+import logging
+
 from shopify_spy.api import (
     AsyncScrapeRun,
     ScrapeOptions,
@@ -28,6 +30,9 @@ from shopify_spy.results import RunResult, ScrapeFailed, StoreResult, StoreStatu
 from shopify_spy.summary import ItemSummary, summarize
 from shopify_spy.types import ShopifyCollectionItem, ShopifyProductItem, WooCommerceProductItem
 from shopify_spy.utils import read_url_file
+
+# The library never prints; configure the "shopify_spy" logger to see its logs
+logging.getLogger("shopify_spy").addHandler(logging.NullHandler())
 
 __all__ = [
     "AsyncScrapeRun",

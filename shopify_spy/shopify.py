@@ -70,7 +70,10 @@ async def run(ctx: StoreContext, emit: Emit) -> None:
         bulk_complete, bulk_404 = await _bulk(ctx, emit, seen_handles)
         if bulk_complete and not ctx.collections:
             return
-    await _sitemap(ctx, emit, seen_handles, skip_products=bulk_complete)
+    sitemap_ok = await _sitemap(ctx, emit, seen_handles, skip_products=bulk_complete)
+    if ctx.products and not bulk_complete and seen_handles and not sitemap_ok:
+        # The bulk run stopped partway and the sitemap couldn't fill the gap
+        ctx.truncated = True
     if ctx.items == 0 and bulk_404:
         await _probe_woocommerce(ctx)
 
@@ -132,7 +135,7 @@ async def _bulk(ctx: StoreContext, emit: Emit, seen: set[str]) -> tuple[bool, bo
         first = False
 
 
-async def _sitemap(ctx: StoreContext, emit: Emit, seen: set[str], skip_products: bool) -> None:
+async def _sitemap(ctx: StoreContext, emit: Emit, seen: set[str], skip_products: bool) -> bool:
     """Fetch product/collection JSON documents listed in the sitemap.
 
     After a complete bulk run every product is already emitted, so product entries
@@ -164,8 +167,9 @@ async def _sitemap(ctx: StoreContext, emit: Emit, seen: set[str], skip_products:
         data["image_urls"] = image_urls(data, ctx.images)
         await emit(data)
 
+    found = {"root_ok": False}
     async with asyncio.TaskGroup() as tg:
-        async for loc in sitemap.iter_locs(ctx.session, sitemap_url):
+        async for loc in sitemap.iter_locs(ctx.session, sitemap_url, found):
             if "/products/" in loc:
                 if not ctx.products or skip_products:
                     continue
@@ -175,6 +179,7 @@ async def _sitemap(ctx: StoreContext, emit: Emit, seen: set[str], skip_products:
                 tg.create_task(fetch(loc + ".json", "product"))
             elif "/collections/" in loc and ctx.collections:
                 tg.create_task(fetch(loc + ".json", "collection"))
+    return found["root_ok"]
 
 
 async def _probe_woocommerce(ctx: StoreContext) -> None:

@@ -78,7 +78,7 @@ class HostRegistry:
         self.respect_robots_txt = respect_robots_txt
         self.shutdown = asyncio.Event()  # set for a graceful stop: no new requests
         self._slots: dict[str, HostSlot] = {}
-        self._robots: dict[str, asyncio.Future[RobotsRules]] = {}
+        self._robots: dict[str, asyncio.Future[RobotsRules | None]] = {}
 
     def slot(self, url: str) -> HostSlot:
         key = origin(url)
@@ -90,23 +90,34 @@ class HostRegistry:
     async def robots(self, url: str, session: StoreSession) -> RobotsRules:
         """Return robots.txt rules for the URL's origin, fetching them once per run."""
         key = origin(url)
-        future = self._robots.get(key)
-        if future is None:
-            future = self._robots[key] = asyncio.get_running_loop().create_future()
-            rules = RobotsRules(None)
-            try:
-                response = await session.get(f"{key}/robots.txt", kind="robots", dedupe=False)
-                # Scrapy parses any body it gets back, even an error page (which has
-                # no rules, so everything is allowed)
-                if response is not None:
-                    rules = RobotsRules(response.text)
-            except (RequestFailed, FetchError) as exc:
-                logger.debug("robots.txt unavailable for %s: %s", key, exc)
-            except BaseException:
-                future.set_result(rules)
-                raise
-            future.set_result(rules)
-        return await asyncio.shield(future)
+        while True:
+            future = self._robots.get(key)
+            if future is None:
+                return await self._fetch_robots(key, session)
+            rules = await asyncio.shield(future)
+            if rules is not None:
+                return rules
+            # The store fetching it was cancelled; fetch it again ourselves
+
+    async def _fetch_robots(self, key: str, session: StoreSession) -> RobotsRules:
+        future: asyncio.Future[RobotsRules | None] = asyncio.get_running_loop().create_future()
+        self._robots[key] = future
+        rules = RobotsRules(None)
+        try:
+            response = await session.get(f"{key}/robots.txt", kind="robots", dedupe=False)
+            # Scrapy parses any body it gets back, even an error page (which has
+            # no rules, so everything is allowed)
+            if response is not None:
+                rules = RobotsRules(response.text)
+        except (RequestFailed, FetchError) as exc:
+            logger.debug("robots.txt unavailable for %s: %s", key, exc)
+        except BaseException:
+            # Cancelled or stopped: let the next store fetch it instead of allowing all
+            del self._robots[key]
+            future.set_result(None)
+            raise
+        future.set_result(rules)
+        return rules
 
 
 @dataclass
@@ -147,6 +158,7 @@ class StoreContext:
     images: bool = False
     items: int = 0  # items emitted so far
     hint: str | None = None  # e.g. a likely-wrong-platform note for the caller
+    truncated: bool = False  # set when an error ended the store after it had items
 
     @property
     def netloc(self) -> str:
@@ -223,7 +235,7 @@ class StoreSession:
             return True
         if kind == "store":
             self.stats.robots_disallowed += 1
-        logger.debug("Forbidden by robots.txt: %s", url)
+        logger.info("Forbidden by robots.txt: %s", url)
         return False
 
     def _retry_cap(self) -> float | None:
@@ -261,7 +273,14 @@ class StoreSession:
                 self.stats.record_response(kind, response.status)
                 if self.cookies is not None:
                     self.cookies.update(response.set_cookies)
-                logger.debug("Fetched (%d) %s [%s]", response.status, url, kind)
+                logger.debug(
+                    "GET %s -> %d in %.2fs (attempt %d, %s)",
+                    url,
+                    response.status,
+                    response.latency,
+                    attempt + 1,
+                    kind,
+                )
                 if not self.retry.should_retry_status(response.status, attempt):
                     return response
                 if response.status in self.retry.rotate_on and self.identity.rotates:
