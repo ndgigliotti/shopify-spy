@@ -3,6 +3,13 @@
 import logging
 import random
 
+from scrapy.http.request import NO_CALLBACK
+
+from shopify_spy.constants import (
+    STORE_RESPONSE_COUNT,
+    STORE_RESPONSE_STATUS_COUNT,
+    STORE_SUCCESS_COUNT,
+)
 from shopify_spy.user_agents import USER_AGENTS
 
 logger = logging.getLogger(__name__)
@@ -34,4 +41,29 @@ class UserAgentMiddleware:
     def process_response(self, request, response):
         if response.status in SWAP_ON_STATUSES:
             request.meta["retry_reason"] = response.status
+        return response
+
+
+class StoreResponseStats:
+    """Count responses to the spider's own requests.
+
+    Scrapy's downloader stats also count the robots.txt fetch and image downloads,
+    including their retries and redirect hops, so they can't tell "only robots.txt
+    answered" from "the store answered". Both of those use the ``NO_CALLBACK``
+    callback, which retries and redirects copy; spider requests always have a real one.
+    """
+
+    def __init__(self, stats):
+        self.stats = stats
+
+    @classmethod
+    def from_crawler(cls, crawler):
+        return cls(crawler.stats)
+
+    def process_response(self, request, response):
+        if request.callback is not NO_CALLBACK:
+            self.stats.inc_value(STORE_RESPONSE_COUNT)
+            self.stats.inc_value(STORE_RESPONSE_STATUS_COUNT.format(response.status))
+            if 200 <= response.status < 300:
+                self.stats.inc_value(STORE_SUCCESS_COUNT)
         return response

@@ -4,7 +4,6 @@ import json
 import logging
 import sys
 import time
-import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
@@ -12,6 +11,7 @@ from typing import Annotated
 import platformdirs
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from shopify_spy.config import (
     OUTPUT_FORMATS,
@@ -21,6 +21,13 @@ from shopify_spy.config import (
     create_default_config,
     load_config,
 )
+from shopify_spy.constants import (
+    NO_ITEM_TIMEOUT_REASON,
+    STORE_RESPONSE_COUNT,
+    STORE_RESPONSE_STATUS_COUNT,
+    STORE_SUCCESS_COUNT,
+)
+from shopify_spy.utils import normalize_url, read_url_file, split_valid_urls
 
 app = typer.Typer(
     name="shopify-spy",
@@ -28,6 +35,12 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+# Warnings go to stderr so they don't mix with --peek's JSONL on stdout
+err_console = Console(stderr=True)
+logger = logging.getLogger(__name__)
+
+# Stat set on a crawler that raised instead of finishing (Scrapy's finish_reason is kept)
+CRAWLER_FAILED_STAT = "shopify_spy/crawler_failed"
 
 
 def version_callback(value: bool) -> None:
@@ -172,26 +185,6 @@ def scrape(
         bail=bail,
     )
 
-    # Warn about Shopify-only flags used with WooCommerce
-    if platform == Platform.woocommerce:
-        if collections is True:
-            console.print(
-                "[yellow]Warning: --collections has no effect with WooCommerce "
-                "(collections are not supported).[/yellow]"
-            )
-        if products is False:
-            console.print(
-                "[yellow]Warning: --no-products has no effect with WooCommerce "
-                "(WooCommerce always scrapes products).[/yellow]"
-            )
-
-    # Get URLs
-    all_urls = get_urls(urls, url_file)
-    if not all_urls:
-        console.print("[red]Error: No URLs provided.[/red]")
-        console.print("Provide a URL argument, --url-file, or run interactively.")
-        raise typer.Exit(1)
-
     # --peek implies limit=1, quiet logging, no images
     if peek:
         if config.scrape.limit is None:
@@ -202,11 +195,41 @@ def scrape(
 
     # Validate flag combinations
     if verbose and quiet:
-        console.print("[red]Error: Cannot use both --verbose and --quiet[/red]")
+        err_console.print("[red]Error: Cannot use both --verbose and --quiet[/red]")
+        raise typer.Exit(1)
+
+    # Warn about Shopify-only flags used with WooCommerce
+    if platform == Platform.woocommerce:
+        if collections is True:
+            err_console.print(
+                "[yellow]Warning: --collections has no effect with WooCommerce "
+                "(collections are not supported).[/yellow]"
+            )
+        if products is False:
+            err_console.print(
+                "[yellow]Warning: --no-products has no effect with WooCommerce "
+                "(WooCommerce always scrapes products).[/yellow]"
+            )
+
+    # Get URLs
+    all_urls = get_urls(urls, url_file)
+    if not all_urls:
+        err_console.print("[red]Error: No URLs provided.[/red]")
+        err_console.print("Provide a URL argument, --url-file, or run interactively.")
+        raise typer.Exit(1)
+
+    # Skip malformed URLs; a spider that fails to start stops the whole run
+    valid_urls, invalid_urls = split_valid_urls(all_urls)
+    for u in invalid_urls:
+        err_console.print(f"[yellow]Warning: Skipping invalid URL: {escape(u)}[/yellow]")
+    if not valid_urls:
+        err_console.print("[red]Error: No valid URLs provided.[/red]")
         raise typer.Exit(1)
 
     # Run the spider
-    run_spider(all_urls, config, peek=peek, verbose=verbose, quiet=quiet)
+    run_spider(
+        valid_urls, config, peek=peek, verbose=verbose, quiet=quiet, skipped_urls=invalid_urls
+    )
 
 
 @app.command()
@@ -291,16 +314,17 @@ def apply_cli_overrides(
 
 def get_urls(urls: list[str] | None, url_file: Path | None) -> list[str]:
     """Get URLs from arguments or file, with interactive fallback."""
-    if urls:
-        return list(urls)
+    # Blank arguments (e.g. an empty shell variable) fall through to --url-file
+    args = [u.strip() for u in urls or [] if u.strip()]
+    if args:
+        return args
 
     if url_file:
-        with open(url_file) as f:
-            return [line.strip() for line in f if line.strip()]
+        return read_url_file(url_file)
 
     # Interactive prompt if stdin is a TTY
     if sys.stdin.isatty():
-        url = typer.prompt("Enter Shopify store URL")
+        url = typer.prompt("Enter Shopify store URL").strip()
         if url:
             return [url]
 
@@ -316,8 +340,10 @@ def _log_dir() -> Path:
 
 def _finish_reason(crawlers: list, config: Config) -> str:
     """Derive an overall finish reason from a list of crawlers."""
+    if any(c.stats.get_value(CRAWLER_FAILED_STAT, False) for c in crawlers):
+        return "crawler_failed"
     reasons = [c.stats.get_value("finish_reason", "unknown") for c in crawlers]
-    if any(r == "no_item_timeout" for r in reasons):
+    if any(r == NO_ITEM_TIMEOUT_REASON for r in reasons):
         return "bail"
     limit = config.scrape.limit
     if limit is not None:
@@ -338,13 +364,16 @@ def _write_status_file(
     duration: float,
     log_file: Path | None,
     total: int,
+    skipped_urls: list[str],
 ) -> None:
     """Write a _status.json file alongside the output."""
     url_entries = []
     for url, crawler in zip(urls, crawlers):
         items = crawler.stats.get_value("item_scraped_count", 0)
-        status = "ok" if items > 0 else _diagnose_crawler(crawler, config)
+        failed = crawler.stats.get_value(CRAWLER_FAILED_STAT, False)
+        status = "ok" if items > 0 and not failed else _diagnose_crawler(crawler)
         url_entries.append({"url": url, "items": items, "status": status})
+    url_entries += [{"url": url, "items": 0, "status": "invalid URL"} for url in skipped_urls]
 
     data = {
         "items_scraped": total,
@@ -362,8 +391,12 @@ def run_spider(
     peek: bool = False,
     verbose: bool = False,
     quiet: bool = False,
+    skipped_urls: list[str] | None = None,
 ) -> None:
-    """Run the appropriate spider with the given configuration."""
+    """Run the appropriate spider with the given configuration.
+
+    skipped_urls are invalid inputs the caller dropped; they are recorded in the status file.
+    """
     # Deferred imports to avoid loading Scrapy until needed
     from scrapy.crawler import CrawlerProcess
     from scrapy.utils.project import get_project_settings
@@ -491,10 +524,13 @@ def run_spider(
         )
         logging.getLogger().addHandler(stderr_handler)
 
-    # Crawl each URL; capture crawler refs before start() clears the set
+    # Crawl each URL; keep crawlers in URL order (process.crawlers is an unordered set)
+    crawlers = []
     for store_url in urls:
-        process.crawl(spider_cls, url=store_url, **spider_kwargs)
-    crawlers = list(process.crawlers)
+        crawler = process.create_crawler(spider_cls)
+        deferred = process.crawl(crawler, url=store_url, **spider_kwargs)
+        deferred.addErrback(_record_failure, crawler, store_url)
+        crawlers.append(crawler)
 
     start = time.monotonic()
     process.start()
@@ -510,13 +546,16 @@ def run_spider(
 
     total = sum(c.stats.get_value("item_scraped_count", 0) for c in crawlers)
     multi = len(urls) > 1
+    crawler_failures = sum(bool(c.stats.get_value(CRAWLER_FAILED_STAT)) for c in crawlers)
 
     # Write status file (unless peek mode)
     if not peek:
         status_dir = output_dir / "status"
         status_dir.mkdir(parents=True, exist_ok=True)
         status_path = status_dir / f"{name}_{timestamp}_status.json"
-        _write_status_file(status_path, crawlers, urls, config, duration, log_file, total)
+        _write_status_file(
+            status_path, crawlers, urls, config, duration, log_file, total, skipped_urls or []
+        )
 
     if total > 0:
         if not peek:
@@ -528,81 +567,127 @@ def run_spider(
                 console.print(f"  Log: {log_file}")
             if multi:
                 for url, c in zip(urls, crawlers):
-                    host = urllib.parse.urlparse(url).netloc or url
-                    count = c.stats.get_value("item_scraped_count", 0)
-                    console.print(f"  {host}: {count} items")
+                    console.print(f"  {escape(_host(url))}: {_diagnose_crawler(c)}")
+        if crawler_failures:
+            (err_console if peek else console).print(
+                f"[yellow]Warning: {crawler_failures} store(s) failed with an error.[/yellow]"
+            )
         return
 
     # Diagnose why nothing was scraped
-    timed_out = any(c.stats.get_value("finish_reason", "") == "bail" for c in crawlers)
-    http_403 = sum(c.stats.get_value("downloader/response_status_count/403", 0) for c in crawlers)
-    http_404 = sum(c.stats.get_value("downloader/response_status_count/404", 0) for c in crawlers)
-    response_count = sum(c.stats.get_value("downloader/response_count", 0) for c in crawlers)
-    robotstxt_blocked = any(
-        c.stats.get_value("downloader/response_count", 0)
-        == c.stats.get_value("robotstxt/response_count", 0)
-        and config.network.respect_robots_txt
-        for c in crawlers
-    )
+    statuses = [_diagnose_crawler(c) for c in crawlers]
+    # --peek reserves stdout for JSONL
+    out = err_console if peek else console
 
-    console.print("[yellow]Warning: Scraped 0 items.[/yellow]")
+    out.print("[yellow]Warning: Scraped 0 items.[/yellow]")
     if multi:
-        for url, c in zip(urls, crawlers):
-            host = urllib.parse.urlparse(url).netloc or url
-            status = _diagnose_crawler(c, config)
-            console.print(f"  {host}: {status}")
+        for url, status in zip(urls, statuses):
+            out.print(f"  {escape(_host(url))}: {status}")
 
-    if timed_out:
-        console.print(
-            f"  Timed out after {config.scrape.bail}s with no items. "
-            "Use [bold]--bail 0[/bold] to disable."
-        )
-    elif robotstxt_blocked and response_count <= len(crawlers):
-        console.print(
-            "  Likely blocked by robots.txt. "
-            "Retry with [bold]--ignore-robots[/bold] (-i) to bypass."
-        )
-    elif http_403 > 0:
-        console.print(
-            f"  Received {http_403} HTTP 403 (Forbidden) response(s). "
-            "The server is actively blocking scrapers."
-        )
-        if config.network.respect_robots_txt:
-            console.print("  Try [bold]--ignore-robots[/bold] (-i) to bypass robots.txt.")
-    elif http_404 > 0:
-        console.print(
-            f"  Received {http_404} HTTP 404 (Not Found) response(s). "
-            "Check the URL and --platform flag."
-        )
-    elif response_count == 0:
-        console.print("  No responses received. Check the URL and your network connection.")
-    else:
-        console.print("  The store may be empty or the endpoint returned no products.")
+    for hint in _summary_hints(crawlers, statuses, config):
+        out.print(f"  {hint}")
 
     if log_file:
-        console.print(f"  Log: {log_file}")
+        out.print(f"  Log: {log_file}")
 
     raise typer.Exit(1)
 
 
-def _diagnose_crawler(crawler: object, config: Config) -> str:
-    """Return a short status string for a single crawler."""
+def _summary_hints(crawlers: list, statuses: list[str], config: Config) -> list[str]:
+    """Return one hint per distinct zero-item status, in _diagnose_crawler's order."""
+
+    def total(status: str, code: int) -> int:
+        return sum(_store_status_count(c, code) for c, s in zip(crawlers, statuses) if s == status)
+
+    present = set(statuses)
+    hints = []
+    if "failed" in present:
+        n = statuses.count("failed")
+        hints.append(f"{n} store(s) failed with an error.")
+    if "403 Forbidden" in present:
+        hints.append(
+            f"Received {total('403 Forbidden', 403)} HTTP 403 (Forbidden) response(s). "
+            "The server is actively blocking scrapers."
+        )
+    if "404 Not Found" in present:
+        hints.append(
+            f"Received {total('404 Not Found', 404)} HTTP 404 (Not Found) response(s). "
+            "Check the URL and --platform flag."
+        )
+    if "blocked by robots.txt" in present:
+        hints.append(
+            "Likely blocked by robots.txt. Retry with [bold]--ignore-robots[/bold] (-i) to bypass."
+        )
+    if "timed out" in present:
+        hints.append(
+            f"Timed out after {config.scrape.bail}s with no items. "
+            "Use [bold]--bail 0[/bold] to disable."
+        )
+    if "no response" in present:
+        hints.append("No responses received. Check the URL and your network connection.")
+    if "0 items" in present:
+        hints.append("The store may be empty or the endpoint returned no products.")
+    return hints
+
+
+def _record_failure(failure: object, crawler: object, url: str) -> None:
+    """Errback for process.crawl(): log the error and mark the store as failed.
+
+    A crawler that failed before Scrapy created its stats gets empty ones, so the
+    summary can report it instead of crashing.
+    """
+    from scrapy.statscollectors import MemoryStatsCollector
+
+    logger.error(
+        "Spider failed for %s",
+        url,
+        exc_info=(failure.type, failure.value, failure.getTracebackObject()),
+    )
+    if crawler.stats is None:
+        crawler.stats = MemoryStatsCollector(crawler)
+    crawler.stats.set_value(CRAWLER_FAILED_STAT, True)
+
+
+def _host(url: str) -> str:
+    """Return the URL's host for display, or the URL itself if it is malformed."""
+    try:
+        return normalize_url(url).netloc or url
+    except ValueError:
+        return url
+
+
+def _store_status_count(crawler: object, status: int) -> int:
+    """Count the store's responses with this HTTP status (robots.txt traffic excluded)."""
+    return crawler.stats.get_value(STORE_RESPONSE_STATUS_COUNT.format(status), 0)
+
+
+def _diagnose_crawler(crawler: object) -> str:
+    """Return a short status string for a single crawler.
+
+    Specific causes are checked before the timeout: a blocked store often keeps
+    retrying until --bail fires. _summary_hints relies on this being the only
+    place that decides a store's status.
+    """
+    if crawler.stats.get_value(CRAWLER_FAILED_STAT, False):
+        return "failed"
     items = crawler.stats.get_value("item_scraped_count", 0)
     if items > 0:
         return f"{items} items"
-    if crawler.stats.get_value("finish_reason", "") == "bail":
+    # Blocking causes only count if the store never answered with a 2xx: a 403 the UA
+    # swap recovered from, or the products.json 404 that triggers the sitemap
+    # fallback, is not why a store that also got a 2xx came up empty
+    if crawler.stats.get_value(STORE_SUCCESS_COUNT, 0) == 0:
+        # robots.txt first: when it stopped the store's requests, any 403/404 came
+        # from fallbacks it allowed
+        if crawler.stats.get_value("robotstxt/forbidden", 0) > 0:
+            return "blocked by robots.txt"
+        if _store_status_count(crawler, 403) > 0:
+            return "403 Forbidden"
+        if _store_status_count(crawler, 404) > 0:
+            return "404 Not Found"
+    if crawler.stats.get_value("finish_reason", "") == NO_ITEM_TIMEOUT_REASON:
         return "timed out"
-    h403 = crawler.stats.get_value("downloader/response_status_count/403", 0)
-    if h403 > 0:
-        return "403 Forbidden"
-    h404 = crawler.stats.get_value("downloader/response_status_count/404", 0)
-    if h404 > 0:
-        return "404 Not Found"
-    resp = crawler.stats.get_value("downloader/response_count", 0)
-    robots = crawler.stats.get_value("robotstxt/response_count", 0)
-    if resp > 0 and resp == robots and config.network.respect_robots_txt:
-        return "blocked by robots.txt"
-    if resp == 0:
+    if crawler.stats.get_value(STORE_RESPONSE_COUNT, 0) == 0:
         return "no response"
     return "0 items"
 

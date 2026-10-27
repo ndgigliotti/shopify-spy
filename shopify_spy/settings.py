@@ -20,6 +20,8 @@ DOWNLOADER_MIDDLEWARES = {
     # Disable Scrapy's built-in UA middleware; ours replaces it
     "scrapy.downloadermiddlewares.useragent.UserAgentMiddleware": None,
     "shopify_spy.middlewares.UserAgentMiddleware": 560,
+    # Next to DownloaderStats (850) so it sees every response, before retry/redirect
+    "shopify_spy.middlewares.StoreResponseStats": 860,
 }
 
 # Retry on 403 so the UA swap middleware can try a different identity
