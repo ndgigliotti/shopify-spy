@@ -141,7 +141,11 @@ def scrape(
     ] = None,
     platform: Annotated[
         Platform | None,
-        typer.Option("--platform", "-p", help="Ecommerce platform: shopify, woocommerce."),
+        typer.Option(
+            "--platform",
+            "-p",
+            help="Ecommerce platform: shopify, woocommerce (default: shopify, or the config's).",
+        ),
     ] = None,
     bail: Annotated[
         int | None,
@@ -548,6 +552,8 @@ async def _scrape(
         signal.signal(signal.SIGINT, previous)
         if writer is not None:
             writer.close()
+        if show_counter and count:  # the throttled redraw can skip the final count
+            print(f"\r  Scraped {count} items...", end="", flush=True)
     return run.result, forced
 
 

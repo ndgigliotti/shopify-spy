@@ -39,8 +39,9 @@ file; you don't need to change how you run it.
 
 ### Changed
 
-- CSV output JSON-encodes nested values (Scrapy wrote Python reprs), and Shopify CSVs
-  always include the `collection` column when collections are scraped.
+- CSV output JSON-encodes nested objects such as `product` (Scrapy wrote Python reprs
+  like `{'id': 1}`); lists of strings such as `image_urls` are still comma-joined.
+  Shopify CSVs always include the `collection` column when collections are scraped.
 - Images keep their original format and extension instead of being re-encoded as
   JPEG; `checksum` is the MD5 of the original file. A cached image is reused only
   when its extension matches the URL's, so PNG/WebP images cached as re-encoded
