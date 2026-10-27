@@ -1,0 +1,3 @@
+product,url,store,image_urls
+"{'id': 1, 'title': 'Café ☕ ""quoted"" <tag> & amp', 'tags': ['a', 'b,c'], 'variants': [{'price': '9.99', 'available': True, 'sku': None}], 'empty': {}, 'none': None}",https://a.com/products/x.json,a.com,"https://cdn.example/x.jpg,https://cdn.example/y.png"
+,https://a.com/collections/y.json,a.com,
