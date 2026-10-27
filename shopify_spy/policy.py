@@ -52,11 +52,15 @@ class HostSlot:
         self.throttle = throttle
         self.delay = max(0.0, throttle.start_delay) if throttle.enabled else 0.0
         self.last_seen: float | None = None
+        self.paused_until = 0.0
         self._gate = asyncio.Lock()
 
     async def wait_turn(self) -> None:
         """Wait until the throttle allows the next request to leave this slot."""
         async with self._gate:
+            pause = self.paused_until - now()
+            if pause > 0:
+                await asyncio.sleep(pause)
             if self.delay > 0 and self.last_seen is not None:
                 wait = self.delay * random.uniform(0.5, 1.5) - (now() - self.last_seen)
                 if wait > 0:
@@ -74,6 +78,17 @@ class HostSlot:
         if status != 200 and new <= self.delay:
             return
         self.delay = new
+
+    def pause(self, seconds: float) -> None:
+        """Hold every request to this host for ``seconds`` and slow the throttle.
+
+        For a 429: otherwise only the rate-limited request waits, while the host's
+        other requests keep arriving and use up their own retries.
+        """
+        self.paused_until = max(self.paused_until, now() + seconds)
+        if self.throttle.enabled:
+            doubled = max(self.delay * 2, self.throttle.start_delay)
+            self.delay = min(doubled, self.throttle.max_delay)
 
 
 def parse_retry_after(value: str | None) -> float | None:

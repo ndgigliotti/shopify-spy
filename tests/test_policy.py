@@ -121,6 +121,31 @@ async def test_wait_turn_concurrent_waiters_are_serialized(no_jitter):
     assert all(gap >= 0.04 for gap in gaps)
 
 
+async def test_pause_holds_requests_and_slows_the_throttle():
+    s = slot(start_delay=0.0, max_delay=0.5)
+    s.pause(0.2)
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    async with asyncio.timeout(2):
+        await s.wait_turn()
+    assert loop.time() - t0 >= 0.15
+    assert s.delay == 0.0  # start_delay 0: nothing to double
+    s.delay = 0.3
+    s.pause(0)
+    assert s.delay == 0.5  # doubled, clamped to max_delay
+
+
+async def test_pause_without_throttle_keeps_zero_delay():
+    s = slot(enabled=False)
+    s.pause(0.05)
+    assert s.delay == 0.0
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    async with asyncio.timeout(2):
+        await s.wait_turn()
+    assert loop.time() - t0 >= 0.03
+
+
 async def test_wait_turn_immediate_when_throttle_disabled():
     s = slot(enabled=False)
     loop = asyncio.get_running_loop()

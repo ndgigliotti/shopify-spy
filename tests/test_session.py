@@ -332,6 +332,23 @@ async def test_retry_after_capped_by_bail_deadline():
     assert 0.05 <= loop.time() - start < 0.5
 
 
+async def test_429_pauses_the_whole_host():
+    # Another request to the rate-limited host waits out the retry delay too
+    session, _ = make_session(
+        {f"{STORE}/a": Seq([(429, ""), (200, "ok")]), f"{STORE}/b": (200, "ok")},
+        robots=False,
+        retry=RetryPolicy(retries=1, backoff=True, base_delay=0.6),  # waits 0.3-0.9s
+    )
+    loop = asyncio.get_running_loop()
+    first = asyncio.create_task(get(session, f"{STORE}/a"))
+    while not session.registry.slot(STORE).paused_until:
+        await asyncio.sleep(0)
+    start = loop.time()
+    assert (await get(session, f"{STORE}/b")).status == 200
+    assert loop.time() - start >= 0.25
+    assert (await first).status == 200
+
+
 async def test_retry_after_capped_by_max_delay():
     session, _ = make_session(
         {f"{STORE}/p": Seq([(503, "", {"Retry-After": "30"}), (200, "ok")])},

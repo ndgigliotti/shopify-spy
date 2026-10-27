@@ -358,6 +358,8 @@ class StoreSession:
                 retry_after = None
                 reason = name
             delay = self.retry.delay(attempt, retry_after, self._retry_cap())
+            if response is not None and response.status == 429:
+                slot.pause(delay)
             attempt += 1
             logger.info("Retrying %s (attempt %d, %s) in %.1fs", url, attempt, reason, delay)
             if delay:
