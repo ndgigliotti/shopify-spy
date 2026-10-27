@@ -41,7 +41,10 @@ class ThrottleSettings:
 
 
 class HostSlot:
-    """Per-host concurrency and AutoThrottle state (a port of Scrapy's slot logic).
+    """Per-host concurrency and AutoThrottle state.
+
+    The throttle algorithm is adapted from Scrapy's AutoThrottle extension and
+    download slots (https://github.com/scrapy/scrapy, BSD-3-Clause).
 
     One request leaves the slot per gate pass; with a non-zero delay, passes are
     spaced by ``uniform(0.5, 1.5) * delay`` since the previous request.
