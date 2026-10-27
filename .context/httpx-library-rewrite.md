@@ -117,17 +117,21 @@ Scrapy 2.14.2 source by review.
 | Redirects | 301/302/303/307/308 followed, max 20 (not for image requests) |
 | Duplicate filter | Per store, by method + canonical URL (+ body); not applied to robots or image requests |
 | Size limits | Abort > 1 GiB, warn > 32 MiB |
-| Proxies | `http_proxy`, `https_proxy`, `no_proxy` honored |
+| Proxies | `http_proxy`, `https_proxy`, `no_proxy` honored (httpx also honors `ALL_PROXY`, D16) |
 | HTTP version | HTTP/1.1 |
 
 ### 3.5 AutoThrottle
 
 Always on (see §3.10 for the `--no-throttle` bug). Per slot (host): delay
-starts at `start_delay`. On each response, `target = latency / target_concurrency`;
-`new = max(target, (delay + target) / 2)`, clamped to `[0, max_delay]`;
-non-200 responses may only increase the delay. One request leaves a slot per
-interval, and the interval is randomized to `uniform(0.5, 1.5) × delay`.
-Latency is time to response headers.
+starts at `start_delay`. On each downloaded response (per redirect hop),
+`target = latency / target_concurrency`;
+`new = max(target, (delay + target) / 2)`, clamped to
+`[DOWNLOAD_DELAY (0), max_delay]`; non-200 responses may only increase the
+delay. Transport exceptions don't adjust the delay. When the delay is
+non-zero, one request leaves the slot per pass; the random factor
+`uniform(0.5, 1.5) × delay` is redrawn every time the slot queue is processed
+(on enqueue and on each download finish), not once per interval. Latency is
+time to response headers. (Verified against Scrapy 2.14.2 source.)
 
 ### 3.6 Images (when `scrape.images`)
 
@@ -427,16 +431,35 @@ Rejected workarounds: a worker-thread fallback (threads for a declining use
 case) and `nest_asyncio` (patches asyncio internals, unmaintained).
 
 - Arguments validated eagerly; nothing runs until iteration starts.
-- `__iter__` opens an `asyncio.Runner` (3.11+) and yields
-  `runner.run(agen.__anext__())` per item. In `finally` it runs
-  `agen.aclose()`, so `break`, exceptions and leaving the `with` block shut the
-  run down cleanly. `weakref.finalize` is a backstop for runs that are never
-  closed.
-- `asyncio.Runner` turns Ctrl-C into cancellation of the running task.
-- While the caller handles an item the loop is paused, so there is natural
-  backpressure and no background work. Callers who want overlap use
-  `scrape_async`.
-- Exceptions propagate normally (same thread).
+- **Driver task, not a generator holding tasks.** One long-lived *driver* task
+  owns the store `TaskGroup` and puts items into a bounded `asyncio.Queue`. No
+  `TaskGroup` or `asyncio.timeout` is ever held across a `yield` (prototyped:
+  doing so makes `break`/close raise `BaseExceptionGroup([GeneratorExit])`,
+  wraps errors in `ExceptionGroup`, and silently disables timeouts, because
+  each `runner.run()` step is a new task). Both APIs read from this queue:
+  - sync: `__iter__` opens an `asyncio.Runner` (3.11+) and yields
+    `runner.run(queue.get())` per item;
+  - async: `__anext__` awaits `queue.get()`.
+- Closing (`break`, exception, leaving `with`, `close()`/`aclose()`) cancels the
+  driver and waits for it. `weakref.finalize` is a backstop for runs that are
+  never closed.
+- **Errors unwrap:** exception groups from the driver are unwrapped so the
+  caller sees the original exception (per-store errors never reach here; they
+  become `StoreStatus.error`).
+- `asyncio.Runner` turns Ctrl-C into cancellation of the running task
+  (prototyped: stores cancelled, handler restored).
+- **Paused-loop clock.** In the sync API the loop is paused while the caller
+  handles an item, so nothing runs (natural backpressure) — but the loop clock
+  keeps advancing, so on resume timers are overdue. Prototyped: a 2 s consumer
+  pause caused spurious httpx timeouts and bailed a store that was 0.3 s from
+  its first item. Fix (prototyped, removes both): the sync runner passes
+  `loop_factory=` an event loop subclass whose `time()` excludes paused
+  intervals, so timeouts, bail and throttle count only active time. Server-side
+  keep-alive closes during a long pause still happen; `RemoteProtocolError` on
+  a reused connection is retried (it's a retryable transport error).
+- The async API needs no special clock: the caller's loop keeps running, and
+  the bail clock stops at the adapter's first raw item, before the queue.
+- Exceptions raised by the caller's own code propagate normally (same thread).
 - `run.stores` returns a snapshot copy; `run.done` reports completion; iterating
   a run twice raises.
 - **Two kinds of stop:** `close()` (and `break`, `aclose()`) cancels at once and
@@ -463,7 +486,6 @@ class Request:
     headers: Mapping[str, str] = field(default_factory=dict)
     body: bytes | None = None
     cookies: Mapping[str, str] = field(default_factory=dict)
-    follow_redirects: bool = True
 
 @dataclass(frozen=True)
 class Response:
@@ -493,12 +515,27 @@ bottom layer.
 
 - Runs take a `fetcher_factory: Callable[[], Fetcher]`, so each run builds its
   own fetcher inside its own loop (an `httpx.AsyncClient` is bound to one loop).
-- `HttpxFetcher`: HTTP/1.1, cookies handled by the session not the client,
-  pinned `Accept-Encoding: gzip, deflate` (httpx would otherwise add `br`/`zstd`
-  when those packages are installed), streaming reads for latency and size
-  limits, `trust_env=True`, `verify` from `verify_tls`.
+- `HttpxFetcher` (details verified against httpx 0.28.1 by prototype):
+  - **Single hop:** `follow_redirects=False`. Redirects are handled by the
+    session hop by hop (§4.6), so each hop goes through robots, throttle and
+    latency measurement like Scrapy's redirect middleware.
+  - **Total deadline:** each fetch is wrapped in `asyncio.timeout(request_timeout)`.
+    httpx timeouts are per phase (a trickled body never times out), while
+    Scrapy's `DOWNLOAD_TIMEOUT` is a total.
+  - **Latency:** measured ourselves at response headers while streaming
+    (`Response.elapsed` on a stream measures to close).
+  - **Size limits:** counted on *decoded* bytes from `aiter_bytes()`
+    (`num_bytes_downloaded` counts compressed bytes), like Scrapy.
+  - **Encoding:** client-level pinned `Accept-Encoding: gzip, deflate` (a
+    per-request header would replace it too). A response with any other
+    `Content-Encoding` is an error: httpx otherwise returns it undecoded
+    without complaint.
+  - HTTP/1.1 (`http1=True, http2=False`), cookies handled by the session,
+    `trust_env=True`, `verify` from `verify_tls` (client-level only, which is
+    fine because the client is per run).
 - Transport errors map to `FetchTimeout`, `FetchConnectionError`,
-  `FetchTooLarge`, `FetchIncomplete`.
+  `FetchTooLarge`, `FetchIncomplete` (truncated bodies, `RemoteProtocolError`),
+  `FetchBadEncoding`.
 - Cookie jar is per store, on the session, **off by default** (parity); the
   future browser→HTTP clearance handoff turns it on.
 - HTML rendering for a future Hydrogen adapter gets its own `PageRenderer`
@@ -526,7 +563,10 @@ Scrapy's `CONCURRENT_REQUESTS`; not changed by `--concurrent`), `StoreStats`.
 So `--concurrent N` means at most N requests to one host *across the run*
 (today: per store); the store cap of 16 still applies on top.
 
-`session.get(url, *, follow_redirects=True, dedupe=True) -> Response | None`:
+`session.get(url, *, follow_redirects=True, dedupe=True) -> Response | None`.
+Redirects (301/302/303/307/308, max 20) are followed here, one hop at a time;
+each hop re-enters steps 2–7 (robots, slot, throttle, retry) as a new request,
+like Scrapy's redirect middleware. Per request:
 
 1. Dedupe (canonical method + URL + body) → skip, counted.
 2. robots.txt via the registry (unless ignored) → disallowed: skip,
@@ -578,8 +618,9 @@ class PlatformAdapter(Protocol):
   (`finish_reason="item_limit"`).
 - **Bail:** the clock starts when the store acquires its run slot and stops
   when the adapter yields its first raw item (before image downloads and before
-  the consumer queue), so a slow consumer can't cause a bail. Small deviation
-  from Scrapy, where images delay the timer's cancellation.
+  the consumer queue). In the async API a slow consumer therefore can't cause a
+  bail; in the sync API that also depends on the paused-loop clock (§4.4).
+  Small deviation from Scrapy, where images delay the timer's cancellation.
 - Adapter generators are wrapped in `contextlib.aclosing` so cancellation
   closes them cleanly.
 - **Images:** per store, up to 8 items wait on their image downloads at once
@@ -664,17 +705,24 @@ Later extras: `[stealth]` → `curl_cffi`, `[browser]` → `playwright`.
    swapping transports): bulk paging, all fallback triggers, partial-bulk
    fallback, collections, WooCommerce paging, limit, bail, 403 rotation, robots
    block, dedupe, per-store error isolation, shutdown with valid partial output.
-3. **`HttpxFetcher` tests with respx:** redirects, compression header, size
-   limits, error mapping, latency measurement.
-4. **Public API:** sync iteration, `collect()`, `first()`, `await`, async
+3. **`HttpxFetcher` tests with respx and a local server:** compression header
+   (with and without `brotli`/`zstandard` installed), unsupported encodings,
+   decoded-size limits, total deadline on a trickled body, error mapping
+   (incl. truncated bodies), latency at headers.
+4. **Session redirect tests:** hop-by-hop following, max 20, each hop through
+   robots and throttle.
+5. **Paused-loop tests:** a consumer that sleeps between items causes no
+   spurious timeouts or bails; a server that closes idle keep-alive connections
+   during a pause is retried.
+6. **Public API:** sync iteration, `collect()`, `first()`, `await`, async
    iteration, early `break`, an exception inside iteration, a running loop in
    the caller, no stdout output, `on_failure` modes and `strict`,
    `run.result` before/after completion and after `break`,
    `request_shutdown()`, wrong-platform hint, `read_url_file`, the option
    table (every kwarg has its YAML key and CLI flag, and defaults match).
-5. **Import boundary** test.
-6. **Replay tests** in CI from the recorded corpus (§7.2).
-7. **Integration (`-m integration`):** live runs against the Shopify demo store
+7. **Import boundary** test.
+8. **Replay tests** in CI from the recorded corpus (§7.2).
+9. **Integration (`-m integration`):** live runs against the Shopify demo store
    and one WooCommerce store; replaces `scrapy check`.
 
 ### 7.2 Parity: record once, replay into both engines
@@ -810,6 +858,7 @@ flags and config. The notes list what they'll notice:
 | D13 | Image redirects followed | **Adopt.** A redirected image is a missing image today |
 | D14 | TLS certificates verified by default, `verify_tls=False` / `--insecure` to opt out (today never verified) | **Adopt, pending measurement** (milestone 0): connect to every store in the sample with and without verification and count failures by cause (expired, self-signed, hostname mismatch, incomplete chain). Shopify-hosted stores use Shopify-managed certificates, so weight the sample toward self-hosted WooCommerce, where failures are likely. `StoreStatus.tls_error` and an `--insecure` hint ship either way; if failures are common, revisit the default |
 | D15 | No `Referer` header | **Adopt.** No observable benefit |
+| D16 | `ALL_PROXY` honored (httpx `trust_env`) in addition to the scheme-specific proxy variables | **Adopt.** Only matters to users who set it |
 
 ## 10. Risks
 
