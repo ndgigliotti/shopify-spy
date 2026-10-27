@@ -11,6 +11,7 @@ from typing import Annotated
 import platformdirs
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from shopify_spy.config import (
     OUTPUT_FORMATS,
@@ -30,8 +31,8 @@ app = typer.Typer(
 console = Console()
 logger = logging.getLogger(__name__)
 
-# finish_reason recorded for a crawler that raised instead of finishing
-CRAWLER_FAILED = "crawler_failed"
+# Stat set on a crawler that raised instead of finishing (Scrapy's finish_reason is kept)
+CRAWLER_FAILED_STAT = "shopify_spy/crawler_failed"
 
 
 def version_callback(value: bool) -> None:
@@ -347,7 +348,8 @@ def _write_status_file(
     url_entries = []
     for url, crawler in zip(urls, crawlers):
         items = crawler.stats.get_value("item_scraped_count", 0)
-        status = "ok" if items > 0 else _diagnose_crawler(crawler, config)
+        failed = crawler.stats.get_value(CRAWLER_FAILED_STAT, False)
+        status = "ok" if items > 0 and not failed else _diagnose_crawler(crawler, config)
         url_entries.append({"url": url, "items": items, "status": status})
 
     data = {
@@ -524,10 +526,11 @@ def run_spider(
         if i in failed or c.stats is None:
             if c.stats is None:
                 c.stats = MemoryStatsCollector(c)
-            c.stats.set_value("finish_reason", CRAWLER_FAILED)
+            c.stats.set_value(CRAWLER_FAILED_STAT, True)
 
     total = sum(c.stats.get_value("item_scraped_count", 0) for c in crawlers)
     multi = len(urls) > 1
+    crawler_failures = sum(bool(c.stats.get_value(CRAWLER_FAILED_STAT)) for c in crawlers)
 
     # Write status file (unless peek mode)
     if not peek:
@@ -546,7 +549,11 @@ def run_spider(
                 console.print(f"  Log: {log_file}")
             if multi:
                 for url, c in zip(urls, crawlers):
-                    console.print(f"  {_host(url)}: {_diagnose_crawler(c, config)}")
+                    console.print(f"  {escape(_host(url))}: {_diagnose_crawler(c, config)}")
+            if crawler_failures:
+                console.print(
+                    f"[yellow]Warning: {crawler_failures} store(s) failed with an error.[/yellow]"
+                )
         return
 
     # Diagnose why nothing was scraped
@@ -561,21 +568,15 @@ def run_spider(
         for c in crawlers
     )
 
-    crawler_failures = sum(
-        c.stats.get_value("finish_reason", "") == CRAWLER_FAILED for c in crawlers
-    )
-
     console.print("[yellow]Warning: Scraped 0 items.[/yellow]")
     if multi:
         for url, c in zip(urls, crawlers):
-            host = _host(url)
+            host = escape(_host(url))
             status = _diagnose_crawler(c, config)
             console.print(f"  {host}: {status}")
 
     if crawler_failures:
-        console.print(
-            f"  {crawler_failures} store(s) failed with an error. Details are in the log."
-        )
+        console.print(f"  {crawler_failures} store(s) failed with an error.")
     elif timed_out:
         console.print(
             f"  Timed out after {config.scrape.bail}s with no items. "
@@ -629,11 +630,11 @@ def _host(url: str) -> str:
 
 def _diagnose_crawler(crawler: object, config: Config) -> str:
     """Return a short status string for a single crawler."""
+    if crawler.stats.get_value(CRAWLER_FAILED_STAT, False):
+        return "failed"
     items = crawler.stats.get_value("item_scraped_count", 0)
     if items > 0:
         return f"{items} items"
-    if crawler.stats.get_value("finish_reason", "") == CRAWLER_FAILED:
-        return "failed"
     if crawler.stats.get_value("finish_reason", "") == "bail":
         return "timed out"
     h403 = crawler.stats.get_value("downloader/response_status_count/403", 0)
