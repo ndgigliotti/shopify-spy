@@ -1,0 +1,236 @@
+"""Politeness and resilience policies: throttling, retries, robots.txt, identities."""
+
+from __future__ import annotations
+
+import asyncio
+import email.utils
+import json
+import random
+import time
+from dataclasses import dataclass, field
+from importlib import resources
+
+from protego import Protego
+
+from shopify_spy._fetch import FetcherCapabilities, Identity
+
+# Headers Scrapy sends by default; kept so servers see the same requests as before
+DEFAULT_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en",
+}
+
+# Product token used to match robots.txt groups (falls back to "*")
+ROBOTS_TOKEN = "shopify-spy"
+
+RETRY_STATUSES = frozenset({500, 502, 503, 504, 522, 524, 408, 429, 403})
+RETRY_MAX_DELAY = 60.0  # longest wait before a retry, Retry-After included
+ROTATE_ON_STATUSES = frozenset({403})
+# "Slow down" responses: they pause the host and raise its delay floor (HostSlot.pause)
+RATE_LIMIT_STATUSES = frozenset({429, 503})
+
+
+def now() -> float:
+    """The running loop's clock (excludes paused time under the sync API)."""
+    return asyncio.get_running_loop().time()
+
+
+@dataclass
+class ThrottleSettings:
+    enabled: bool = True
+    start_delay: float = 1.0
+    max_delay: float = 60.0
+    target_concurrency: float = 1.0
+
+
+class HostSlot:
+    """Per-host concurrency and AutoThrottle state.
+
+    The throttle algorithm is adapted from Scrapy's AutoThrottle extension and
+    download slots (https://github.com/scrapy/scrapy, BSD-3-Clause).
+
+    One request leaves the slot per gate pass; with a non-zero delay, passes are
+    spaced by ``uniform(0.5, 1.5) * delay`` since the previous request.
+
+    Rate limits work like TCP congestion control: a rate limit doubles a delay floor
+    (multiplicative decrease of the rate) and each answered request lowers it a
+    little, so the host speeds up gradually until it pushes back again. Once slowed,
+    the host only doubles again after it has answered normally a request sent at the
+    slower rate: refusals before that come from requests sent at the old rate or from
+    a cooldown that refuses everything for a while, and waiting is the answer to both.
+    Answers to requests sent before the slowdown don't count either way.
+    """
+
+    FLOOR_DECAY = 0.98  # per answered request: the floor halves in ~34 of them
+    MIN_RATE_LIMITED_DELAY = 1.0  # a rate limit slows the host to at least this
+
+    def __init__(self, concurrency: int, throttle: ThrottleSettings) -> None:
+        self.semaphore = asyncio.Semaphore(concurrency)
+        self.throttle = throttle
+        self.delay = max(0.0, throttle.start_delay) if throttle.enabled else 0.0
+        self.floor = 0.0  # raised by pause(); adjust() never goes below it
+        self.last_seen: float | None = None
+        self.paused_until = 0.0
+        self.slowed_at = float("-inf")  # when pause() last doubled the delay
+        # Whether a request sent since then was answered normally
+        self.answered_since_slowdown = True
+        self._gate = asyncio.Lock()
+
+    async def wait_turn(self) -> float:
+        """Wait until the throttle allows the next request to leave; return its send time."""
+        async with self._gate:
+            # A rate limit can extend the pause while we sleep, so check again
+            while (pause := self.paused_until - now()) > 0:
+                await asyncio.sleep(pause)
+            if self.delay > 0 and self.last_seen is not None:
+                wait = self.delay * random.uniform(0.5, 1.5) - (now() - self.last_seen)
+                if wait > 0:
+                    await asyncio.sleep(wait)
+            self.last_seen = now()
+            return self.last_seen
+
+    def adjust(self, latency: float, status: int, sent_at: float = float("inf")) -> None:
+        """AutoThrottle: move the delay toward latency / target_concurrency.
+
+        ``sent_at`` is the request's send time from wait_turn.
+        """
+        if status < 400 or status == 404:  # answered normally (403/430 are blocks)
+            self.floor *= self.FLOOR_DECAY
+            if sent_at >= self.slowed_at:
+                self.answered_since_slowdown = True
+        if not self.throttle.enabled or status == 429:
+            return  # pause() handles 429s; a quick refusal says nothing about load
+        target = latency / self.throttle.target_concurrency
+        new = max(target, (self.delay + target) / 2.0)
+        new = min(max(new, self.floor), self.throttle.max_delay)
+        # A non-200 response must not make us faster (errors can be quick to arrive)
+        if status != 200 and new <= self.delay:
+            return
+        self.delay = new
+
+    def pause(self, seconds: float) -> None:
+        """Hold every request to this host for ``seconds`` and slow it down.
+
+        For a rate limit: otherwise only the limited request waits, while the host's
+        other requests keep arriving and use up their own retries. The doubled delay
+        becomes the host's floor, so AutoThrottle can't jump straight back to the
+        rate that was refused. It doubles again only once the host has answered at
+        the slower rate (see the class docstring).
+        """
+        self.paused_until = max(self.paused_until, now() + seconds)
+        if not self.answered_since_slowdown:
+            return
+        if self.throttle.enabled:
+            doubled = max(self.delay * 2, self.throttle.start_delay, self.MIN_RATE_LIMITED_DELAY)
+            self.delay = self.floor = min(doubled, self.throttle.max_delay)
+        self.slowed_at = now()
+        self.answered_since_slowdown = False
+
+
+def parse_retry_after(value: str | None) -> float | None:
+    """Return seconds from a Retry-After header (delta-seconds or HTTP date)."""
+    if not value:
+        return None
+    value = value.strip()
+    if value.isdigit():
+        return float(value)
+    try:
+        when = email.utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, when.timestamp() - time.time())
+
+
+@dataclass
+class RetryPolicy:
+    retries: int = 2
+    statuses: frozenset[int] = RETRY_STATUSES
+    rotate_on: frozenset[int] = ROTATE_ON_STATUSES
+    backoff: bool = True
+    base_delay: float = 0.5
+    # Rate limits are measured over seconds, so a sub-second retry just hits them again
+    rate_limit_base_delay: float = 5.0
+    max_delay: float = RETRY_MAX_DELAY
+
+    def should_retry_status(self, status: int, attempt: int) -> bool:
+        return status in self.statuses and attempt < self.retries
+
+    def delay(
+        self,
+        attempt: int,
+        retry_after: float | None,
+        cap: float | None,
+        rate_limited: bool = False,
+    ) -> float:
+        """Seconds to wait before retry number ``attempt + 1``."""
+        if not self.backoff:
+            return 0.0
+        # A server's Retry-After says how long is enough; otherwise guess long
+        slow = rate_limited and retry_after is None
+        base = self.rate_limit_base_delay if slow else self.base_delay
+        delay = base * (2**attempt) * random.uniform(0.5, 1.5)
+        if retry_after is not None:
+            delay = max(delay, retry_after)
+        limit = self.max_delay if cap is None else min(self.max_delay, cap)
+        return max(0.0, min(delay, limit))
+
+
+def retry_policy_for(capabilities: FetcherCapabilities, retries: int, backoff: bool) -> RetryPolicy:
+    """Pick retry behavior for a transport. Browsers don't rotate identities."""
+    rotate = frozenset() if not capabilities.applies_identity_headers else ROTATE_ON_STATUSES
+    return RetryPolicy(retries=retries, rotate_on=rotate, backoff=backoff)
+
+
+def load_user_agents() -> list[str]:
+    """Browser user agents from user_agents.json (browser -> platform -> strings).
+
+    scripts/update_user_agents.py maintains the JSON. importlib.resources (not a
+    path next to __file__) so it also loads from zipped installs.
+    """
+    text = resources.files("shopify_spy").joinpath("user_agents.json").read_text("utf-8")
+    data = json.loads(text)
+    return [a for platforms in data["agents"].values() for p in platforms.values() for a in p]
+
+
+USER_AGENTS = load_user_agents()
+
+
+@dataclass
+class IdentityPool:
+    """A store's browser identity: one random UA, swapped only after a 403.
+
+    A fixed ``user_agent`` disables rotation.
+    """
+
+    user_agent: str | None = None
+    agents: list[str] = field(default_factory=lambda: list(USER_AGENTS))
+    current: Identity = field(init=False)
+
+    def __post_init__(self) -> None:
+        ua = self.user_agent or random.choice(self.agents)
+        self.current = Identity(user_agent=ua, headers=dict(DEFAULT_HEADERS))
+
+    @property
+    def rotates(self) -> bool:
+        return self.user_agent is None and len(self.agents) > 1
+
+    def rotate(self) -> None:
+        if not self.rotates:
+            return
+        previous = self.current.user_agent
+        ua = previous
+        while ua == previous:
+            ua = random.choice(self.agents)
+        self.current = Identity(user_agent=ua, headers=dict(DEFAULT_HEADERS))
+
+
+class RobotsRules:
+    """Parsed robots.txt rules for one origin."""
+
+    def __init__(self, text: str | None) -> None:
+        self._parser = Protego.parse(text) if text else None
+
+    def allowed(self, url: str, agent: str) -> bool:
+        if self._parser is None:
+            return True
+        return self._parser.can_fetch(url, agent)

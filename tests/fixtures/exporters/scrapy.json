@@ -1,0 +1,4 @@
+[
+{"product": {"id": 1, "title": "Café ☕ \"quoted\" <tag> & amp", "tags": ["a", "b,c"], "variants": [{"price": "9.99", "available": true, "sku": null}], "empty": {}, "none": null}, "url": "https://a.com/products/x.json", "store": "a.com", "image_urls": ["https://cdn.example/x.jpg", "https://cdn.example/y.png"]},
+{"collection": {"id": 2, "title": "Line\nbreak", "n": 1.5, "flag": false}, "url": "https://a.com/collections/y.json", "store": "a.com", "image_urls": []}
+]
