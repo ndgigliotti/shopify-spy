@@ -17,6 +17,8 @@ import pytest
 
 import shopify_spy as spy
 from shopify_spy._fetch import ReplayFetcher, load_corpus
+from shopify_spy._utils import canonicalize_url
+from shopify_spy._woocommerce import API_PATH, BY_ID
 
 CORPUS = Path(__file__).parent / "fixtures" / "corpus"
 SNAPSHOTS = CORPUS / "snapshots.json"
@@ -54,9 +56,23 @@ def _identity(item: dict[str, Any]) -> str:
     return f"{item['store']}#{item['id']}"
 
 
+def _sorted_by_id_aliases(entries: dict[str, Any]) -> dict[str, Any]:
+    """Serve Store API pages recorded in the default order under the orderby=id URLs too.
+
+    The corpus predates sorting by ID, so this replays a store that ignores the sort.
+    """
+    aliases = {}
+    for key, outcomes in entries.items():
+        method, url = key.split(" ", 1)
+        if API_PATH in url and "orderby=" not in url:
+            query = "&".join(f"{k}={v}" for k, v in BY_ID.items())
+            aliases[f"{method} {canonicalize_url(f'{url}&{query}')}"] = outcomes
+    return {**entries, **aliases}
+
+
 def run_case(name: str, tmp_path: Path) -> dict[str, Any]:
     corpus, urls, options = CASES[name]
-    entries = load_corpus(CORPUS / corpus)
+    entries = _sorted_by_id_aliases(load_corpus(CORPUS / corpus))
     if options.get("images"):
         options = {**options, "images_dir": tmp_path / "images"}
     result = spy.scrape(

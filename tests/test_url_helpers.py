@@ -63,25 +63,31 @@ def test_next_bulk_page_url_preserves_limit():
 
 def test_get_api_url_basic():
     assert get_api_url("https://store.com") == (
-        "https://store.com/wp-json/wc/store/v1/products?per_page=100&page=1"
+        "https://store.com/wp-json/wc/store/v1/products?per_page=100&page=1&orderby=id&order=asc"
     )
 
 
 def test_get_api_url_page():
     assert get_api_url("https://store.com", page=3) == (
-        "https://store.com/wp-json/wc/store/v1/products?per_page=100&page=3"
+        "https://store.com/wp-json/wc/store/v1/products?per_page=100&page=3&orderby=id&order=asc"
     )
 
 
 def test_get_api_url_strips_path():
     assert get_api_url("https://store.com/some/path/") == (
-        "https://store.com/wp-json/wc/store/v1/products?per_page=100&page=1"
+        "https://store.com/wp-json/wc/store/v1/products?per_page=100&page=1&orderby=id&order=asc"
     )
 
 
 def test_get_api_url_no_scheme():
     assert get_api_url("store.com") == (
-        "https://store.com/wp-json/wc/store/v1/products?per_page=100&page=1"
+        "https://store.com/wp-json/wc/store/v1/products?per_page=100&page=1&orderby=id&order=asc"
+    )
+
+
+def test_get_api_url_default_order():
+    assert get_api_url("store.com", page=2, by_id=False) == (
+        "https://store.com/wp-json/wc/store/v1/products?per_page=100&page=2"
     )
 
 

@@ -40,7 +40,9 @@ def sitemap_url(host: str) -> str:
 
 
 def wc_url(host: str, page: int = 1) -> str:
-    return f"https://{host}/wp-json/wc/store/v1/products?per_page=100&page={page}"
+    return (
+        f"https://{host}/wp-json/wc/store/v1/products?per_page=100&page={page}&orderby=id&order=asc"
+    )
 
 
 def bulk(n: int, start: int = 0) -> dict:

@@ -19,7 +19,7 @@ def bulk_url(page: int, store: str = STORE) -> str:
 
 
 def woo_url(page: int, store: str = STORE) -> str:
-    return f"{store}{WOO_API}?per_page=100&page={page}"
+    return f"{store}{WOO_API}?per_page=100&page={page}&orderby=id&order=asc"
 
 
 def product(i: int | str, **extra: Any) -> dict[str, Any]:
