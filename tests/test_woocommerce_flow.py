@@ -90,6 +90,37 @@ def test_no_hint_when_products_json_absent():
     assert result.stores[0].hint is None
 
 
+def test_pages_are_sorted_by_id():
+    # The fake answers only the orderby=id URLs that woo_url builds
+    items, _, fetcher = scrape_woo({woo_url(1): page(2), woo_url(2): []})
+    assert len(items) == 2
+    assert fetcher.count(woo_url(2)) == 1
+
+
+def test_falls_back_to_default_order_when_orderby_id_rejected():
+    default = f"{STORE}/wp-json/wc/store/v1/products?per_page=100&page="
+    routes = {
+        woo_url(1): (400, '{"code": "rest_invalid_param"}'),
+        f"{default}1": page(2),
+        f"{default}2": page(1, 2),
+        f"{default}3": [],
+    }
+    items, result, fetcher = scrape_woo(routes)
+    assert len(items) == 3
+    assert fetcher.count(f"{default}3") == 1
+    assert fetcher.count(woo_url(2)) == 0
+    assert result.stores[0].status == "ok"
+    assert result.stores[0].complete
+
+
+def test_400_on_later_page_ends_store():
+    routes = {woo_url(1): page(2), woo_url(2): (400, ""), woo_url(3): page(2, 50)}
+    items, result, fetcher = scrape_woo(routes)
+    assert len(items) == 2
+    assert fetcher.count(woo_url(3)) == 0
+    assert not result.stores[0].complete
+
+
 def test_limit_stops_exactly():
     routes = {woo_url(1): page(100), woo_url(2): page(100, 100)}
     items, result, fetcher = scrape_woo(routes, max_items_per_store=5)

@@ -15,12 +15,18 @@ logger = logging.getLogger("shopify_spy")
 
 API_PATH = "/wp-json/wc/store/v1/products"
 PER_PAGE = 100
+# The default order (newest first) can shift between pages when a plugin overrides the
+# ID tiebreak, repeating some products and skipping others; IDs are unique and fixed
+BY_ID = {"orderby": "id", "order": "asc"}
 
 
-def get_api_url(store_url: str, page: int = 1) -> str:
-    """Build the Store API URL for the given store and page."""
+def get_api_url(store_url: str, page: int = 1, by_id: bool = True) -> str:
+    """Build the Store API URL for the given store and page, sorted by product ID."""
     parsed = normalize_url(store_url)
-    query = urllib.parse.urlencode({"per_page": PER_PAGE, "page": page})
+    params: dict[str, Any] = {"per_page": PER_PAGE, "page": page}
+    if by_id:
+        params |= BY_ID
+    query = urllib.parse.urlencode(params)
     return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, API_PATH, "", query, ""))
 
 
@@ -40,6 +46,11 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
             return False
         if response is None:
             return False
+        if first and response.status == 400 and "orderby=id" in url:
+            # Store API versions without orderby=id reject it as rest_invalid_param
+            logger.info("Store API rejected orderby=id for %s; using its default order", url)
+            url = get_api_url(ctx.url, by_id=False)
+            continue
         if not response.ok:
             logger.info("Store API returned %d for %s", response.status, url)
             if first and response.status == 404:
