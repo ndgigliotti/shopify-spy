@@ -133,7 +133,7 @@ def test_scrapy_era_jpeg_is_not_reused_for_a_png_url(tmp_path):
     full = tmp_path / "full"
     full.mkdir()
     old = full / f"{hashlib.sha1(png_url.encode()).hexdigest()}.jpg"  # Scrapy's re-encode
-    old.write_bytes(b"lossy jpeg")
+    old.write_bytes(b"\xff\xd8\xff\xe0lossy jpeg")
     routes = {
         bulk_url(1): {"products": [product(1, images=[{"src": png_url}])]},
         png_url: (200, b"\x89PNG\r\n\x1a\noriginal", {"Content-Type": "image/png"}),
@@ -148,7 +148,7 @@ def test_matching_cached_image_is_reused(tmp_path):
     url = "https://cdn.test/a.png"
     full = tmp_path / "full"
     full.mkdir()
-    (full / f"{hashlib.sha1(url.encode()).hexdigest()}.png").write_bytes(b"cached")
+    (full / f"{hashlib.sha1(url.encode()).hexdigest()}.png").write_bytes(b"\x89PNG\r\n\x1a\ncached")
     routes = {bulk_url(1): {"products": [product(1, images=[{"src": url}])]}}
     items, _, fetcher = scrape(routes, images=True, images_dir=tmp_path)
     assert items[0]["scraped_images"][0]["status"] == "uptodate"

@@ -12,12 +12,17 @@ from tests.flow_support import bulk_url, redirect, scrape
 PNG = b"\x89PNG\r\n\x1a\nfake-png-bytes"
 WEBP = b"RIFF\x00\x00\x00\x00WEBPfake"
 JPEG = b"\xff\xd8\xff\xe0fake-jpeg"
+OLD_JPEG = b"\xff\xd8\xff\xe0old-jpeg"
 
 
-def ftyp(major, *compatible):
-    """An ISO media file's leading ftyp box, as AVIF, HEIF and MP4 files start."""
+def ftyp(major, *compatible, size=None):
+    """An ISO media file's leading ftyp box, as AVIF, HEIF and MP4 files start.
+
+    ``size`` overrides the box's size field (0 and 1 are the special sizes).
+    """
     brands = major + b"\x00\x00\x00\x00" + b"".join(compatible)
-    return (8 + len(brands)).to_bytes(4, "big") + b"ftyp" + brands + b"\x00\x00\x00\x08meta"
+    size = 8 + len(brands) if size is None else size
+    return size.to_bytes(4, "big") + b"ftyp" + brands + b"\x00\x00\x00\x08meta"
 
 
 def sha1(url):
@@ -80,14 +85,14 @@ def test_fresh_file_reused_without_request(tmp_path):
     url = "https://cdn.test/cached.jpg"
     full = tmp_path / "full"
     full.mkdir()
-    (full / f"{sha1(url)}.jpg").write_bytes(b"old-bytes")
+    (full / f"{sha1(url)}.jpg").write_bytes(OLD_JPEG)
     items, _, fetcher = run_images({**shop([url]), url: (200, JPEG)}, tmp_path)
     assert fetcher.count(url) == 0
     assert items[0]["scraped_images"] == [
         {
             "url": url,
             "path": f"full/{sha1(url)}.jpg",
-            "checksum": md5(b"old-bytes"),
+            "checksum": md5(OLD_JPEG),
             "status": "uptodate",
         }
     ]
@@ -151,7 +156,16 @@ IMAGE_BODIES = {
     "heic": (ftyp(b"heic", b"mif1", b"heic"), ".heic"),
     "heic under generic brand": (ftyp(b"mif1", b"mif1", b"heic"), ".heic"),
     "heif": (ftyp(b"mif1", b"mif1"), ".heif"),
-    "bmp": (b"BM\x36\x00\x00\x00", ".bmp"),
+    "bmp": (b"BM\x36\x00\x00\x00\x00\x00\x00\x00\x36\x00\x00\x00\x28\x00\x00\x00", ".bmp"),
+    "bmp os/2": (b"BM" + bytes(12) + b"\x0c\x00\x00\x00", ".bmp"),
+    "bigtiff": (b"II+\x00\x08\x00", ".tiff"),
+    "jpeg 2000": (b"\x00\x00\x00\x0cjP  \r\n\x87\n\x00\x00\x00\x14ftypjp2 ", ".jp2"),
+    "avif with a 256-byte ftyp box": (ftyp(b"avif", *[b"mif1"] * 60), ".avif"),
+    "avif with a 64-bit box size": (
+        b"\x00\x00\x00\x01ftyp" + (32).to_bytes(8, "big") + b"avif\x00\x00\x00\x00mif1",
+        ".avif",
+    ),
+    "heic in a box running to the end": (ftyp(b"mif1", b"mif1", b"heic", size=0), ".heic"),
     "tiff little-endian": (b"II*\x00\x08\x00", ".tiff"),
     "tiff big-endian": (b"MM\x00*\x00\x08", ".tiff"),
     "ico": (b"\x00\x00\x01\x00\x01\x00", ".ico"),
@@ -169,7 +183,10 @@ NOT_IMAGES = {
     "gzip": b"\x1f\x8b\x08\x00",
     "windows exe": b"MZ\x90\x00\x03\x00",
     "mp4": ftyp(b"isom", b"isom", b"iso2", b"avc1", b"mp41"),
-    "ftyp size past its brands": b"\xff\xff\xff\xffftypisom\x00\x00\x00\x00",
+    "mp4 with a 256-byte ftyp box": ftyp(b"isom", *[b"isom"] * 60),
+    "image brand past the scan limit": ftyp(b"isom", *[b"isom"] * 70, b"avif"),
+    "text starting with BM": b"BMW part not found",
+    "ico header with no images": b"\x00\x00\x01\x00\x00\x00",
     "too short": b"\xff\xd8",
 }
 
@@ -209,3 +226,46 @@ def test_cached_jpeg_reused_for_a_jpeg_url(tmp_path):
     items, _, fetcher = run_images({**shop([url]), url: (200, JPEG)}, tmp_path)
     assert fetcher.count(url) == 0
     assert items[0]["scraped_images"][0]["status"] == "uptodate"
+
+
+def test_cached_file_found_whatever_the_url_suffix(tmp_path):
+    # Saved under the format the bytes had, which the URL needn't name
+    no_suffix = "https://cdn.test/b/noext"
+    favicon = "https://cdn.test/favicon.ico"
+    full = tmp_path / "full"
+    full.mkdir()
+    (full / f"{sha1(no_suffix)}.webp").write_bytes(WEBP)
+    (full / f"{sha1(favicon)}.png").write_bytes(PNG)
+    routes = {**shop([no_suffix, favicon]), no_suffix: (200, WEBP), favicon: (200, PNG)}
+    items, _, fetcher = run_images(routes, tmp_path)
+    assert fetcher.count(no_suffix) == fetcher.count(favicon) == 0
+    assert [r["status"] for r in items[0]["scraped_images"]] == ["uptodate", "uptodate"]
+
+
+@pytest.mark.parametrize(
+    "cached", [b"", b"<html>Not Found</html>", PNG], ids=["empty", "html", "other format"]
+)
+def test_cached_file_not_in_its_named_format_is_redownloaded(tmp_path, cached):
+    url = "https://cdn.test/photo.jpg"
+    full = tmp_path / "full"
+    full.mkdir()
+    path = full / f"{sha1(url)}.jpg"
+    path.write_bytes(cached)
+    items, _, fetcher = run_images({**shop([url]), url: (200, JPEG)}, tmp_path)
+    assert fetcher.count(url) == 1
+    assert items[0]["scraped_images"][0]["status"] == "downloaded"
+    assert path.read_bytes() == JPEG
+
+
+def test_rejection_names_the_content_type_and_first_bytes(tmp_path, caplog):
+    url = "https://cdn.test/photo.jpg"
+    body = b"<!DOCTYPE html><html>"
+    routes = {**shop([url]), url: (200, body, {"Content-Type": "text/html"})}
+    run_images(routes, tmp_path)
+    assert "Content-Type text/html, starts b'<!DOCTYPE html><'" in caplog.text
+
+
+def test_no_partial_file_left_after_saving(tmp_path):
+    url = "https://cdn.test/photo.jpg"
+    run_images({**shop([url]), url: (200, JPEG)}, tmp_path)
+    assert [p.name for p in (tmp_path / "full").iterdir()] == [f"{sha1(url)}.jpg"]

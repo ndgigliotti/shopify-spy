@@ -286,7 +286,7 @@ When using `--images`, each item includes a `scraped_images` field with download
 }
 ```
 
-Images are saved in their original format, named by the SHA-1 of their URL. The `path` is relative to the images directory (`output/images/` by default), and files younger than 90 days are reused (`"status": "uptodate"`).
+Images are saved in their original format, named by the SHA-1 of their URL, with the extension of the format their bytes are in. The `path` is relative to the images directory (`output/images/` by default), and files younger than 90 days are reused (`"status": "uptodate"`). Supported formats are JPEG, PNG, GIF, WebP, AVIF, HEIC/HEIF, JPEG XL, JPEG 2000, BMP, TIFF and ICO; anything else, such as an SVG or an error page served in place of an image, is logged and counted as a failed image instead of being saved.
 
 In CSV output, nested values (such as `product`) are JSON-encoded.
 
