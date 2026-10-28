@@ -29,12 +29,13 @@ SIGNATURES = (
     (b"\x89PNG\r\n\x1a\n", ".png"),
     (b"GIF87a", ".gif"),
     (b"GIF89a", ".gif"),
-    (b"BM", ".bmp"),
     (b"II*\x00", ".tiff"),
     (b"MM\x00*", ".tiff"),
-    (b"\x00\x00\x01\x00", ".ico"),
+    (b"II+\x00", ".tiff"),  # BigTIFF
+    (b"MM\x00+", ".tiff"),
     (b"\xff\x0a", ".jxl"),  # JPEG XL codestream
     (b"\x00\x00\x00\x0cJXL \r\n\x87\n", ".jxl"),  # JPEG XL container
+    (b"\x00\x00\x00\x0cjP  \r\n\x87\n", ".jp2"),  # JPEG 2000
 )
 # AVIF and HEIF share the ftyp box of MP4 video; only its brands say it's an image.
 # Checked in this order, since a HEIC or AVIF file may also list the generic mif1.
@@ -44,12 +45,8 @@ FTYP_BRANDS = {
     b"mif1": ".heif", b"msf1": ".heif",
 }  # fmt: skip
 FTYP_MAX = 256  # ftyp boxes are a few dozen bytes; don't scan a corrupt size field's worth
-# URL suffixes whose cached file can be reused, mapped to the extension it was saved under
-URL_SUFFIXES = {
-    ".jpg": ".jpg", ".jpeg": ".jpg", ".png": ".png", ".gif": ".gif", ".webp": ".webp",
-    ".avif": ".avif", ".heic": ".heic", ".heif": ".heif", ".bmp": ".bmp",
-    ".tif": ".tiff", ".tiff": ".tiff", ".ico": ".ico", ".jxl": ".jxl",
-}  # fmt: skip
+# A BMP's "BM" is followed by sizes; the DIB header's own size tells it from text
+BMP_HEADER_SIZES = {12, 40, 52, 56, 64, 108, 124}
 
 
 def image_name(url: str) -> str:
@@ -58,16 +55,31 @@ def image_name(url: str) -> str:
 
 def image_extension(body: bytes) -> str | None:
     """The extension for the image format the body starts with; None if it isn't one."""
+    if body[4:8] == b"ftyp":  # before ICO, whose signature is also a 256-byte box's size
+        return _ftyp_extension(body)
     for signature, ext in SIGNATURES:
         if body.startswith(signature):
             return ext
     if body.startswith(b"RIFF") and body[8:12] == b"WEBP":
         return ".webp"
-    if body[4:8] == b"ftyp":
-        end = min(int.from_bytes(body[:4], "big"), FTYP_MAX)
-        brands = {body[8:12]} | {body[i : i + 4] for i in range(16, end - 3, 4)}
-        return next((ext for brand, ext in FTYP_BRANDS.items() if brand in brands), None)
+    if body.startswith(b"BM") and int.from_bytes(body[14:18], "little") in BMP_HEADER_SIZES:
+        return ".bmp"
+    if body.startswith(b"\x00\x00\x01\x00") and body[4:6] not in (b"", b"\x00\x00"):
+        return ".ico"  # followed by a nonzero image count
     return None
+
+
+def _ftyp_extension(body: bytes) -> str | None:
+    size, start = int.from_bytes(body[:4], "big"), 8
+    if size == 1:  # a 64-bit size follows the box type
+        size, start = int.from_bytes(body[8:16], "big"), 16
+    elif size == 0:  # the box runs to the end of the file
+        size = len(body)
+    end = min(size, FTYP_MAX)
+    # Major brand, a 4-byte minor version, then compatible brands
+    brands = {body[start : start + 4]}
+    brands |= {body[i : i + 4] for i in range(start + 8, end - 3, 4)}
+    return next((ext for brand, ext in FTYP_BRANDS.items() if brand in brands), None)
 
 
 class ImageDownloader:
@@ -80,7 +92,7 @@ class ImageDownloader:
         self.session = session
         self.dir = images_dir / "full"
         self._results: SingleFlight[dict[str, Any] | None] = SingleFlight()
-        self._existing: dict[str, Path] | None = None  # image name -> file, listed once
+        self._existing: dict[str, list[Path]] | None = None  # image name -> files, listed once
 
     async def process(self, item: dict[str, Any]) -> dict[str, Any]:
         """Add a ``scraped_images`` list to the item; failed downloads are omitted."""
@@ -100,38 +112,42 @@ class ImageDownloader:
         item[RESULT_FIELD] = records
         return item
 
-    def _list_existing(self) -> dict[str, Path]:
-        """Map file names to files already in the folder (read once per store)."""
+    def _list_existing(self) -> dict[str, list[Path]]:
+        """Group the files already in the folder by image name (read once per store)."""
+        existing: dict[str, list[Path]] = {}
         if self.dir.is_dir():
-            return {path.name: path for path in self.dir.iterdir()}
-        return {}
+            for path in self.dir.iterdir():
+                existing.setdefault(path.stem, []).append(path)
+        return existing
 
-    async def _fresh(self, url: str, name: str) -> Path | None:
+    async def _cached(self, url: str, name: str) -> tuple[Path, bytes] | None:
         """A cached copy of the image younger than 90 days, if there is one.
 
-        Only a file with the extension the URL implies counts, so JPEGs re-encoded by
-        the Scrapy-era pipeline (same SHA-1 names) aren't reused for other formats.
-        URLs without an image extension, or whose image is in another format, aren't
-        served from the cache.
+        A cached file counts only if its bytes are the format its extension names. A
+        ``.jpg`` counts only for a JPEG URL, since the Scrapy-era pipeline saved every
+        image as a re-encoded JPEG under the same SHA-1 name.
         """
-        suffix = Path(urllib.parse.urlsplit(url).path).suffix.lower()
-        ext = URL_SUFFIXES.get(suffix)
-        if ext is None:
-            return None
         if self._existing is None:
             self._existing = await asyncio.to_thread(self._list_existing)
-        path = self._existing.get(f"{name}{ext}")
-        if path is None:
-            return None
-        age_days = (time.time() - path.stat().st_mtime) / 86400
-        return path if age_days < EXPIRES_DAYS else None
+        jpeg_url = Path(urllib.parse.urlsplit(url).path).suffix.lower() in (".jpg", ".jpeg")
+        for path in self._existing.get(name, ()):
+            if path.suffix == ".jpg" and not jpeg_url:
+                continue
+            try:
+                if (time.time() - path.stat().st_mtime) / 86400 >= EXPIRES_DAYS:
+                    continue
+                body = await asyncio.to_thread(path.read_bytes)
+            except OSError:
+                continue
+            if image_extension(body) == path.suffix:
+                return path, body
+        return None
 
     async def _download(self, url: str) -> dict[str, Any] | None:
         name = image_name(url)
-        existing = await self._fresh(url, name)
-        if existing is not None:
-            body = await asyncio.to_thread(existing.read_bytes)
-            return _record(url, existing, body, "uptodate")
+        cached = await self._cached(url, name)
+        if cached is not None:
+            return _record(url, *cached, "uptodate")
         try:
             response = await self.session.get(url, kind=IMAGE)
         except RequestFailed as exc:
@@ -144,7 +160,11 @@ class ImageDownloader:
             return self._failed(url, "empty body")
         ext = image_extension(response.body)
         if ext is None:
-            return self._failed(url, "not an image in a known format")
+            content_type = response.headers.get("content-type") or "none"
+            return self._failed(
+                url,
+                f"unsupported format: Content-Type {content_type}, starts {response.body[:16]!r}",
+            )
         path = self.dir / f"{name}{ext}"
         try:
             await asyncio.to_thread(_save, path, response.body)
@@ -159,8 +179,11 @@ class ImageDownloader:
 
 
 def _save(path: Path, body: bytes) -> None:
+    """Write via a temporary file, so an interrupted save never leaves a partial image."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(body)
+    partial = path.with_name(f"{path.name}.part")
+    partial.write_bytes(body)
+    partial.replace(path)
 
 
 def _record(url: str, path: Path, body: bytes, status: str) -> dict[str, Any]:

@@ -46,12 +46,12 @@ file; you don't need to change how you run it.
   like `{'id': 1}`); lists of strings such as `image_urls` are still comma-joined.
   Shopify CSVs always include the `collection` column when collections are scraped.
 - Images keep their original format and extension instead of being re-encoded as
-  JPEG; `checksum` is the MD5 of the original file. A cached image is reused only
-  when its extension matches the URL's, so PNG/WebP images cached as re-encoded
-  JPEGs are downloaded once more in their original format. The extension comes from
-  the file's own leading bytes; a download that isn't a JPEG, PNG, GIF, WebP, AVIF,
-  HEIC/HEIF, JPEG XL, BMP, TIFF or ICO image (an error page, an SVG, a PDF) is counted as a
-  failed image and not saved.
+  JPEG; `checksum` is the MD5 of the original file. The extension comes from the
+  file's own leading bytes; a download that isn't a JPEG, PNG, GIF, WebP, AVIF,
+  HEIC/HEIF, JPEG XL, JPEG 2000, BMP, TIFF or ICO image (an error page, an SVG, a
+  PDF) is counted as a failed image and not saved. A cached `.jpg` is reused only for
+  JPEG URLs, so PNG/WebP images cached as re-encoded JPEGs are downloaded once more
+  in their original format.
 - Status files gain a `code` field per URL (the library's `StoreStatus`); the
   existing `status` strings are unchanged. Stores stopped by Ctrl-C before they
   produced anything now show `stopped` instead of `no response`.
