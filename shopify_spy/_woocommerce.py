@@ -6,6 +6,7 @@ import logging
 import urllib.parse
 from typing import Any
 
+from shopify_spy._fetch import Response
 from shopify_spy._session import Emit, RequestFailed, StoreContext
 from shopify_spy._utils import next_page_url, normalize_url
 
@@ -35,6 +36,7 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
 
     Any failure ends the store; WooCommerce has no fallback.
     """
+    by_id = True
     url = get_api_url(ctx.url)
     first = True
     seen_ids: set[Any] = set()
@@ -46,9 +48,10 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
             return False
         if response is None:
             return False
-        if first and response.status == 400 and "orderby=id" in url:
-            # Store API versions without orderby=id reject it as rest_invalid_param
+        if first and by_id and _rejects_param(response):
+            # Store API versions without orderby=id reject it; page in the default order
             logger.info("Store API rejected orderby=id for %s; using its default order", url)
+            by_id = False
             url = get_api_url(ctx.url, by_id=False)
             continue
         if not response.ok:
@@ -86,6 +89,13 @@ def _item(product: dict[str, Any], store: str, images: bool) -> dict[str, Any]:
         else []
     )
     return product
+
+
+def _rejects_param(response: Response) -> bool:
+    if response.status != 400:
+        return False
+    data = response.json_or_none()
+    return isinstance(data, dict) and data.get("code") == "rest_invalid_param"
 
 
 def _looks_like_shopify(data: Any) -> bool:

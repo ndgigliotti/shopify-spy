@@ -181,6 +181,21 @@ def test_refusal_after_answers_at_the_slower_rate_doubles_again(clock):
     assert s.floor == pytest.approx(2.0 * 0.98 * 2)  # eased once, then doubled
 
 
+def test_answers_to_requests_sent_before_the_slowdown_dont_rearm(clock):
+    # Concurrent requests sent at the old rate: 429, 200, 429, 200, 429 must slow
+    # the host once, not three times
+    s = slot(start_delay=1.0, max_delay=60.0)
+    sent_before = clock.t
+    clock.t += 1.0
+    for _ in range(3):
+        s.pause(1.0)
+        s.adjust(0.1, 200, sent_at=sent_before)
+    assert s.floor == pytest.approx(2.0 * 0.98**3)  # doubled once, eased by the 200s
+    s.adjust(0.1, 200, sent_at=clock.t)  # sent at the slower rate
+    s.pause(1.0)
+    assert s.floor == pytest.approx(2.0 * 0.98**4 * 2)
+
+
 def test_blocks_and_errors_dont_count_as_answers(clock):
     s = slot(start_delay=1.0, max_delay=60.0)
     s.pause(1.0)
