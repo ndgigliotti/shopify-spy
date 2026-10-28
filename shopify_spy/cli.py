@@ -30,9 +30,18 @@ from shopify_spy._fetch import FetcherFactory
 from shopify_spy._results import _PLATFORM_NAMES, RunResult, StoreResult, StoreStatus
 from shopify_spy._utils import normalize_url, read_url_file, split_valid_urls
 
+# Shown under --help so agents find the Python API, not just the CLI
+LIBRARY_EPILOG = (
+    "Also a Python library: [bold]import shopify_spy as spy[/bold]; "
+    "spy.scrape(urls) yields items as dicts (options: help(spy.scrape)). "
+    "Run a script without installing anything: "
+    "[bold]uv run --with 'shopify-spy>=0.3' python script.py[/bold]"
+)
+
 app = typer.Typer(
     name="shopify-spy",
-    help="Scrape product and collection data from Shopify stores.",
+    help="Scrape product and collection data from Shopify and WooCommerce stores.",
+    epilog=LIBRARY_EPILOG,
     no_args_is_help=True,
 )
 console = Console()
@@ -66,10 +75,10 @@ def main(
         ),
     ] = None,
 ) -> None:
-    """Shopify Spy - Scrape product data from any Shopify store."""
+    """Shopify Spy - Scrape product data from Shopify and WooCommerce stores."""
 
 
-@app.command()
+@app.command(epilog=LIBRARY_EPILOG)
 def scrape(
     urls: Annotated[
         list[str] | None,

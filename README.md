@@ -21,17 +21,35 @@ pipx install shopify-spy
 
 # uv
 uv tool install shopify-spy
+
+# Or run it once without installing
+uvx shopify-spy scrape --peek https://www.example.com
 ```
 
-Or install with pip if you want it in a specific virtual environment:
+To use it as a Python library (`import shopify_spy`), the package has to be in the environment the script runs in; a `pipx` or `uv tool` install only provides the command:
 
 ```bash
-pip install shopify-spy
+# In a project (this also installs the CLI)
+uv add shopify-spy        # or: pip install shopify-spy
+
+# A one-off script, no project or virtual environment needed
+uv run --with 'shopify-spy>=0.3' python script.py
+```
+
+A script can also declare the dependency itself ([inline script metadata](https://packaging.python.org/en/latest/specifications/inline-script-metadata/)), so `uv run script.py` works from any directory:
+
+```python
+# /// script
+# dependencies = ["shopify-spy>=0.3"]
+# ///
+import shopify_spy as spy
 ```
 
 Requires Python 3.11+.
 
 ## Quick Start
+
+### Command line
 
 ```bash
 # Scrape a Shopify store (default)
@@ -70,6 +88,26 @@ shopify-spy scrape --ignore-robots https://www.example.com
 
 Results are saved as JSONL in the output directory (default: `./output`). Use `--format` to choose JSON, CSV, or XML instead. A live item counter is displayed during scraping.
 
+### Python
+
+The same engine is a library, so a script can scrape, filter and save in one pass:
+
+```python
+import shopify_spy as spy
+
+# Items are plain dicts, yielded while the stores are scraped
+for item in spy.scrape("https://www.example.com", max_items_per_store=100):
+    print(item["product"]["title"])
+
+# Several stores to a file, then check which ones failed and why
+run = spy.scrape(["store1.com", "store2.com"], on_failure="warn")
+spy.write_items(run, "products.jsonl")
+for store in run.result.failed:
+    print(store.input_url, store.status, store.hint)
+```
+
+See [Use as a library](#use-as-a-library) for the options, failure handling, images and async use. `help(spy.scrape)` documents every option.
+
 ## Features
 
 - **Automatic user-agent rotation.** Requests use a random browser user-agent. If a server responds with 403, the tool swaps to a different UA and retries.
@@ -82,6 +120,8 @@ Results are saved as JSONL in the output directory (default: `./output`). Use `-
 - **Status JSON.** Each run writes a machine-readable status file with per-URL results, errors, and timing.
 - **Bail timeout.** Automatically aborts if no items are scraped within `--bail` seconds (default: 30).
 - **Coding-agent friendly.** Designed for use by AI coding agents (Claude Code, Cursor, etc.):
+  - Suggested workflow, with nothing to install: `uvx shopify-spy scrape --peek URL` to see an item's shape, then a script run with `uv run --with 'shopify-spy>=0.3' python script.py` that filters and saves only what the task needs. Use the CLI for whole-catalog dumps and image downloads.
+  - Agents can write Python scripts against the library instead of driving the CLI: items are plain dicts with typed definitions (`ShopifyProductItem`, `WooCommerceProductItem`), `summarize()` gives the same fields on both platforms, and every option is documented in `help(spy.scrape)`
   - `--peek` pipes a single item to stdout for quick schema inspection; warnings and errors go to stderr, so stdout stays valid JSONL
   - Non-zero exit codes on failure with diagnostic messages explaining why
   - Status JSON with machine-readable per-URL results and error details
@@ -327,17 +367,6 @@ import polars as pl
 df = pl.read_ndjson("output/shopify_spider_2024-01-15.jsonl")
 ```
 
-## Limitations
-
-**WooCommerce Store API required.** The WooCommerce spider uses the public Store API (`/wp-json/wc/store/v1/products`), available in WooCommerce 3.x and later. Stores that have disabled the REST API via security plugins or broadly block crawlers may not be scrapeable. When a scrape returns 0 items, the tool prints a diagnostic message explaining the likely cause (403 Forbidden, 404 Not Found, robots.txt blocking, etc.) and exits with code 1.
-
-**Rate limiting.** Scraping very large stores may result in temporary bans. Auto-throttling is enabled by default, but you can adjust the settings or disable it for faster scraping:
-
-```bash
-# Disable throttling (faster but riskier)
-shopify-spy scrape https://example.com --no-throttle
-```
-
 ## Use as a library
 
 The CLI is built on a Python API that scripts (and coding agents) can use directly:
@@ -383,6 +412,17 @@ result = await spy.scrape_async(urls, platform="woocommerce")  # RunResult with 
 ```
 
 `scrape()` runs its own event loop, so it raises a clear error inside an already running loop (Jupyter, async frameworks); use `scrape_async()` there.
+
+## Limitations
+
+**WooCommerce Store API required.** WooCommerce scraping uses the public Store API (`/wp-json/wc/store/v1/products`), available in WooCommerce 3.x and later. Stores that have disabled the REST API via security plugins or broadly block crawlers may not be scrapeable. When a scrape returns 0 items, the tool prints a diagnostic message explaining the likely cause (403 Forbidden, 404 Not Found, robots.txt blocking, etc.) and exits with code 1.
+
+**Rate limiting.** Scraping very large stores may result in temporary bans. Auto-throttling is enabled by default, but you can adjust the settings or disable it for faster scraping:
+
+```bash
+# Disable throttling (faster but riskier)
+shopify-spy scrape https://example.com --no-throttle
+```
 
 ## Feedback
 
