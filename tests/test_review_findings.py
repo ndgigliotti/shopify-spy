@@ -136,7 +136,7 @@ def test_scrapy_era_jpeg_is_not_reused_for_a_png_url(tmp_path):
     old.write_bytes(b"lossy jpeg")
     routes = {
         bulk_url(1): {"products": [product(1, images=[{"src": png_url}])]},
-        png_url: (200, b"original png", {"Content-Type": "image/png"}),
+        png_url: (200, b"\x89PNG\r\n\x1a\noriginal", {"Content-Type": "image/png"}),
     }
     items, _, _ = scrape(routes, images=True, images_dir=tmp_path)
     record = items[0]["scraped_images"][0]

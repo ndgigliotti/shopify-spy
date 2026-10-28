@@ -23,7 +23,7 @@ def test_items_survive_image_save_failure(tmp_path):
     images_dir = tmp_path / "not-a-dir"
     images_dir.write_text("a file, so saving images fails")
     routes = {bulk_url(1): products(3)} | {
-        f"https://cdn.test/{i}.jpg": (200, b"img") for i in range(3)
+        f"https://cdn.test/{i}.jpg": (200, b"\xff\xd8\xff\xe0jpeg") for i in range(3)
     }
     items, result, _ = scrape(routes, images=True, images_dir=images_dir)
     assert len(items) == 3
