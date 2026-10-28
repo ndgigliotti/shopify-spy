@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import mimetypes
 import time
 import urllib.parse
 from pathlib import Path
@@ -23,8 +22,33 @@ logger = logging.getLogger("shopify_spy")
 
 EXPIRES_DAYS = 90
 RESULT_FIELD = "scraped_images"
-IMAGE_EXTENSIONS = {
-    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".svg", ".bmp", ".tif", ".tiff", ".ico",
+
+# Leading bytes of each image format stores serve, and the extension it's saved under
+SIGNATURES = (
+    (b"\xff\xd8\xff", ".jpg"),
+    (b"\x89PNG\r\n\x1a\n", ".png"),
+    (b"GIF87a", ".gif"),
+    (b"GIF89a", ".gif"),
+    (b"BM", ".bmp"),
+    (b"II*\x00", ".tiff"),
+    (b"MM\x00*", ".tiff"),
+    (b"\x00\x00\x01\x00", ".ico"),
+    (b"\xff\x0a", ".jxl"),  # JPEG XL codestream
+    (b"\x00\x00\x00\x0cJXL \r\n\x87\n", ".jxl"),  # JPEG XL container
+)
+# AVIF and HEIF share the ftyp box of MP4 video; only its brands say it's an image.
+# Checked in this order, since a HEIC or AVIF file may also list the generic mif1.
+FTYP_BRANDS = {
+    b"avif": ".avif", b"avis": ".avif",
+    b"heic": ".heic", b"heix": ".heic", b"hevc": ".heic", b"hevx": ".heic",
+    b"mif1": ".heif", b"msf1": ".heif",
+}  # fmt: skip
+FTYP_MAX = 256  # ftyp boxes are a few dozen bytes; don't scan a corrupt size field's worth
+# URL suffixes whose cached file can be reused, mapped to the extension it was saved under
+URL_SUFFIXES = {
+    ".jpg": ".jpg", ".jpeg": ".jpg", ".png": ".png", ".gif": ".gif", ".webp": ".webp",
+    ".avif": ".avif", ".heic": ".heic", ".heif": ".heif", ".bmp": ".bmp",
+    ".tif": ".tiff", ".tiff": ".tiff", ".ico": ".ico", ".jxl": ".jxl",
 }  # fmt: skip
 
 
@@ -32,15 +56,18 @@ def image_name(url: str) -> str:
     return hashlib.sha1(url.encode()).hexdigest()
 
 
-def _extension(url: str, content_type: str | None) -> str:
-    suffix = Path(urllib.parse.urlsplit(url).path).suffix.lower()
-    if suffix in IMAGE_EXTENSIONS:
-        return suffix
-    if content_type:
-        guessed = mimetypes.guess_extension(content_type.split(";")[0].strip())
-        if guessed:
-            return ".jpg" if guessed == ".jpe" else guessed
-    return ".jpg"
+def image_extension(body: bytes) -> str | None:
+    """The extension for the image format the body starts with; None if it isn't one."""
+    for signature, ext in SIGNATURES:
+        if body.startswith(signature):
+            return ext
+    if body.startswith(b"RIFF") and body[8:12] == b"WEBP":
+        return ".webp"
+    if body[4:8] == b"ftyp":
+        end = min(int.from_bytes(body[:4], "big"), FTYP_MAX)
+        brands = {body[8:12]} | {body[i : i + 4] for i in range(16, end - 3, 4)}
+        return next((ext for brand, ext in FTYP_BRANDS.items() if brand in brands), None)
+    return None
 
 
 class ImageDownloader:
@@ -84,14 +111,16 @@ class ImageDownloader:
 
         Only a file with the extension the URL implies counts, so JPEGs re-encoded by
         the Scrapy-era pipeline (same SHA-1 names) aren't reused for other formats.
-        URLs without an image extension aren't served from the cache.
+        URLs without an image extension, or whose image is in another format, aren't
+        served from the cache.
         """
         suffix = Path(urllib.parse.urlsplit(url).path).suffix.lower()
-        if suffix not in IMAGE_EXTENSIONS:
+        ext = URL_SUFFIXES.get(suffix)
+        if ext is None:
             return None
         if self._existing is None:
             self._existing = await asyncio.to_thread(self._list_existing)
-        path = self._existing.get(f"{name}{suffix}")
+        path = self._existing.get(f"{name}{ext}")
         if path is None:
             return None
         age_days = (time.time() - path.stat().st_mtime) / 86400
@@ -113,7 +142,10 @@ class ImageDownloader:
             return self._failed(url, f"HTTP {response.status}")
         if not response.body:
             return self._failed(url, "empty body")
-        path = self.dir / f"{name}{_extension(url, response.headers.get('content-type'))}"
+        ext = image_extension(response.body)
+        if ext is None:
+            return self._failed(url, "not an image in a known format")
+        path = self.dir / f"{name}{ext}"
         try:
             await asyncio.to_thread(_save, path, response.body)
         except OSError as exc:
