@@ -223,4 +223,4 @@ def write_status(
         "log_file": log_file,
     }
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(json.dumps(data, indent=2) + "\n")
+    Path(path).write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")

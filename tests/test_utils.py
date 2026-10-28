@@ -114,3 +114,10 @@ def test_read_url_file_skips_blanks_and_comments(tmp_path):
     url_file = tmp_path / "urls.txt"
     url_file.write_text("store.com\n\n# a comment\n  other.com:8080  \n")
     assert read_url_file(url_file) == ["store.com", "other.com:8080"]
+
+
+def test_read_url_file_is_utf8_whatever_the_locale(tmp_path):
+    # Windows' default encoding is cp1252, and Notepad may add a byte-order mark
+    url_file = tmp_path / "urls.txt"
+    url_file.write_bytes("﻿café.example\n# boutique à Paris\nstore.com\n".encode())
+    assert read_url_file(url_file) == ["café.example", "store.com"]

@@ -163,7 +163,8 @@ def load_config_from_file(path: Path) -> Config:
     """Load and validate configuration from a specific file."""
     import yaml
 
-    with open(path) as f:
+    # utf-8-sig also accepts the byte-order mark Windows editors may add
+    with open(path, encoding="utf-8-sig") as f:
         data = yaml.safe_load(f)
 
     if data is None:
@@ -186,5 +187,5 @@ def create_default_config(path: Path | None = None) -> Path:
 
     path = path.expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(DEFAULT_CONFIG_YAML)
+    path.write_text(DEFAULT_CONFIG_YAML, encoding="utf-8")
     return path

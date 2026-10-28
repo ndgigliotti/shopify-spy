@@ -53,6 +53,14 @@ network:
     assert config.network.concurrent_requests == 8
 
 
+def test_load_config_is_utf8_whatever_the_locale(tmp_path):
+    # Windows' default encoding is cp1252, and Notepad may add a byte-order mark
+    config_file = tmp_path / "config.yaml"
+    yaml_text = "network:\n  user_agent: Café-Bot/1.0 ☕\n"
+    config_file.write_bytes(("﻿" + yaml_text).encode())
+    assert load_config_from_file(config_file).network.user_agent == "Café-Bot/1.0 ☕"
+
+
 def test_load_config_empty_file(tmp_path):
     config_file = tmp_path / "empty.yaml"
     config_file.write_text("")
