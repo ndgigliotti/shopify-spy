@@ -552,8 +552,8 @@ async def _scrape(
         signal.signal(signal.SIGINT, previous)
         if writer is not None:
             writer.close()
-        if show_counter and count:  # the throttled redraw can skip the final count
-            print(f"\r  Scraped {count} items...", end="", flush=True)
+    if show_counter and count:  # the throttled redraw can skip the final count
+        print(f"\r  Scraped {count} items...", end="", flush=True)
     return run.result, forced
 
 

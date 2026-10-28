@@ -113,6 +113,15 @@ def test_falls_back_to_default_order_when_orderby_id_rejected():
     assert result.stores[0].complete
 
 
+def test_other_400_on_first_page_ends_store():
+    # A WAF or bot block, not an unsupported orderby: no second request
+    default = f"{STORE}/wp-json/wc/store/v1/products?per_page=100&page=1"
+    items, result, fetcher = scrape_woo({woo_url(1): (400, "<html>Bad Request</html>")})
+    assert items == []
+    assert fetcher.count(default) == 0
+    assert result.stores[0].responses_by_status == {400: 1}
+
+
 def test_400_on_later_page_ends_store():
     routes = {woo_url(1): page(2), woo_url(2): (400, ""), woo_url(3): page(2, 50)}
     items, result, fetcher = scrape_woo(routes)

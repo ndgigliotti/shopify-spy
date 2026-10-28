@@ -55,9 +55,10 @@ class HostSlot:
     Rate limits work like TCP congestion control: a rate limit doubles a delay floor
     (multiplicative decrease of the rate) and each answered request lowers it a
     little, so the host speeds up gradually until it pushes back again. Once slowed,
-    the host only doubles again after it has answered at the slower rate: refusals
-    before that come from requests sent at the old rate or from a cooldown that
-    refuses everything for a while, and waiting is the answer to both.
+    the host only doubles again after it has answered normally a request sent at the
+    slower rate: refusals before that come from requests sent at the old rate or from
+    a cooldown that refuses everything for a while, and waiting is the answer to both.
+    Answers to requests sent before the slowdown don't count either way.
     """
 
     FLOOR_DECAY = 0.98  # per answered request: the floor halves in ~34 of them
@@ -70,12 +71,13 @@ class HostSlot:
         self.floor = 0.0  # raised by pause(); adjust() never goes below it
         self.last_seen: float | None = None
         self.paused_until = 0.0
-        # Whether the host has answered normally since the last doubling
+        self.slowed_at = float("-inf")  # when pause() last doubled the delay
+        # Whether a request sent since then was answered normally
         self.answered_since_slowdown = True
         self._gate = asyncio.Lock()
 
-    async def wait_turn(self) -> None:
-        """Wait until the throttle allows the next request to leave this slot."""
+    async def wait_turn(self) -> float:
+        """Wait until the throttle allows the next request to leave; return its send time."""
         async with self._gate:
             # A rate limit can extend the pause while we sleep, so check again
             while (pause := self.paused_until - now()) > 0:
@@ -85,12 +87,17 @@ class HostSlot:
                 if wait > 0:
                     await asyncio.sleep(wait)
             self.last_seen = now()
+            return self.last_seen
 
-    def adjust(self, latency: float, status: int) -> None:
-        """AutoThrottle: move the delay toward latency / target_concurrency."""
+    def adjust(self, latency: float, status: int, sent_at: float = float("inf")) -> None:
+        """AutoThrottle: move the delay toward latency / target_concurrency.
+
+        ``sent_at`` is the request's send time from wait_turn.
+        """
         if status < 400 or status == 404:  # answered normally (403/430 are blocks)
-            self.answered_since_slowdown = True
             self.floor *= self.FLOOR_DECAY
+            if sent_at >= self.slowed_at:
+                self.answered_since_slowdown = True
         if not self.throttle.enabled or status == 429:
             return  # pause() handles 429s; a quick refusal says nothing about load
         target = latency / self.throttle.target_concurrency
@@ -116,6 +123,7 @@ class HostSlot:
         if self.throttle.enabled:
             doubled = max(self.delay * 2, self.throttle.start_delay, self.MIN_RATE_LIMITED_DELAY)
             self.delay = self.floor = min(doubled, self.throttle.max_delay)
+        self.slowed_at = now()
         self.answered_since_slowdown = False
 
 

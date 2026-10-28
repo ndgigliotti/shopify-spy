@@ -308,7 +308,7 @@ class StoreSession:
             response: Response | None = None
             error: FetchError | None = None
             async with self._store_slots, slot.semaphore:
-                await slot.wait_turn()
+                sent_at = await slot.wait_turn()
                 self.stats.requests += 1
                 try:
                     response = await self.fetcher.fetch(
@@ -322,7 +322,7 @@ class StoreSession:
                 except FetchError as exc:
                     error = exc
             if response is not None:
-                slot.adjust(response.latency, response.status)
+                slot.adjust(response.latency, response.status, sent_at)
                 if kind.counted:
                     self.stats.responses += 1
                     self.stats.by_status[response.status] += 1
