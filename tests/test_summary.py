@@ -86,6 +86,12 @@ def test_woocommerce_minor_units():
     assert s.image_urls == ["https://woo.test/mug.jpg"]
 
 
+def test_woocommerce_title_html_entities_decoded():
+    item = {**WOO_PRODUCT, "name": "17&#8243; Canton Box &amp; Lid"}
+    assert spy.summarize(item).title == "17″ Canton Box & Lid"
+    assert item["name"] == "17&#8243; Canton Box &amp; Lid"  # the item itself is untouched
+
+
 def test_woocommerce_price_without_range():
     prices = {"price": "500", "currency_code": "JPY", "currency_minor_unit": 0}
     s = spy.summarize({**WOO_PRODUCT, "prices": prices})

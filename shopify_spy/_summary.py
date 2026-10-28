@@ -8,6 +8,7 @@ units); this reads either.
 from __future__ import annotations
 
 import dataclasses
+import html
 import urllib.parse
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
@@ -104,7 +105,8 @@ def _woocommerce(item: dict[str, Any]) -> ItemSummary:
         kind="product",
         platform="woocommerce",
         id=item.get("id"),
-        title=item.get("name"),
+        # The Store API returns names as HTML (17&#8243; for 17″); the item keeps it raw
+        title=html.unescape(name) if isinstance(name := item.get("name"), str) else name,
         min_price=low if low is not None else price,
         max_price=high if high is not None else price,
         currency=prices.get("currency_code"),
