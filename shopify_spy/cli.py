@@ -1,49 +1,56 @@
-"""Command-line interface for Shopify Spy."""
+"""Command-line interface for Shopify Spy, built on the public library API."""
 
+from __future__ import annotations
+
+import asyncio
 import json
 import logging
+import signal
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated, Any
 
 import platformdirs
 import typer
 from rich.console import Console
 from rich.markup import escape
 
-from shopify_spy.config import (
-    OUTPUT_FORMATS,
+from shopify_spy._api import AsyncScrapeRun, scrape_async
+from shopify_spy._config import (
     Config,
     OutputFormat,
     Platform,
     create_default_config,
     load_config,
 )
-from shopify_spy.constants import (
-    NO_ITEM_TIMEOUT_REASON,
-    STORE_RESPONSE_COUNT,
-    STORE_RESPONSE_STATUS_COUNT,
-    STORE_SUCCESS_COUNT,
-)
-from shopify_spy.utils import normalize_url, read_url_file, split_valid_urls
+from shopify_spy._export import EXTENSIONS, ItemWriter, write_status
+from shopify_spy._fetch import FetcherFactory
+from shopify_spy._results import _PLATFORM_NAMES, RunResult, StoreResult, StoreStatus
+from shopify_spy._utils import normalize_url, read_url_file, split_valid_urls
 
-if TYPE_CHECKING:
-    from scrapy.settings import Settings
+# Shown under --help so agents find the Python API, not just the CLI
+LIBRARY_EPILOG = (
+    "Also a Python library: [bold]import shopify_spy as spy[/bold]; "
+    "spy.scrape(urls) yields items as dicts (options: help(spy.scrape)). "
+    "Run a script without installing anything: "
+    "[bold]uv run --with 'shopify-spy>=0.3' python script.py[/bold]"
+)
 
 app = typer.Typer(
     name="shopify-spy",
-    help="Scrape product and collection data from Shopify stores.",
+    help="Scrape product and collection data from Shopify and WooCommerce stores.",
+    epilog=LIBRARY_EPILOG,
     no_args_is_help=True,
 )
 console = Console()
 # Warnings go to stderr so they don't mix with --peek's JSONL on stdout
 err_console = Console(stderr=True)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("shopify_spy")
 
-# Stat set on a crawler that raised instead of finishing (Scrapy's finish_reason is kept)
-CRAWLER_FAILED_STAT = "shopify_spy/crawler_failed"
+# Test hook: a transport factory to use instead of HTTP
+FETCHER_FACTORY: FetcherFactory | None = None
 
 
 def version_callback(value: bool) -> None:
@@ -68,10 +75,10 @@ def main(
         ),
     ] = None,
 ) -> None:
-    """Shopify Spy - Scrape product data from any Shopify store."""
+    """Shopify Spy - Scrape product data from Shopify and WooCommerce stores."""
 
 
-@app.command()
+@app.command(epilog=LIBRARY_EPILOG)
 def scrape(
     urls: Annotated[
         list[str] | None,
@@ -82,7 +89,7 @@ def scrape(
         typer.Option(
             "--url-file",
             "-f",
-            help="File containing URLs to scrape (one per line).",
+            help="File containing URLs to scrape (one per line; # starts a comment).",
             exists=True,
             dir_okay=False,
         ),
@@ -119,7 +126,11 @@ def scrape(
     ] = None,
     concurrent: Annotated[
         int | None,
-        typer.Option("--concurrent", help="Concurrent requests per domain."),
+        typer.Option("--concurrent", help="Concurrent requests per host."),
+    ] = None,
+    max_stores: Annotated[
+        int | None,
+        typer.Option("--max-stores", help="Stores scraped at once (default 16)."),
     ] = None,
     throttle: Annotated[
         bool | None,
@@ -128,7 +139,9 @@ def scrape(
     limit: Annotated[
         int | None,
         typer.Option(
-            "--limit", "-n", help="Stop after scraping N items. Useful for sampling or testing."
+            "--limit",
+            "-n",
+            help="Stop each store after N items (per store). Useful for sampling or testing.",
         ),
     ] = None,
     user_agent: Annotated[
@@ -136,9 +149,13 @@ def scrape(
         typer.Option("--user-agent", "-A", help="Custom User-Agent header."),
     ] = None,
     platform: Annotated[
-        Platform,
-        typer.Option("--platform", "-p", help="Ecommerce platform: shopify, woocommerce."),
-    ] = Platform.shopify,
+        Platform | None,
+        typer.Option(
+            "--platform",
+            "-p",
+            help="Ecommerce platform: shopify, woocommerce (default: shopify, or the config's).",
+        ),
+    ] = None,
     bail: Annotated[
         int | None,
         typer.Option(
@@ -153,6 +170,10 @@ def scrape(
             "-i",
             help="Ignore robots.txt restrictions.",
         ),
+    ] = False,
+    insecure: Annotated[
+        bool,
+        typer.Option("--insecure", help="Don't verify TLS certificates."),
     ] = False,
     peek: Annotated[
         bool,
@@ -186,14 +207,16 @@ def scrape(
         user_agent=user_agent,
         ignore_robots=ignore_robots,
         bail=bail,
+        insecure=insecure,
+        max_stores=max_stores,
     )
 
-    # --peek implies limit=1, quiet logging, no images
+    # --peek prints one item in total, logs quietly and downloads no images
     if peek:
-        if config.scrape.limit is None:
-            config = config.model_copy(
-                update={"scrape": config.scrape.model_copy(update={"limit": 1})}
-            )
+        scrape_update = {"limit": 1, "images": False}
+        config = config.model_copy(
+            update={"scrape": config.scrape.model_copy(update=scrape_update)}
+        )
         quiet = True
 
     # Validate flag combinations
@@ -202,7 +225,7 @@ def scrape(
         raise typer.Exit(1)
 
     # Warn about Shopify-only flags used with WooCommerce
-    if platform == Platform.woocommerce:
+    if config.scrape.platform == Platform.woocommerce:
         if collections is True:
             err_console.print(
                 "[yellow]Warning: --collections has no effect with WooCommerce "
@@ -221,7 +244,7 @@ def scrape(
         err_console.print("Provide a URL argument, --url-file, or run interactively.")
         raise typer.Exit(1)
 
-    # Skip malformed URLs; a spider that fails to start stops the whole run
+    # Skip malformed URLs and record them in the status file
     valid_urls, invalid_urls = split_valid_urls(all_urls)
     for u in invalid_urls:
         err_console.print(f"[yellow]Warning: Skipping invalid URL: {escape(u)}[/yellow]")
@@ -229,8 +252,7 @@ def scrape(
         err_console.print("[red]Error: No valid URLs provided.[/red]")
         raise typer.Exit(1)
 
-    # Run the spider
-    run_spider(
+    run_scrape(
         valid_urls, config, peek=peek, verbose=verbose, quiet=quiet, skipped_urls=invalid_urls
     )
 
@@ -274,9 +296,10 @@ def apply_cli_overrides(
     user_agent: str | None,
     ignore_robots: bool = False,
     bail: int | None = None,
+    insecure: bool = False,
+    max_stores: int | None = None,
 ) -> Config:
-    """Apply CLI argument overrides to config."""
-    # Create copies to avoid mutating original
+    """Apply CLI argument overrides to config. ``None`` keeps the config value."""
     scrape_dict = config.scrape.model_dump()
     output_dict = config.output.model_dump()
     network_dict = config.network.model_dump()
@@ -300,10 +323,14 @@ def apply_cli_overrides(
         output_dict["format"] = format
     if concurrent is not None:
         network_dict["concurrent_requests"] = concurrent
+    if max_stores is not None:
+        network_dict["max_concurrent_stores"] = max_stores
     if user_agent is not None:
         network_dict["user_agent"] = user_agent
     if ignore_robots:
         network_dict["respect_robots_txt"] = False
+    if insecure:
+        network_dict["verify_tls"] = False
     if throttle is not None:
         throttle_dict["enabled"] = throttle
 
@@ -334,20 +361,6 @@ def get_urls(urls: list[str] | None, url_file: Path | None) -> list[str]:
     return []
 
 
-def _load_settings() -> "Settings":
-    """Load shopify_spy.settings, independent of the working directory and environment.
-
-    get_project_settings() would only find it through a scrapy.cfg in the working directory
-    (which installed copies don't have), and would load another project's settings when
-    SCRAPY_SETTINGS_MODULE or a different scrapy.cfg is present.
-    """
-    from scrapy.settings import Settings
-
-    settings = Settings()
-    settings.setmodule("shopify_spy.settings", priority="project")
-    return settings
-
-
 def _log_dir() -> Path:
     """Return the platform-appropriate log directory, creating it if needed."""
     path = platformdirs.user_state_path("shopify-spy") / "logs"
@@ -355,54 +368,46 @@ def _log_dir() -> Path:
     return path
 
 
-def _finish_reason(crawlers: list, config: Config) -> str:
-    """Derive an overall finish reason from a list of crawlers."""
-    if any(c.stats.get_value(CRAWLER_FAILED_STAT, False) for c in crawlers):
-        return "crawler_failed"
-    reasons = [c.stats.get_value("finish_reason", "unknown") for c in crawlers]
-    if any(r == NO_ITEM_TIMEOUT_REASON for r in reasons):
-        return "bail"
-    limit = config.scrape.limit
-    if limit is not None:
-        total = sum(c.stats.get_value("item_scraped_count", 0) for c in crawlers)
-        if total >= limit:
-            return "item_limit"
-    if all(r == "finished" for r in reasons):
-        return "finished"
-    # Return the first non-"finished" reason
-    return next((r for r in reasons if r != "finished"), reasons[0])
+def csv_fields(config: Config) -> list[str] | None:
+    """Fixed CSV columns for Shopify, so mixed product/collection files keep both."""
+    if config.output.format != "csv" or config.scrape.platform != Platform.shopify:
+        return None
+    fields = ["product"] if config.scrape.products else []
+    if config.scrape.collections:
+        fields.append("collection")
+    fields += ["url", "store", "image_urls"]
+    if config.scrape.images:
+        fields.append("scraped_images")
+    return fields
 
 
-def _write_status_file(
-    status_path: Path,
-    crawlers: list,
-    urls: list[str],
-    config: Config,
-    duration: float,
-    log_file: Path | None,
-    total: int,
-    skipped_urls: list[str],
-) -> None:
-    """Write a _status.json file alongside the output."""
-    url_entries = []
-    for url, crawler in zip(urls, crawlers):
-        items = crawler.stats.get_value("item_scraped_count", 0)
-        failed = crawler.stats.get_value(CRAWLER_FAILED_STAT, False)
-        status = "ok" if items > 0 and not failed else _diagnose_crawler(crawler)
-        url_entries.append({"url": url, "items": items, "status": status})
-    url_entries += [{"url": url, "items": 0, "status": "invalid URL"} for url in skipped_urls]
-
-    data = {
-        "items_scraped": total,
-        "urls": url_entries,
-        "finish_reason": _finish_reason(crawlers, config),
-        "duration_seconds": round(duration, 1),
-        "log_file": str(log_file) if log_file else None,
-    }
-    status_path.write_text(json.dumps(data, indent=2) + "\n")
+def _setup_logging(log_file: Path | None, verbose: bool, quiet: bool) -> list[logging.Handler]:
+    level = logging.DEBUG if verbose else logging.WARNING if quiet else logging.INFO
+    fmt = logging.Formatter("%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+    handlers: list[logging.Handler] = []
+    if log_file is not None:
+        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+    if verbose or log_file is None:
+        # --verbose also logs to stderr; without a log file (--peek) warnings go there
+        handlers.append(logging.StreamHandler(sys.stderr))
+    for handler in handlers:
+        handler.setLevel(level)
+        handler.setFormatter(fmt)
+        logger.addHandler(handler)
+    logger.setLevel(level)
+    logger.propagate = False
+    return handlers
 
 
-def run_spider(
+def _restore_logging(handlers: list[logging.Handler], level: int, propagate: bool) -> None:
+    for handler in handlers:
+        logger.removeHandler(handler)
+        handler.close()
+    logger.setLevel(level)
+    logger.propagate = propagate
+
+
+def run_scrape(
     urls: list[str],
     config: Config,
     peek: bool = False,
@@ -410,113 +415,31 @@ def run_spider(
     quiet: bool = False,
     skipped_urls: list[str] | None = None,
 ) -> None:
-    """Run the appropriate spider with the given configuration.
+    """Scrape the stores, write output files, and print a summary.
 
     skipped_urls are invalid inputs the caller dropped; they are recorded in the status file.
     """
-    # Deferred imports to avoid loading Scrapy until needed
-    from scrapy.crawler import CrawlerProcess
-
-    settings = _load_settings()
-
-    # Generate a timestamp used for log, output, and status file names
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S+00-00")
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S+00-00")
     name = f"{config.scrape.platform.value}_spider"
 
-    # Configure output directory
     output_dir = config.output.dir.expanduser().resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    images_dir = (output_dir / config.output.images_subdir).resolve()
-    images_dir.mkdir(parents=True, exist_ok=True)
-
-    # Apply config to Scrapy settings
-    settings.set("CONCURRENT_REQUESTS_PER_DOMAIN", config.network.concurrent_requests)
-    settings.set("DOWNLOAD_TIMEOUT", config.network.timeout)
-    settings.set("RETRY_TIMES", config.network.retries)
-    settings.set("ROBOTSTXT_OBEY", config.network.respect_robots_txt)
-    settings.set("NO_ITEM_TIMEOUT", config.scrape.bail)
-    settings.set("IMAGES_STORE", str(images_dir))
-
-    # --- Logging setup ---
     log_file: Path | None = None
+    writer: ItemWriter | None = None
     if not peek:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / config.output.images_subdir).mkdir(parents=True, exist_ok=True)
         log_file = _log_dir() / f"{name}_{timestamp}.log"
-        settings.set("LOG_FILE", str(log_file))
-
-    log_level = "DEBUG" if verbose else "WARNING" if quiet else "INFO"
-    settings.set("LOG_LEVEL", log_level)
-
-    # --- Feed output ---
-    if peek:
-        settings.set(
-            "FEEDS",
-            {
-                "stdout://": {
-                    "format": "jsonlines",
-                    "encoding": "utf8",
-                }
-            },
-        )
-    else:
-        scrapy_format, file_ext = OUTPUT_FORMATS[config.output.format]
-        data_dir = output_dir / "data"
-        data_dir.mkdir(parents=True, exist_ok=True)
-        settings.set(
-            "FEEDS",
-            {
-                f"{data_dir.as_uri()}/{name}_{timestamp}{file_ext}": {
-                    "format": scrapy_format,
-                    "encoding": "utf8",
-                    "store_empty": False,
-                    "item_export_kwargs": {"export_empty_fields": True},
-                }
-            },
+        ext = EXTENSIONS[config.output.format]
+        writer = ItemWriter(
+            output_dir / "data" / f"{name}_{timestamp}{ext}",
+            config.output.format,
+            fields=csv_fields(config),
         )
 
-    if config.network.user_agent:
-        settings.set("USER_AGENT", config.network.user_agent)
-        # Disable our rotation middleware when user sets an explicit UA
-        middlewares = settings.getdict("DOWNLOADER_MIDDLEWARES", {}).copy()
-        middlewares["shopify_spy.middlewares.UserAgentMiddleware"] = None
-        middlewares["scrapy.downloadermiddlewares.useragent.UserAgentMiddleware"] = 400
-        settings.set("DOWNLOADER_MIDDLEWARES", middlewares)
-
-    # Configure auto-throttle
-    if config.throttle.enabled:
-        settings.set("AUTOTHROTTLE_ENABLED", True)
-        settings.set("AUTOTHROTTLE_START_DELAY", config.throttle.start_delay)
-        settings.set("AUTOTHROTTLE_MAX_DELAY", config.throttle.max_delay)
-        settings.set("AUTOTHROTTLE_TARGET_CONCURRENCY", config.throttle.target_concurrency)
-
-    # Disable image pipeline if images are disabled
-    if not config.scrape.images:
-        settings.set("ITEM_PIPELINES", {})
-
-    # --- Live item counter (unless quiet or peek) ---
-    show_counter = not peek and not quiet
-    counter: list[int] = [0]
-    if show_counter:
-        settings.set("_ITEM_COUNTER", counter)
-        extensions = settings.getdict("EXTENSIONS", {}).copy()
-        extensions["shopify_spy.extensions.LiveItemCounter"] = 501
-        settings.set("EXTENSIONS", extensions)
-
-    # Select spider and build kwargs based on platform
-    if config.scrape.platform == Platform.woocommerce:
-        from shopify_spy.spiders.woocommerce import WooCommerceSpider
-
-        spider_cls = WooCommerceSpider
-        spider_kwargs: dict = {"images": config.scrape.images, "limit": config.scrape.limit}
-    else:
-        from shopify_spy.spiders.shopify import ShopifySpider
-
-        spider_cls = ShopifySpider
-        spider_kwargs = {
-            "products": config.scrape.products,
-            "collections": config.scrape.collections,
-            "images": config.scrape.images,
-            "limit": config.scrape.limit,
-        }
+    kwargs: dict[str, Any] = config.to_kwargs()
+    kwargs["on_failure"] = "ignore"
+    if FETCHER_FACTORY is not None:
+        kwargs["fetcher_factory"] = FETCHER_FACTORY
 
     if not peek:
         console.print(f"[bold]Scraping {len(urls)} store(s)...[/bold]")
@@ -528,49 +451,33 @@ def run_spider(
         console.print(f"  Format: {config.output.format}")
         console.print(f"  Output: {output_dir}")
 
-    process = CrawlerProcess(settings)
-
-    # In verbose mode, also log to stderr (Scrapy only logs to file when LOG_FILE is set)
-    stderr_handler: logging.Handler | None = None
-    if verbose and log_file:
-        stderr_handler = logging.StreamHandler(sys.stderr)
-        stderr_handler.setLevel(logging.DEBUG)
-        stderr_handler.setFormatter(
-            logging.Formatter("%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+    saved = (logger.level, logger.propagate)
+    handlers = _setup_logging(log_file, verbose, quiet)
+    show_counter = not peek and not quiet
+    try:
+        result, forced = asyncio.run(
+            _scrape(urls, kwargs, writer=writer, peek=peek, show_counter=show_counter)
         )
-        logging.getLogger().addHandler(stderr_handler)
+    finally:
+        _restore_logging(handlers, *saved)
 
-    # Crawl each URL; keep crawlers in URL order (process.crawlers is an unordered set)
-    crawlers = []
-    for store_url in urls:
-        crawler = process.create_crawler(spider_cls)
-        deferred = process.crawl(crawler, url=store_url, **spider_kwargs)
-        deferred.addErrback(_record_failure, crawler, store_url)
-        crawlers.append(crawler)
-
-    start = time.monotonic()
-    process.start()
-    duration = time.monotonic() - start
-
-    # Clear the counter line
-    if show_counter and counter[0] > 0:
+    if show_counter and result.total_items > 0:
         print("\r" + " " * 40 + "\r", end="", flush=True)
 
-    # Clean up the stderr handler added for verbose mode
-    if stderr_handler is not None:
-        logging.getLogger().removeHandler(stderr_handler)
-
-    total = sum(c.stats.get_value("item_scraped_count", 0) for c in crawlers)
+    stores = result.stores
+    total = result.total_items
     multi = len(urls) > 1
-    crawler_failures = sum(bool(c.stats.get_value(CRAWLER_FAILED_STAT)) for c in crawlers)
+    failures = sum(s.status == StoreStatus.error for s in stores)
 
-    # Write status file (unless peek mode)
     if not peek:
-        status_dir = output_dir / "status"
-        status_dir.mkdir(parents=True, exist_ok=True)
-        status_path = status_dir / f"{name}_{timestamp}_status.json"
-        _write_status_file(
-            status_path, crawlers, urls, config, duration, log_file, total, skipped_urls or []
+        finish_reason = "shutdown" if forced else result.finish_reason
+        write_status(
+            output_dir / "status" / f"{name}_{timestamp}_status.json",
+            stores,
+            finish_reason=finish_reason,
+            duration=result.duration,
+            log_file=str(log_file) if log_file else None,
+            skipped_urls=skipped_urls,
         )
 
     if total > 0:
@@ -582,86 +489,81 @@ def run_spider(
             if log_file:
                 console.print(f"  Log: {log_file}")
             if multi:
-                for url, c in zip(urls, crawlers):
-                    console.print(f"  {escape(_host(url))}: {_diagnose_crawler(c)}")
-        if crawler_failures:
+                for s in stores:
+                    console.print(f"  {escape(_host(s.input_url))}: {_display_status(s)}")
+        if failures:
             (err_console if peek else console).print(
-                f"[yellow]Warning: {crawler_failures} store(s) failed with an error.[/yellow]"
+                f"[yellow]Warning: {failures} store(s) failed with an error.[/yellow]"
             )
         return
 
-    # Diagnose why nothing was scraped
-    statuses = [_diagnose_crawler(c) for c in crawlers]
-    # --peek reserves stdout for JSONL
+    # Diagnose why nothing was scraped; --peek reserves stdout for JSONL
     out = err_console if peek else console
-
     out.print("[yellow]Warning: Scraped 0 items.[/yellow]")
     if multi:
-        for url, status in zip(urls, statuses):
-            out.print(f"  {escape(_host(url))}: {status}")
-
-    for hint in _summary_hints(crawlers, statuses, config):
+        for s in stores:
+            out.print(f"  {escape(_host(s.input_url))}: {_display_status(s)}")
+    for hint in summary_hints(stores, config):
         out.print(f"  {hint}")
-
     if log_file:
         out.print(f"  Log: {log_file}")
-
     raise typer.Exit(1)
 
 
-def _summary_hints(crawlers: list, statuses: list[str], config: Config) -> list[str]:
-    """Return one hint per distinct zero-item status, in _diagnose_crawler's order."""
+async def _scrape(
+    urls: list[str],
+    kwargs: dict[str, Any],
+    *,
+    writer: ItemWriter | None,
+    peek: bool,
+    show_counter: bool,
+) -> tuple[RunResult, bool]:
+    """Run the scrape; first Ctrl-C stops gracefully, a second one forces it."""
+    run: AsyncScrapeRun = scrape_async(urls, **kwargs)
+    loop = asyncio.get_running_loop()
+    task = asyncio.current_task()
+    interrupts = 0
 
-    def total(status: str, code: int) -> int:
-        return sum(_store_status_count(c, code) for c, s in zip(crawlers, statuses) if s == status)
+    def on_sigint(signum: int, frame: object) -> None:
+        nonlocal interrupts
+        interrupts += 1
+        if interrupts == 1:
+            err_console.print(
+                "\n[yellow]Stopping: finishing in-flight requests "
+                "(Ctrl-C again to force)...[/yellow]"
+            )
+            loop.call_soon_threadsafe(run.request_shutdown)
+        elif task is not None:
+            loop.call_soon_threadsafe(task.cancel)
 
-    present = set(statuses)
-    hints = []
-    if "failed" in present:
-        n = statuses.count("failed")
-        hints.append(f"{n} store(s) failed with an error.")
-    if "403 Forbidden" in present:
-        hints.append(
-            f"Received {total('403 Forbidden', 403)} HTTP 403 (Forbidden) response(s). "
-            "The server is actively blocking scrapers."
-        )
-    if "404 Not Found" in present:
-        hints.append(
-            f"Received {total('404 Not Found', 404)} HTTP 404 (Not Found) response(s). "
-            "Check the URL and --platform flag."
-        )
-    if "blocked by robots.txt" in present:
-        hints.append(
-            "Likely blocked by robots.txt. Retry with [bold]--ignore-robots[/bold] (-i) to bypass."
-        )
-    if "timed out" in present:
-        hints.append(
-            f"Timed out after {config.scrape.bail}s with no items. "
-            "Use [bold]--bail 0[/bold] to disable."
-        )
-    if "no response" in present:
-        hints.append("No responses received. Check the URL and your network connection.")
-    if "0 items" in present:
-        hints.append("The store may be empty or the endpoint returned no products.")
-    return hints
-
-
-def _record_failure(failure: object, crawler: object, url: str) -> None:
-    """Errback for process.crawl(): log the error and mark the store as failed.
-
-    A crawler that failed before Scrapy created its stats gets empty ones, so the
-    summary can report it instead of crashing.
-    """
-    from scrapy.statscollectors import MemoryStatsCollector
-
-    logger.error(
-        "Spider failed for %s",
-        url,
-        exc_info=(failure.type, failure.value, failure.getTracebackObject()),
-    )
-    if crawler.stats is None:
-        crawler.stats = MemoryStatsCollector(crawler)
-    crawler.stats.set_value(CRAWLER_FAILED_STAT, True)
+    previous = signal.signal(signal.SIGINT, on_sigint)
+    forced = False
+    count = 0
+    last_draw = 0.0
+    try:
+        async with run:
+            async for item in run:
+                if peek:
+                    print(json.dumps(item, ensure_ascii=False), flush=True)
+                    break
+                assert writer is not None
+                writer.write(item)
+                count += 1
+                # Redraw at most ten times a second; printing every item is slow
+                if show_counter and (now := time.monotonic()) - last_draw >= 0.1:
+                    last_draw = now
+                    print(f"\r  Scraped {count} items...", end="", flush=True)
+    except asyncio.CancelledError:
+        forced = True
+        if task is not None:
+            task.uncancel()
+    finally:
+        signal.signal(signal.SIGINT, previous)
+        if writer is not None:
+            writer.close()
+    if show_counter and count:  # the throttled redraw can skip the final count
+        print(f"\r  Scraped {count} items...", end="", flush=True)
+    return run.result, forced
 
 
 def _host(url: str) -> str:
@@ -672,40 +574,64 @@ def _host(url: str) -> str:
         return url
 
 
-def _store_status_count(crawler: object, status: int) -> int:
-    """Count the store's responses with this HTTP status (robots.txt traffic excluded)."""
-    return crawler.stats.get_value(STORE_RESPONSE_STATUS_COUNT.format(status), 0)
-
-
-def _diagnose_crawler(crawler: object) -> str:
-    """Return a short status string for a single crawler.
-
-    Specific causes are checked before the timeout: a blocked store often keeps
-    retrying until --bail fires. _summary_hints relies on this being the only
-    place that decides a store's status.
-    """
-    if crawler.stats.get_value(CRAWLER_FAILED_STAT, False):
+def _display_status(store: StoreResult) -> str:
+    """Per-store summary text: the item count, or why there were none."""
+    if store.status == StoreStatus.error:
         return "failed"
-    items = crawler.stats.get_value("item_scraped_count", 0)
-    if items > 0:
-        return f"{items} items"
-    # Blocking causes only count if the store never answered with a 2xx: a 403 the UA
-    # swap recovered from, or the products.json 404 that triggers the sitemap
-    # fallback, is not why a store that also got a 2xx came up empty
-    if crawler.stats.get_value(STORE_SUCCESS_COUNT, 0) == 0:
-        # robots.txt first: when it stopped the store's requests, any 403/404 came
-        # from fallbacks it allowed
-        if crawler.stats.get_value("robotstxt/forbidden", 0) > 0:
-            return "blocked by robots.txt"
-        if _store_status_count(crawler, 403) > 0:
-            return "403 Forbidden"
-        if _store_status_count(crawler, 404) > 0:
-            return "404 Not Found"
-    if crawler.stats.get_value("finish_reason", "") == NO_ITEM_TIMEOUT_REASON:
-        return "timed out"
-    if crawler.stats.get_value(STORE_RESPONSE_COUNT, 0) == 0:
-        return "no response"
-    return "0 items"
+    if store.items > 0:
+        return f"{store.items} items"
+    return store.status.label
+
+
+def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
+    """Return one hint per distinct zero-item status, in diagnosis order."""
+
+    def total(status: StoreStatus, code: int) -> int:
+        return sum(s.responses_by_status.get(code, 0) for s in stores if s.status == status)
+
+    present = {s.status for s in stores}
+    hints = []
+    if StoreStatus.error in present:
+        n = sum(s.status == StoreStatus.error for s in stores)
+        hints.append(f"{n} store(s) failed with an error.")
+    if StoreStatus.forbidden in present:
+        hints.append(
+            f"Received {total(StoreStatus.forbidden, 403)} HTTP 403 (Forbidden) response(s). "
+            "The server is actively blocking scrapers."
+        )
+    if StoreStatus.not_found in present:
+        hints.append(
+            f"Received {total(StoreStatus.not_found, 404)} HTTP 404 (Not Found) response(s). "
+            "Check the URL and --platform flag."
+        )
+    if StoreStatus.robots_blocked in present:
+        hints.append(
+            "Likely blocked by robots.txt. Retry with [bold]--ignore-robots[/bold] (-i) to bypass."
+        )
+    if StoreStatus.timed_out in present:
+        hints.append(
+            f"Timed out after {config.scrape.bail}s with no items. "
+            "Use [bold]--bail 0[/bold] to disable."
+        )
+    if StoreStatus.tls_error in present:
+        hints.append(
+            "TLS certificate verification failed. "
+            "Retry with [bold]--insecure[/bold] to skip verification."
+        )
+    if StoreStatus.no_response in present:
+        hints.append("No responses received. Check the URL and your network connection.")
+    if StoreStatus.empty in present:
+        hints.append("The store may be empty or the endpoint returned no products.")
+    if StoreStatus.stopped in present:
+        hints.append("Stopped before every store finished.")
+    for s in stores:
+        if s.suggested_platform:
+            name = _PLATFORM_NAMES.get(s.suggested_platform, s.suggested_platform)
+            hints.append(
+                f"{escape(_host(s.input_url))} looks like {name}; "
+                f"use --platform {s.suggested_platform}."
+            )
+    return hints
 
 
 if __name__ == "__main__":

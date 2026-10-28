@@ -6,7 +6,9 @@ output/
 
 # Claude Code
 CLAUDE.local.md
-.claude/
+# Local settings stay out; project skills are shared
+.claude/*
+!.claude/skills/
 
 # Coverage
 .coverage

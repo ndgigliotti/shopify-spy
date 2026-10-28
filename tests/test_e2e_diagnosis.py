@@ -1,8 +1,8 @@
 """End-to-end diagnosis tests: run the real CLI against local HTTP servers.
 
-Each server port plays one store scenario, so the diagnosis is checked against the
-stats Scrapy actually records (robots.txt retries, redirects, fallbacks), not
-hand-written ones. Run with: uv run pytest -m e2e
+Each server port plays one store scenario, so the diagnosis is checked against real
+HTTP traffic (robots.txt retries, redirects, fallbacks), not hand-written stats.
+Run with: uv run pytest -m e2e
 """
 
 import http.server
@@ -131,7 +131,7 @@ def _run(tmp_path, urls, *args):
         capture_output=True,
         text=True,
         timeout=120,
-        # Run outside the repo, like an installed copy: no scrapy.cfg to find settings by
+        # Run outside the repo, like an installed copy (0.2.x lost its settings this way)
         cwd=tmp_path,
     )
     status_files = list(tmp_path.glob("status/*_status.json"))
