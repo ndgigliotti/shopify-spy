@@ -214,7 +214,8 @@ async def test_connection_refused_raises_connection_error():
     port = sock.getsockname()[1]
     sock.close()
     with pytest.raises(FetchConnectionError) as excinfo:
-        await fetch(f"http://127.0.0.1:{port}/")
+        # Windows retries a refused connect for about 2s before reporting it
+        await fetch(f"http://127.0.0.1:{port}/", timeout=4.0)
     assert not isinstance(excinfo.value, FetchTLSError)
 
 

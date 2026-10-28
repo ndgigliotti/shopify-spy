@@ -40,8 +40,9 @@ def is_valid_url(url: str) -> bool:
 
 
 def read_url_file(path: str | os.PathLike[str]) -> list[str]:
-    """Read URLs from a file, one per line, skipping blank lines and # comments."""
-    with open(path) as f:
+    """Read URLs from a UTF-8 file, one per line, skipping blank lines and # comments."""
+    # utf-8-sig also accepts the byte-order mark Windows editors may add
+    with open(path, encoding="utf-8-sig") as f:
         return [s for line in f if (s := line.strip()) and not s.startswith("#")]
 
 

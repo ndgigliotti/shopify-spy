@@ -11,7 +11,7 @@ from shopify_spy._export import ItemWriter, format_for, write_items, write_statu
 from shopify_spy._results import StoreResult, StoreStatus
 
 FIXTURES = Path(__file__).parent / "fixtures" / "exporters"
-ITEMS = json.loads((FIXTURES / "items.json").read_text())
+ITEMS = json.loads((FIXTURES / "items.json").read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize("fmt", ["jsonl", "json", "xml"])
@@ -80,7 +80,7 @@ def test_no_items_no_file(tmp_path):
 def test_streams_from_generator(tmp_path):
     path = tmp_path / "out.jsonl"
     write_items((i for i in ITEMS), path)
-    assert [json.loads(line) for line in path.read_text().splitlines()] == ITEMS
+    assert [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] == ITEMS
 
 
 def test_format_detection():
@@ -112,7 +112,7 @@ def test_status_file(tmp_path):
         log_file=None,
         skipped_urls=["bad url"],
     )
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     assert data["urls"] == [
         {"url": "a.com", "items": 0, "status": "403 Forbidden", "code": "forbidden"},
         {"url": "bad url", "items": 0, "status": "invalid URL", "code": "invalid_url"},

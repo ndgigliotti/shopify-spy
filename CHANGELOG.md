@@ -36,6 +36,9 @@ file; you don't need to change how you run it.
 - The run's `finish_reason` is `item_limit` only when a store actually reached
   `--limit`.
 - Redirected images are downloaded instead of failing.
+- URL files and config files are read as UTF-8 on every system, and a byte-order
+  mark is accepted. On Windows they were read in the system's default encoding,
+  which garbled non-ASCII text such as internationalized domain names.
 - WooCommerce products are requested in product ID order, so a store whose default
   order shifts between pages no longer repeats some products and skips others.
   WooCommerce items now come out oldest first by ID (they were newest first).
