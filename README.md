@@ -34,7 +34,7 @@ uv tool install shopify-spy
 uvx shopify-spy scrape --peek https://www.example.com
 ```
 
-Installing also provides `spy`, a short alias for `shopify-spy` (`spy scrape URL`). With `uvx`, name the package: `uvx --from shopify-spy spy ...`, since `uvx spy` would fetch an unrelated package named `spy`.
+Installing provides two identical commands, `spy` and `shopify-spy`; the examples below use `spy`. With `uvx`, name the package: `uvx shopify-spy ...` or `uvx --from shopify-spy spy ...` (`uvx spy` would fetch an unrelated package named `spy`).
 
 To use it as a Python library (`import shopify_spy`), the package has to be in the environment the script runs in; a `pipx` or `uv tool` install only provides the command:
 
@@ -63,37 +63,37 @@ Requires Python 3.11+.
 
 ```bash
 # Scrape a Shopify store (default)
-shopify-spy scrape https://www.example.com
+spy scrape https://www.example.com
 
 # Scrape a WooCommerce store
-shopify-spy scrape --platform woocommerce https://www.example.com
+spy scrape --platform woocommerce https://www.example.com
 
 # Scrape multiple stores
-shopify-spy scrape https://store1.com https://store2.com https://store3.com
+spy scrape https://store1.com https://store2.com https://store3.com
 
 # Download product images
-shopify-spy scrape https://www.example.com --images
+spy scrape https://www.example.com --images
 
 # Include collections (Shopify only)
-shopify-spy scrape https://www.example.com --collections
+spy scrape https://www.example.com --collections
 
 # Scrape multiple stores from a file
-shopify-spy scrape --url-file stores.txt
+spy scrape --url-file stores.txt
 
 # Specify output directory
-shopify-spy scrape https://www.example.com --output ./my-data
+spy scrape https://www.example.com --output ./my-data
 
 # Sample 10 items (useful for testing)
-shopify-spy scrape https://www.example.com --limit 10
+spy scrape https://www.example.com --limit 10
 
 # Quick peek at a store (prints 1 item to stdout, no file output)
-shopify-spy scrape --peek https://www.example.com
+spy scrape --peek https://www.example.com
 
 # Peek and pipe to jq
-shopify-spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
+spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 
 # Bypass robots.txt restrictions
-shopify-spy scrape --ignore-robots https://www.example.com
+spy scrape --ignore-robots https://www.example.com
 ```
 
 Results are saved as JSONL in the output directory (default: `./output`). Use `--format` to choose JSON, CSV, or XML instead. A live item counter is displayed during scraping.
@@ -153,7 +153,7 @@ See [Use as a library](#use-as-a-library) for the options, failure handling, ima
 Scrape products and collections from Shopify and WooCommerce stores.
 
 ```bash
-shopify-spy scrape [URL] [OPTIONS]
+spy scrape [URL] [OPTIONS]
 ```
 
 **Arguments:**
@@ -185,7 +185,7 @@ shopify-spy scrape [URL] [OPTIONS]
 Create a default configuration file.
 
 ```bash
-shopify-spy init [PATH]
+spy init [PATH]
 ```
 
 **Arguments:**
@@ -196,7 +196,7 @@ shopify-spy init [PATH]
 
 ## Configuration
 
-Shopify Spy can be configured via YAML file. Create one with `shopify-spy init`:
+Shopify Spy can be configured via YAML file. Create one with `spy init`:
 
 ```yaml
 # shopify-spy.yaml
@@ -436,7 +436,7 @@ result = await spy.scrape_async(urls, platform="woocommerce")  # RunResult with 
 
 ```bash
 # Disable throttling (faster but riskier)
-shopify-spy scrape https://example.com --no-throttle
+spy scrape https://example.com --no-throttle
 ```
 
 ## Feedback
