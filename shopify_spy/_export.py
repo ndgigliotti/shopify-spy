@@ -1,9 +1,9 @@
 """Item writers (JSONL, JSON, CSV, XML) and the CLI's status file.
 
 JSONL, JSON and XML output matches what Scrapy's feed exporters wrote (UTF-8,
-``ensure_ascii=False``, no indentation). CSV gives scraped items fixed columns with
-a row per variant (see ``_flatten``); other dicts get a column per key, nested values
-as JSON.
+``ensure_ascii=False``, no indentation). CSV gives scraped items one fixed column list,
+shared by both platforms, with a row per variant (see ``_flatten``); other dicts get a
+column per key, nested values as JSON.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import IO, Any
 from xml.sax.saxutils import XMLGenerator
 
-from shopify_spy._flatten import default_columns, flatten, platform_columns
+from shopify_spy._flatten import COLUMNS, default_columns, flatten, item_platform
 
 logger = logging.getLogger("shopify_spy")
 
@@ -47,8 +47,9 @@ class ItemWriter:
 
     Use as a context manager; the file is only created when the first item arrives,
     so a run without items leaves no file (like the CLI always did). CSV writes a row
-    per variant of a scraped item; ``fields`` fixes the columns, which otherwise come
-    from the first item's platform (or its keys, for other dicts).
+    per variant of a scraped item; ``fields`` picks the columns, which otherwise are
+    ``_flatten.COLUMNS`` for scraped items of either platform (or the first item's
+    keys, for other dicts).
     """
 
     def __init__(
@@ -104,7 +105,7 @@ class ItemWriter:
 
     def _csv_columns(self, item: dict[str, Any], existing: bool) -> None:
         """Settle the CSV columns before the file is touched."""
-        known = platform_columns(item)
+        known = COLUMNS if item_platform(item) else None
         if existing:
             with open(self.path, newline="", encoding="utf-8") as f:
                 header = next(csv.reader(f), None) or []

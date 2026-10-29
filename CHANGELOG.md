@@ -8,10 +8,11 @@
 
 ### Changed
 
-- **CSV output has one row per variant, with a fixed set of columns per platform and
-  a plain value in every cell.** It used to put the whole product in one
+- **CSV output has one row per variant, with one fixed set of columns for both
+  platforms and a plain value in every cell.** It used to put the whole product in one
   JSON-encoded cell, which nothing could sort or filter on. Product columns repeat
-  on each variant row, and descriptions are plain text. Booleans are `true`/`false`
+  on each variant row, and descriptions are plain text. A `platform` column tells
+  Shopify rows from WooCommerce ones, so one CSV can hold both. Booleans are `true`/`false`
   in every CSV. See "CSV output" in the README for the columns. JSONL,
   JSON and XML are unchanged. `write_items()` does the same for scraped items, and its
   `fields` now names these columns; other dicts still get a column per key.
