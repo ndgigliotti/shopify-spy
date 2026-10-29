@@ -114,7 +114,7 @@ See [Use as a library](#use-as-a-library) for the options, failure handling, ima
 
 <div align="center"><img src="https://raw.githubusercontent.com/ndgigliotti/shopify-spy/master/assets/ua-rotation-neon.png" width="700"></div>
 
-- **Failure diagnostics.** When a scrape returns 0 items, the tool explains why for each store (403, 404, robots.txt, timeout, no response) and suggests flags to try. Malformed URLs are skipped with a warning instead of breaking the run.
+- **Failure diagnostics.** When a scrape returns 0 items, the tool explains why for each store (403, 404, robots.txt, TLS errors, timeout, no response) and suggests flags to try, including the other `--platform` when a store looks like it runs on it. Malformed URLs are skipped with a warning instead of breaking the run.
 - **Python library.** `import shopify_spy` gives the same scraping engine as the CLI; see [Use as a library](#use-as-a-library).
 - **Log files.** Detailed logs go to a log file, keeping the terminal clean. Use `--verbose` to also print to the terminal.
 - **Status JSON.** Each run writes a machine-readable status file with per-URL results, errors, and timing.
@@ -133,7 +133,7 @@ See [Use as a library](#use-as-a-library) for the options, failure handling, ima
 
 | Platform | Mechanism | Notes |
 |---|---|---|
-| Shopify | `/products.json` bulk endpoint, sitemap fallback | Products and collections |
+| Shopify | `/products.json` bulk endpoint, sitemap fallback; collections from the sitemap | Products and collections |
 | WooCommerce | `/wp-json/wc/store/v1/products` | No authentication required |
 
 ## Commands
@@ -168,7 +168,7 @@ shopify-spy scrape [URL] [OPTIONS]
 - `--bail INT` - Abort if no items scraped within N seconds (default: 30, 0 to disable)
 - `--peek` - Print 1 item to stdout as JSONL and exit (no files or directories created)
 - `--verbose, -v` - Show debug output (logs to both file and terminal)
-- `--quiet, -q` - Suppress the live item counter
+- `--quiet, -q` - Show only warnings and errors (no live item counter)
 
 ### `init`
 
@@ -232,15 +232,15 @@ Results are saved in the output directory (JSONL by default, configurable via `-
 ```
 output/
   data/
-    shopify_spider_2024-01-15T10-30-00.jsonl
+    shopify_spider_2024-01-15T10-30-00+00-00.jsonl
   status/
-    shopify_spider_2024-01-15T10-30-00_status.json
+    shopify_spider_2024-01-15T10-30-00+00-00_status.json
   images/
     full/
       <image files>
 ```
 
-A status JSON file is written for each run with metadata:
+File names start with the platform and a UTC timestamp. A status JSON file is written for each run with metadata:
 
 ```json
 {
@@ -250,7 +250,7 @@ A status JSON file is written for each run with metadata:
   ],
   "finish_reason": "finished",
   "duration_seconds": 12.3,
-  "log_file": "/home/user/.local/state/shopify-spy/logs/shopify_spider_2024-01-15T10-30-00.log"
+  "log_file": "/home/user/.local/state/shopify-spy/logs/shopify_spider_2024-01-15T10-30-00+00-00.log"
 }
 ```
 
@@ -277,7 +277,7 @@ Detailed logs are written to a log file (not the terminal). Log files are stored
 
 ### Shopify output
 
-Each line contains the full product or collection JSON from Shopify's API, plus two added fields:
+Each line contains the full product or collection JSON from Shopify's API, plus three added fields:
 
 ```json
 {
@@ -287,6 +287,8 @@ Each line contains the full product or collection JSON from Shopify's API, plus 
   "image_urls": ["https://cdn.shopify.com/.../product.jpg"]
 }
 ```
+
+With `--collections`, collection items have a `collection` object in place of `product`, with the same three added fields.
 
 ### WooCommerce output
 
@@ -335,17 +337,17 @@ In CSV output, nested values (such as `product`) are JSON-encoded.
 **With jq:**
 ```bash
 # Shopify: extract product titles
-cat output/*.jsonl | jq '.product.title'
+cat output/data/*.jsonl | jq '.product.title'
 
 # WooCommerce: extract product names and prices
-cat output/*.jsonl | jq '{name: .name, price: .prices.price, currency: .prices.currency_code}'
+cat output/data/*.jsonl | jq '{name: .name, price: .prices.price, currency: .prices.currency_code}'
 ```
 
 **With Python:**
 ```python
 import json
 
-with open("output/shopify_spider_2024-01-15.jsonl") as f:
+with open("output/data/shopify_spider_2024-01-15T10-30-00+00-00.jsonl", encoding="utf-8") as f:
     for line in f:
         item = json.loads(line)
         print(item["product"]["title"])  # Shopify
@@ -356,7 +358,7 @@ with open("output/shopify_spider_2024-01-15.jsonl") as f:
 ```python
 import pandas as pd
 
-df = pd.read_json("output/shopify_spider_2024-01-15.jsonl", lines=True)
+df = pd.read_json("output/data/shopify_spider_2024-01-15T10-30-00+00-00.jsonl", lines=True)
 products = pd.json_normalize(df["product"])  # Shopify
 ```
 
@@ -364,7 +366,7 @@ products = pd.json_normalize(df["product"])  # Shopify
 ```python
 import polars as pl
 
-df = pl.read_ndjson("output/shopify_spider_2024-01-15.jsonl")
+df = pl.read_ndjson("output/data/shopify_spider_2024-01-15T10-30-00+00-00.jsonl")
 ```
 
 ## Use as a library
@@ -398,6 +400,7 @@ blocked = [s.input_url for s in result.failed if s.status == "robots_blocked"]
 spy.write_items(spy.scrape(blocked, respect_robots_txt=False), "products.jsonl", append=True)
 ```
 
+- **How a run works.** `scrape()` returns a run without fetching anything; stores are scraped while something iterates it, one item at a time. Items aren't kept, so memory stays flat however big the catalog, and a run can be iterated only once (call `scrape()` again for another pass). Iterating it yourself, or passing it to `write_items()`, streams; `run.collect()` and `list(run)` hold every item in memory. `run.result` (per-store results) is available once iteration ends, and `run.stores` gives a snapshot mid-run. Leaving early (`break`, `run.close()`, or the end of a `with spy.scrape(...) as run:` block) stops the run; stores that hadn't finished get the `finish_reason` `closed`.
 - **Failures are never silent.** By default `scrape()` raises `ScrapeFailed` (listing each store's status) when every store failed; `on_failure="warn"` or `"ignore"` relax that, and `strict=True` raises when any store failed. Each `StoreResult` has a `status`, an item count and sometimes a `hint`, such as a likely wrong `platform`.
 - **Options** match the CLI: `platform`, `products`, `collections`, `images` (with `images_dir`), `max_items_per_store` (per store; use `itertools.islice` for a total), `bail`, `concurrent_requests`, `request_timeout`, `retries`, `user_agent`, `respect_robots_txt`, `verify_tls`, `max_concurrent_stores` and the `throttle_*` settings.
 - **Images:** `images=True, images_dir="images"` saves files under `images/full/`; each item's `scraped_images` records have a `path` relative to `images_dir`, so the file is `Path(images_dir) / record["path"]`.
@@ -415,9 +418,11 @@ result = await spy.scrape_async(urls, platform="woocommerce")  # RunResult with 
 
 ## Limitations
 
-**WooCommerce Store API required.** WooCommerce scraping uses the public Store API (`/wp-json/wc/store/v1/products`), available in WooCommerce 3.x and later. Stores that have disabled the REST API via security plugins or broadly block crawlers may not be scrapeable. When a scrape returns 0 items, the tool prints a diagnostic message explaining the likely cause (403 Forbidden, 404 Not Found, robots.txt blocking, etc.) and exits with code 1.
+**Large Shopify catalogs are slow past 25,000 products.** Shopify's `products.json` stops paging at 25,000 items (100 pages of 250). The rest are fetched through the sitemap one product per request, so a 65,000-product store takes about 41,000 requests instead of 260 ([#30](https://github.com/ndgigliotti/shopify-spy/issues/30)).
 
-**Rate limiting.** Scraping very large stores may result in temporary bans. Auto-throttling is enabled by default, but you can adjust the settings or disable it for faster scraping:
+**WooCommerce Store API required.** WooCommerce scraping uses the public Store API (`/wp-json/wc/store/v1/products`), built into WooCommerce since version 6.4 (2022). Stores that have disabled the REST API via security plugins or broadly block crawlers may not be scrapeable. When a scrape returns 0 items, the tool prints a diagnostic message explaining the likely cause (403 Forbidden, 404 Not Found, robots.txt blocking, etc.) and exits with code 1.
+
+**Rate limiting.** Scraping very large stores may result in temporary bans. Auto-throttling is enabled by default: each host is slowed to match its response times, and a 429 or 503 pauses that host for its `Retry-After` time. You can adjust the settings or disable it for faster scraping:
 
 ```bash
 # Disable throttling (faster but riskier)
