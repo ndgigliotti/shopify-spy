@@ -340,7 +340,14 @@ When using `--images`, each item includes a `scraped_images` field with download
 
 Images are saved in their original format, named by the SHA-1 of their URL, with the extension of the format their bytes are in. The `path` is relative to the images directory (`output/images/` by default), and files younger than 90 days are reused (`"status": "uptodate"`). Supported formats are JPEG, PNG, GIF, WebP, AVIF, HEIC/HEIF, JPEG XL, JPEG 2000, BMP, TIFF and ICO; anything else, such as an SVG or an error page served in place of an image, is logged and counted as a failed image instead of being saved.
 
-In CSV output, nested values (such as `product`) are JSON-encoded.
+### CSV output
+
+CSV has one row per variant and a plain value in every cell (no embedded JSON), so you can sort and filter it in a spreadsheet or load it as a table. The product's columns repeat on each of its variant rows; a product without variants still gets one row. JSONL keeps everything; CSV keeps these columns:
+
+- **Shopify:** `kind` (`product` or `collection`), `store`, `id`, `handle`, `title`, `vendor`, `product_type`, `tags`, `options` (option names, such as `Color, Size`), `created_at`, `updated_at`, `published_at`, `description` (`body_html` as plain text), `html_url` (the product page), `image_url` (the first image), `image_count`, `products_count` (collections only), `variant_count`, then the variant's `variant_id`, `variant_title`, `sku`, `option1`-`option3`, `price`, `compare_at_price`, `available`, `grams`, `requires_shipping`, `taxable`, `variant_position` and `variant_image_url`, and the JSON document's `url`. Collections (`--collections`) get one row each, with the columns they have.
+- **WooCommerce:** `store`, `id`, `sku`, `name`, `slug`, `type`, `categories`, `tags`, `brands` (names, comma-joined), `attributes` (such as `Size: S, L; Color: Red`), `short_description` and `description` (as plain text), `permalink`, `image_url`, `image_count`, `currency`, `price`, `regular_price`, `sale_price`, `min_price`, `max_price` (decimal amounts, not minor units), `on_sale`, `is_in_stock`, `is_purchasable`, `average_rating`, `review_count`, `variation_count`, and per variation `variation_id` and `variation_attributes` (such as `Size: S`). The Store API doesn't list prices per variation, so a variation row has the product's prices.
+
+With `--images`, `image_paths` lists the downloaded files (relative to the images directory). In every CSV, booleans are `true`/`false`. Appending to a CSV written by 0.3.0 or earlier, which had a column per item field, is refused; start a new file.
 
 ### Parsing Output
 
@@ -414,6 +421,7 @@ spy.write_items(spy.scrape(blocked, respect_robots_txt=False), "products.jsonl",
 - **Failures are never silent.** By default `scrape()` raises `ScrapeFailed` (listing each store's status) when every store failed; `on_failure="warn"` or `"ignore"` relax that, and `strict=True` raises when any store failed. Each `StoreResult` has a `status`, an item count and sometimes a `hint`, such as a likely wrong `platform`.
 - **Options** match the CLI: `platform`, `products`, `collections`, `images` (with `images_dir`), `max_items_per_store` (per store; use `itertools.islice` for a total), `bail`, `concurrent_requests`, `request_timeout`, `retries`, `user_agent`, `respect_robots_txt`, `verify_tls`, `max_concurrent_stores` and the `throttle_*` settings.
 - **Images:** `images=True, images_dir="images"` saves files under `images/full/`; each item's `scraped_images` records have a `path` relative to `images_dir`, so the file is `Path(images_dir) / record["path"]`.
+- **CSV:** `write_items(run, "products.csv")` writes the same one-row-per-variant columns as the CLI (see [CSV output](#csv-output)); `fields=[...]` picks columns (a name that isn't one of them is logged and left empty). Other dicts, such as `summarize(item).asdict()`, get a column per key.
 - **No side effects:** nothing is written unless `images=True`, no config file is read, and nothing is printed (logs go to the `shopify_spy` logger).
 - **Async code and notebooks** use `scrape_async()`, which takes the same options:
 

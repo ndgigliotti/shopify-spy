@@ -11,7 +11,7 @@ branch), then:
 REPORT_DIR/report.md lists each case as SAME or DIFF. Against 0.2.4, the expected
 DIFFs are the deliberate changes in CHANGELOG.md: original-format images, `#`
 comments in URL files, the always-present CSV `collection` column, new --help
-options, and the version.
+options, and the version. Against 0.3.0, the CSV cases differ (one row per variant).
 """
 
 import ast
@@ -311,6 +311,11 @@ def run(binary, args, out_dir, cwd):
 
 
 def item_key(item):
+    # CSV rows since 0.4: one per variant
+    if "kind" in item:
+        return f"{item['kind']}:{item.get('id')}:{item.get('variant_id')}"
+    if "variation_id" in item:
+        return f"woo:{item.get('id')}:{item.get('variation_id')}"
     for k in ("product", "collection"):
         if isinstance(item.get(k), dict):
             return f"{k}:{item[k].get('id')}"

@@ -19,6 +19,7 @@ import shopify_spy._runner as engine
 from shopify_spy import cli as cli_module
 from shopify_spy._config import Config, Platform
 from shopify_spy._fetch import FakeFetcher, FetchConnectionError, FetchTLSError, Seq
+from shopify_spy._flatten import SHOPIFY_COLUMNS
 from shopify_spy._results import StoreResult, StoreStatus, run_finish_reason
 from shopify_spy._utils import is_valid_url
 from shopify_spy.cli import app, apply_cli_overrides, get_urls
@@ -1151,30 +1152,50 @@ def test_zero_item_summary_names_log_file(cli):
 
 
 def test_csv_uses_fixed_shopify_columns(cli):
-    """D2: Shopify CSV has fixed columns, so collection rows keep their column."""
+    """D2: Shopify CSV has fixed columns, so collection rows keep theirs."""
     routes = {
         products_url("store.com"): bulk(1),
         sitemap_url("store.com"): urlset("https://store.com/collections/all"),
-        "https://store.com/collections/all.json": {"collection": {"id": 9, "handle": "all"}},
+        "https://store.com/collections/all.json": {
+            "collection": {"id": 9, "handle": "all", "products_count": 1}
+        },
     }
     run = cli(routes, "-F", "csv", "--collections", "store.com")
 
     (path,) = run.data_files()
     assert path.suffix == ".csv"
-    rows = list(csv.reader(path.read_text().splitlines()))
-    assert rows[0] == ["product", "collection", "url", "store", "image_urls"]
-    assert len(rows) == 3
-    collection_row = next(r for r in rows[1:] if r[1])
-    assert json.loads(collection_row[1])["handle"] == "all"
-    assert collection_row[0] == ""
+    rows = list(csv.DictReader(path.read_text().splitlines()))
+    assert len(rows) == 2
+    collection_row = next(r for r in rows if r["kind"] == "collection")
+    assert (collection_row["handle"], collection_row["products_count"]) == ("all", "1")
+    assert collection_row["variant_id"] == ""
 
 
 def test_csv_products_only_columns(cli):
     run = cli(shop("store.com", 2), "-F", "csv", "store.com")
 
     (path,) = run.data_files()
-    header = path.read_text().splitlines()[0]
-    assert header == "product,url,store,image_urls"
+    # The same columns as the library's write_items()
+    header = path.read_text().splitlines()[0].split(",")
+    assert header == [c for c in SHOPIFY_COLUMNS if c != "image_paths"]
+
+
+def test_csv_woocommerce_columns(cli):
+    routes = {
+        wc_url("shop.com"): [
+            {
+                "id": 1,
+                "name": "A",
+                "permalink": "https://shop.com/p/a",
+                "prices": {"price": "500", "currency_minor_unit": 2},
+            }
+        ],
+    }
+    run = cli(routes, "-p", "woocommerce", "-F", "csv", "shop.com")
+
+    (path,) = run.data_files()
+    (row,) = csv.DictReader(path.read_text().splitlines())
+    assert (row["id"], row["name"], row["price"]) == ("1", "A", "5.00")
 
 
 # --- finish_reason tests (status file) ---

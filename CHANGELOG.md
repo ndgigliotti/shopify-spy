@@ -6,6 +6,18 @@
 
 - `spy` command, a short alias for `shopify-spy`.
 
+### Changed
+
+- **CSV output has one row per variant, with a fixed set of columns per platform and
+  a plain value in every cell.** It used to put the whole product in one
+  JSON-encoded cell, which nothing could sort or filter on. Product columns repeat
+  on each variant row, and descriptions are plain text. Booleans are `true`/`false`
+  in every CSV. See "CSV output" in the README for the columns. JSONL,
+  JSON and XML are unchanged. `write_items()` does the same for scraped items, and its
+  `fields` now names these columns; other dicts still get a column per key.
+  `append=True` refuses a CSV written by 0.3.0, whose columns were item fields.
+- `summarize()` WooCommerce prices keep the currency's decimals (`19.90`, not `19.9`).
+
 ## 0.3.0
 
 Shopify Spy no longer uses Scrapy. It now runs on httpx and asyncio, and the same

@@ -368,19 +368,6 @@ def _log_dir() -> Path:
     return path
 
 
-def csv_fields(config: Config) -> list[str] | None:
-    """Fixed CSV columns for Shopify, so mixed product/collection files keep both."""
-    if config.output.format != "csv" or config.scrape.platform != Platform.shopify:
-        return None
-    fields = ["product"] if config.scrape.products else []
-    if config.scrape.collections:
-        fields.append("collection")
-    fields += ["url", "store", "image_urls"]
-    if config.scrape.images:
-        fields.append("scraped_images")
-    return fields
-
-
 def _setup_logging(log_file: Path | None, verbose: bool, quiet: bool) -> list[logging.Handler]:
     level = logging.DEBUG if verbose else logging.WARNING if quiet else logging.INFO
     fmt = logging.Formatter("%(asctime)s [%(name)s] %(levelname)s: %(message)s")
@@ -433,7 +420,6 @@ def run_scrape(
         writer = ItemWriter(
             output_dir / "data" / f"{name}_{timestamp}{ext}",
             config.output.format,
-            fields=csv_fields(config),
         )
 
     kwargs: dict[str, Any] = config.to_kwargs()
