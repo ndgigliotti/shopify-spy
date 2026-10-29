@@ -51,6 +51,7 @@ Repository = "https://github.com/ndgigliotti/shopify-spy"
 
 [project.scripts]
 shopify-spy = "shopify_spy.cli:app"
+spy = "shopify_spy.cli:app"
 
 [build-system]
 requires = ["hatchling"]

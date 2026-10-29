@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `spy` command, a short alias for `shopify-spy`.
+
 ## 0.3.0
 
 Shopify Spy no longer uses Scrapy. It now runs on httpx and asyncio, and the same

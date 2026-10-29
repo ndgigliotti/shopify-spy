@@ -32,6 +32,8 @@ uv tool install shopify-spy
 uvx shopify-spy scrape --peek https://www.example.com
 ```
 
+Installing also provides `spy`, a short alias for `shopify-spy` (`spy scrape URL`). With `uvx`, name the package: `uvx --from shopify-spy spy ...`, since `uvx spy` would fetch an unrelated package named `spy`.
+
 To use it as a Python library (`import shopify_spy`), the package has to be in the environment the script runs in; a `pipx` or `uv tool` install only provides the command:
 
 ```bash
