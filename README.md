@@ -1,4 +1,10 @@
-<div align="center"><img src="https://raw.githubusercontent.com/ndgigliotti/shopify-spy/master/assets/icon.png" width=150></div>
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/ndgigliotti/shopify-spy/master/assets/icon-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/ndgigliotti/shopify-spy/master/assets/icon.svg">
+    <img src="https://raw.githubusercontent.com/ndgigliotti/shopify-spy/master/assets/icon.png" alt="Shopify Spy" width="150">
+  </picture>
+</div>
 
 # Shopify Spy
 
@@ -436,7 +442,3 @@ Found a bug or have a suggestion? [Open an issue](https://github.com/ndgigliotti
 ## License
 
 [MIT](https://choosealicense.com/licenses/mit/)
-
-## Credits
-
-Icon by [Bartama Graphic](https://www.flaticon.com/authors/bartama-graphic).

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.5 0 512 512" width="512" height="512">
+  <title>Shopify Spy</title>
+  <!-- Handle: a semicircle on straight legs that run into the bag -->
+  <path d="M171.5 150V127a84 84 0 0 1 168 0v23" fill="none" stroke="#0d0d0d" stroke-width="37"/>
+  <!-- Bag body (a trapezoid with rounded corners) with the sunglasses cut out -->
+  <path fill="#0d0d0d" fill-rule="evenodd" d="
+    M99 144H412Q434.4 144 437.2 164.6L474.2 437Q481 486 432 486H79Q30 486 36.8 437L73.8 164.6Q76.6 144 99 144Z
+    M98 260H205Q230 260 255.5 270Q281 260 306 260H413Q421 260 419 268
+    C416 300 405 335 385 347C365 359 325 359 305 347C290 337 280 310 274 299C268 290 262 288 255.5 288
+    C249 288 243 290 237 299C231 310 221 337 206 347C186 359 146 359 126 347C106 335 95 300 92 268
+    Q90 260 98 260Z"/>
+</svg>
