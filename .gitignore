@@ -12,3 +12,7 @@ CLAUDE.local.md
 
 # Coverage
 .coverage
+
+# Nix build output
+result
+result-*

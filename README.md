@@ -57,6 +57,24 @@ import shopify_spy as spy
 
 Requires Python 3.11+.
 
+### Nix
+
+The repository is a flake. Its build runs the test suite.
+
+```bash
+# Run the CLI once
+nix run github:ndgigliotti/shopify-spy -- scrape --peek https://www.example.com
+
+# Install it into your profile, which adds spy and shopify-spy
+nix profile add github:ndgigliotti/shopify-spy
+spy scrape --peek https://www.example.com
+
+# A shell whose Python can import shopify_spy
+nix develop github:ndgigliotti/shopify-spy
+```
+
+In your own flake, `overlays.default` adds `python3Packages.shopify-spy` (for every Python version) and a top-level `shopify-spy`.
+
 ## Quick Start
 
 ### Command line
