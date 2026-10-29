@@ -21,12 +21,14 @@ from shopify_spy._api import AsyncScrapeRun, scrape_async
 from shopify_spy._config import (
     Config,
     OutputFormat,
+    OutputSchema,
     Platform,
     create_default_config,
     load_config,
 )
-from shopify_spy._export import EXTENSIONS, ItemWriter, write_status
+from shopify_spy._export import EXTENSIONS, ItemWriter, schema_for, write_status
 from shopify_spy._fetch import FetcherFactory
+from shopify_spy._flatten import default_columns, flatten
 from shopify_spy._results import _PLATFORM_NAMES, RunResult, StoreResult, StoreStatus
 from shopify_spy._utils import normalize_url, read_url_file, split_valid_urls
 
@@ -113,6 +115,14 @@ def scrape(
     format: Annotated[
         OutputFormat | None,
         typer.Option("--format", "-F", help="Output format: json, jsonl, csv, xml."),
+    ] = None,
+    schema: Annotated[
+        OutputSchema | None,
+        typer.Option(
+            "--schema",
+            help="Item shape: native (as scraped; default) or unified (a row per variant, "
+            "same columns on both platforms). CSV is always unified.",
+        ),
     ] = None,
     config_path: Annotated[
         Path | None,
@@ -201,6 +211,7 @@ def scrape(
         images=images,
         output=output,
         format=format,
+        schema=schema,
         concurrent=concurrent,
         throttle=throttle,
         limit=limit,
@@ -223,6 +234,11 @@ def scrape(
     if verbose and quiet:
         err_console.print("[red]Error: Cannot use both --verbose and --quiet[/red]")
         raise typer.Exit(1)
+    try:
+        schema_for(config.output.format, config.output.schema_)
+    except ValueError as exc:
+        err_console.print(f"[red]Error: {escape(str(exc))}[/red]")
+        raise typer.Exit(1) from None
 
     # Warn about Shopify-only flags used with WooCommerce
     if config.scrape.platform == Platform.woocommerce:
@@ -291,6 +307,7 @@ def apply_cli_overrides(
     output: Path | None,
     format: OutputFormat | None,
     concurrent: int | None,
+    schema: OutputSchema | None = None,
     throttle: bool | None,
     limit: int | None,
     user_agent: str | None,
@@ -321,6 +338,8 @@ def apply_cli_overrides(
         output_dict["dir"] = output
     if format is not None:
         output_dict["format"] = format
+    if schema is not None:
+        output_dict["schema_"] = schema
     if concurrent is not None:
         network_dict["concurrent_requests"] = concurrent
     if max_stores is not None:
@@ -420,6 +439,7 @@ def run_scrape(
         writer = ItemWriter(
             output_dir / "data" / f"{name}_{timestamp}{ext}",
             config.output.format,
+            schema=config.output.schema_,
         )
 
     kwargs: dict[str, Any] = config.to_kwargs()
@@ -435,6 +455,8 @@ def run_scrape(
             console.print(f"  Collections: {config.scrape.collections}")
         console.print(f"  Images: {config.scrape.images}")
         console.print(f"  Format: {config.output.format}")
+        if config.output.schema_:
+            console.print(f"  Schema: {config.output.schema_}")
         console.print(f"  Output: {output_dir}")
 
     saved = (logger.level, logger.propagate)
@@ -442,7 +464,14 @@ def run_scrape(
     show_counter = not peek and not quiet
     try:
         result, forced = asyncio.run(
-            _scrape(urls, kwargs, writer=writer, peek=peek, show_counter=show_counter)
+            _scrape(
+                urls,
+                kwargs,
+                writer=writer,
+                peek=peek,
+                peek_rows=config.output.schema_ == "unified",
+                show_counter=show_counter,
+            )
         )
     finally:
         _restore_logging(handlers, *saved)
@@ -503,6 +532,7 @@ async def _scrape(
     writer: ItemWriter | None,
     peek: bool,
     show_counter: bool,
+    peek_rows: bool = False,
 ) -> tuple[RunResult, bool]:
     """Run the scrape; first Ctrl-C stops gracefully, a second one forces it."""
     run: AsyncScrapeRun = scrape_async(urls, **kwargs)
@@ -530,7 +560,11 @@ async def _scrape(
         async with run:
             async for item in run:
                 if peek:
-                    print(json.dumps(item, ensure_ascii=False), flush=True)
+                    columns = default_columns(item) if peek_rows else None
+                    rows = (flatten(item) or [item]) if columns else [item]
+                    for row in rows:
+                        record = {c: row.get(c) for c in columns} if columns else row
+                        print(json.dumps(record, ensure_ascii=False, default=str), flush=True)
                     break
                 assert writer is not None
                 writer.write(item)

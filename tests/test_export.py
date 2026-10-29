@@ -13,6 +13,7 @@ from shopify_spy._export import (
     write_items,
     write_status,
 )
+from shopify_spy._flatten import COLUMNS
 from shopify_spy._results import StoreResult, StoreStatus
 
 FIXTURES = Path(__file__).parent / "fixtures" / "exporters"
@@ -425,3 +426,67 @@ def test_csv_append_refuses_old_format_file_with_fields(tmp_path):
     path.write_text("product,url,store,image_urls\n", encoding="utf-8")
     with pytest.raises(ValueError, match="0.3 or earlier"):
         write_items([SHOPIFY_PRODUCT], path, append=True, fields=["id", "title"])
+
+
+@pytest.mark.parametrize("fmt", ["jsonl", "json", "xml"])
+def test_native_is_the_default_and_explicit_native_matches(tmp_path, fmt):
+    path = tmp_path / f"out.{fmt}"
+    write_items(ITEMS, path, schema="native")
+    assert path.read_bytes() == (FIXTURES / f"scrapy.{fmt}").read_bytes()
+
+
+def test_csv_is_always_unified(tmp_path):
+    with pytest.raises(ValueError, match="CSV is always unified"):
+        write_items([SHOPIFY_PRODUCT], tmp_path / "out.csv", schema="native")
+    write_items(ITEMS, tmp_path / "out.csv", schema="unified")
+    assert (tmp_path / "out.csv").read_bytes() == (FIXTURES / "expected.csv").read_bytes()
+
+
+def test_unknown_schema(tmp_path):
+    with pytest.raises(ValueError, match="unknown schema"):
+        write_items([SHOPIFY_PRODUCT], tmp_path / "out.jsonl", schema="nested")
+
+
+def test_unified_jsonl_writes_a_record_per_row(tmp_path):
+    path = tmp_path / "out.jsonl"
+    assert write_items([SHOPIFY_PRODUCT, WOO_PRODUCT], path, schema="unified") == 2
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert [(r["platform"], r["variant_id"]) for r in rows] == [
+        ("shopify", 71),
+        ("shopify", 72),
+        ("woocommerce", 51),
+        ("woocommerce", 52),
+    ]
+    # Fixed keys in COLUMNS order, without image_paths when no images were downloaded
+    assert list(rows[0]) == list(rows[2]) == [c for c in COLUMNS if c != "image_paths"]
+    assert (rows[0]["available"], rows[0]["compare_at_price"]) == (True, None)
+    # Decimal prices become strings, like Shopify's
+    assert (rows[2]["price"], rows[2]["compare_at_price"]) == ("19.99", "24.99")
+
+
+def test_unified_json_and_fields(tmp_path):
+    path = tmp_path / "out.json"
+    write_items([SHOPIFY_PRODUCT], path, schema="unified", fields=["title", "price"])
+    assert json.loads(path.read_text(encoding="utf-8")) == [
+        {"title": "Hat", "price": "10.00"},
+        {"title": "Hat", "price": "12.50"},
+    ]
+
+
+def test_unified_xml_has_an_item_per_row(tmp_path):
+    path = tmp_path / "out.xml"
+    write_items([SHOPIFY_PRODUCT], path, schema="unified", fields=["platform", "available", "sku"])
+    assert path.read_text(encoding="utf-8") == (
+        '<?xml version="1.0" encoding="utf8"?>\n<items>\n'
+        "<item><platform>shopify</platform><available>true</available><sku></sku></item>\n"
+        "<item><platform>shopify</platform><available>false</available><sku></sku></item>\n"
+        "</items>"
+    )
+
+
+def test_unified_jsonl_append(tmp_path):
+    path = tmp_path / "out.jsonl"
+    write_items([SHOPIFY_PRODUCT], path, schema="unified")
+    write_items([WOO_PRODUCT], path, schema="unified", append=True)
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert [r["platform"] for r in rows] == ["shopify"] * 2 + ["woocommerce"] * 2

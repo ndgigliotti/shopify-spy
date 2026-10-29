@@ -5,6 +5,11 @@
 ### Added
 
 - `spy` command, a short alias for `shopify-spy`.
+- `--schema native|unified` (config `output.schema`, `write_items(schema=...)`) separates the item
+  shape from the file format. `native` writes items as scraped and stays the default for
+  JSONL, JSON and XML. `unified` writes one record per variant with the same columns on
+  both platforms, the ones CSV uses; in XML each row is an `<item>`. CSV is always unified,
+  so `--schema native` with CSV is an error. `--peek --schema unified` prints the rows.
 
 ### Changed
 

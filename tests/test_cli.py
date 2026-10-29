@@ -1203,6 +1203,39 @@ def test_csv_woocommerce_columns(cli):
     )
 
 
+def test_schema_native_with_csv_errors(cli):
+    run = cli(shop("store.com", 1), "-F", "csv", "--schema", "native", "store.com")
+    assert run.exit_code == 1
+    assert "CSV is always unified" in run.stderr
+    assert not run.out.exists() or not run.data_files()
+
+
+def test_schema_unified_jsonl(cli):
+    run = cli(shop("store.com", 2), "--schema", "unified", "store.com")
+    assert run.exit_code == 0
+    rows = run.items()
+    assert {r["platform"] for r in rows} == {"shopify"}
+    assert list(rows[0]) == [c for c in COLUMNS if c != "image_paths"]
+
+
+def test_schema_from_config_file(cli, tmp_path):
+    config = tmp_path / "c.yaml"
+    config.write_text("output:\n  schema: unified\n")
+    run = cli(shop("store.com", 1), "-c", str(config), "store.com")
+    assert "variant_id" in run.items()[0]
+
+
+def test_peek_with_unified_schema_prints_rows(cli):
+    run = cli(shop("store.com", 1), "--peek", "--schema", "unified", "store.com", output=False)
+    record = json.loads(run.stdout.splitlines()[0])
+    assert record["platform"] == "shopify"
+
+
+def test_peek_with_csv_format_stays_native(cli):
+    run = cli(shop("store.com", 1), "--peek", "-F", "csv", "store.com", output=False)
+    assert "product" in json.loads(run.stdout.splitlines()[0])
+
+
 # --- finish_reason tests (status file) ---
 
 

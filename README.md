@@ -96,7 +96,7 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 spy scrape --ignore-robots https://www.example.com
 ```
 
-Results are saved as JSONL in the output directory (default: `./output`). Use `--format` to choose JSON, CSV, or XML instead. A live item counter is displayed during scraping.
+Results are saved as JSONL in the output directory (default: `./output`). Use `--format` to choose JSON, CSV, or XML instead, and `--schema unified` for one row per variant with the same columns on both platforms. A live item counter is displayed during scraping.
 
 ### Python
 
@@ -168,6 +168,7 @@ spy scrape [URL] [OPTIONS]
 - `--images / --no-images` - Download images (default: no)
 - `--output, -o PATH` - Output directory (default: `./output`)
 - `--format, -F FORMAT` - Output format: `json`, `jsonl`, `csv`, `xml` (default: `jsonl`)
+- `--schema SCHEMA` - Item shape: `native` (as scraped) or `unified` (a row per variant; see [Unified schema](#unified-schema)). Default: `native`, except CSV, which is always `unified`
 - `--config, -c FILE` - Path to YAML config file
 - `--concurrent INT` - Concurrent requests per host (default: 16)
 - `--max-stores INT` - Stores scraped at once (default: 16)
@@ -210,6 +211,7 @@ scrape:
 output:
   dir: ./output       # Output directory for results
   format: jsonl       # Output format: json, jsonl, csv, xml
+  # schema: unified   # native (as scraped) or unified (row per variant; csv always)
   images_subdir: images  # Subdirectory for downloaded images
 
 network:
@@ -237,7 +239,12 @@ CLI options override config file settings.
 
 ## Output
 
-Results are saved in the output directory (JSONL by default, configurable via `--format`):
+Results are saved in the output directory (JSONL by default, configurable via `--format`). Two schemas decide what each record holds:
+
+- **`native`** (the default for JSONL, JSON and XML): each item as the store's API returned it, described under [Shopify output](#shopify-output) and [WooCommerce output](#woocommerce-output). It keeps every field.
+- **`unified`** (`--schema unified`, or `output.schema` in the config; CSV is always unified): one record per variant with the same columns on both platforms, described under [Unified schema](#unified-schema). In XML each row is an `<item>`. `--schema native` with CSV is an error.
+
+The directory looks like this:
 
 ```
 output/
@@ -340,9 +347,9 @@ When using `--images`, each item includes a `scraped_images` field with download
 
 Images are saved in their original format, named by the SHA-1 of their URL, with the extension of the format their bytes are in. The `path` is relative to the images directory (`output/images/` by default), and files younger than 90 days are reused (`"status": "uptodate"`). Supported formats are JPEG, PNG, GIF, WebP, AVIF, HEIC/HEIF, JPEG XL, JPEG 2000, BMP, TIFF and ICO; anything else, such as an SVG or an error page served in place of an image, is logged and counted as a failed image instead of being saved.
 
-### CSV output
+### Unified schema
 
-CSV has one row per variant and a plain value in every cell (no embedded JSON), so you can sort and filter it in a spreadsheet or load it as a table. The product's columns repeat on each of its variant rows; a product without variants still gets one row. Both platforms share the same columns, so one CSV can hold Shopify and WooCommerce items; a column only one platform has is blank for the other. JSONL keeps each platform's full item; CSV keeps these columns:
+The unified schema has one row per variant and a plain value in every cell (no embedded JSON), so you can sort and filter it in a spreadsheet or load it as a table. CSV always uses it; JSONL, JSON and XML use it with `--schema unified`. The product's columns repeat on each of its variant rows; a product without variants still gets one row. Both platforms share the same columns, so one file can hold Shopify and WooCommerce items; a column only one platform has is blank for the other (empty in CSV and XML, `null` in JSON). The native schema keeps each platform's full item; the unified schema keeps these columns:
 
 | Column | Shopify | WooCommerce |
 |---|---|---|
@@ -375,9 +382,9 @@ CSV has one row per variant and a plain value in every cell (no embedded JSON), 
 | `grams`, `requires_shipping`, `taxable`, `variant_position`, `variant_image_url` | the variant's | |
 | `url` | the scraped JSON document | |
 
-Prices are decimal amounts (WooCommerce's minor units are converted). The Store API doesn't list prices, SKUs or stock per variation, so a WooCommerce variation row has the product's. WooCommerce's `type` (`simple`, `variable`, ...) and descriptive attributes are only in JSONL, JSON and XML.
+Prices are decimal amounts (WooCommerce's minor units are converted). The Store API doesn't list prices, SKUs or stock per variation, so a WooCommerce variation row has the product's. WooCommerce's `type` (`simple`, `variable`, ...) and descriptive attributes are only in the native schema. In JSON, prices are strings and booleans are `true`/`false`.
 
-With `--images`, `image_paths` lists the downloaded files (relative to the images directory). In every CSV, booleans are `true`/`false`. Appending to a CSV written by 0.3.0 or earlier, which had a column per item field, is refused; start a new file.
+With `--images`, `image_paths` lists the downloaded files (relative to the images directory). In CSV and unified XML, booleans are `true`/`false` and an empty cell means no value. Appending to a CSV written by 0.3.0 or earlier, which had a column per item field, is refused; start a new file.
 
 ### Parsing Output
 
@@ -451,7 +458,7 @@ spy.write_items(spy.scrape(blocked, respect_robots_txt=False), "products.jsonl",
 - **Failures are never silent.** By default `scrape()` raises `ScrapeFailed` (listing each store's status) when every store failed; `on_failure="warn"` or `"ignore"` relax that, and `strict=True` raises when any store failed. Each `StoreResult` has a `status`, an item count and sometimes a `hint`, such as a likely wrong `platform`.
 - **Options** match the CLI: `platform`, `products`, `collections`, `images` (with `images_dir`), `max_items_per_store` (per store; use `itertools.islice` for a total), `bail`, `concurrent_requests`, `request_timeout`, `retries`, `user_agent`, `respect_robots_txt`, `verify_tls`, `max_concurrent_stores` and the `throttle_*` settings.
 - **Images:** `images=True, images_dir="images"` saves files under `images/full/`; each item's `scraped_images` records have a `path` relative to `images_dir`, so the file is `Path(images_dir) / record["path"]`.
-- **CSV:** `write_items(run, "products.csv")` writes the same one-row-per-variant columns as the CLI, shared by both platforms (see [CSV output](#csv-output)), so items from Shopify and WooCommerce runs can go in one file; `fields=[...]` picks columns (a name that isn't one of them is logged and left empty). Other dicts, such as `summarize(item).asdict()`, get a column per key.
+- **Schemas:** `write_items(run, "products.jsonl")` writes items as scraped; `schema="unified"` writes the same one-row-per-variant records as the CLI's `--schema unified`, shared by both platforms (see [Unified schema](#unified-schema)), so items from Shopify and WooCommerce runs can go in one file. CSV is always unified (`schema="native"` raises `ValueError`). `fields=[...]` picks unified columns (a name that isn't one of them is logged and left empty). Other dicts, such as `summarize(item).asdict()`, get a column per key.
 - **No side effects:** nothing is written unless `images=True`, no config file is read, and nothing is printed (logs go to the `shopify_spy` logger).
 - **Async code and notebooks** use `scrape_async()`, which takes the same options:
 
