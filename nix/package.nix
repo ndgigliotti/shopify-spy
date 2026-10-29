@@ -52,12 +52,8 @@ buildPythonPackage {
     export HOME=$(mktemp -d)
   '';
 
-  # The e2e tests only talk to local servers, so they run in the sandbox too;
-  # the integration tests need real stores.
-  pytestFlags = [
-    "-m"
-    "not integration"
-  ];
+  # Integration tests call real stores; the e2e tests only use local servers, so they stay
+  disabledTestMarks = [ "integration" ];
 
   pythonImportsCheck = [ "shopify_spy" ];
 
