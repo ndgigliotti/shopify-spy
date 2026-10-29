@@ -1225,6 +1225,15 @@ def test_schema_from_config_file(cli, tmp_path):
     assert "variant_id" in run.items()[0]
 
 
+def test_cli_csv_overrides_config_native_schema(cli, tmp_path):
+    config = tmp_path / "c.yaml"
+    config.write_text("output:\n  schema: native\n")
+    run = cli(shop("store.com", 1), "-c", str(config), "-F", "csv", "store.com")
+    assert run.exit_code == 0
+    (path,) = run.data_files()
+    assert path.read_text().startswith("platform,")
+
+
 def test_peek_with_unified_schema_prints_rows(cli):
     run = cli(shop("store.com", 1), "--peek", "--schema", "unified", "store.com", output=False)
     record = json.loads(run.stdout.splitlines()[0])

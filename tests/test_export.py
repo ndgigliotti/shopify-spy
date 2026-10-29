@@ -490,3 +490,48 @@ def test_unified_jsonl_append(tmp_path):
     write_items([WOO_PRODUCT], path, schema="unified", append=True)
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert [r["platform"] for r in rows] == ["shopify"] * 2 + ["woocommerce"] * 2
+
+
+def test_csv_woocommerce_any_value_keeps_option_columns_aligned(tmp_path):
+    path = tmp_path / "out.csv"
+    item = WOO_PRODUCT | {
+        "attributes": [
+            {"name": "Color", "has_variations": True, "terms": [{"name": "Red"}]},
+            {"name": "Size", "has_variations": True, "terms": [{"name": "Small", "slug": "s"}]},
+        ],
+        "variations": [
+            {
+                "id": 1,
+                "attributes": [{"name": "Color", "value": ""}, {"name": "Size", "value": "s"}],
+            }
+        ],
+    }
+    write_items([item], path)
+    (row,) = read_csv(path)
+    assert (row["options"], row["option1"], row["option2"]) == ("Color, Size", "", "Small")
+    assert row["variant_title"] == "Small"
+
+
+def test_csv_woocommerce_nan_price_doesnt_crash(tmp_path):
+    path = tmp_path / "out.csv"
+    prices = {"price": "NaN", "regular_price": "2499", "currency_minor_unit": 2}
+    write_items([WOO_PRODUCT | {"prices": prices, "variations": []}], path)
+    (row,) = read_csv(path)
+    assert (row["price"], row["compare_at_price"]) == ("NaN", "")
+
+
+def test_csv_repeated_fields_stay_aligned(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([SHOPIFY_PRODUCT], path, fields=["id", "id", "title"])
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert lines[:2] == ["id,id,title", "7,7,Hat"]
+
+
+def test_non_json_values_still_raise(tmp_path):
+    with pytest.raises(TypeError):
+        write_items([{"a": {1, 2}}], tmp_path / "out.jsonl")
+
+
+def test_fields_with_native_schema_warn(tmp_path, caplog):
+    write_items([SHOPIFY_PRODUCT], tmp_path / "out.jsonl", fields=["title"])
+    assert "only applies to the unified schema" in caplog.text

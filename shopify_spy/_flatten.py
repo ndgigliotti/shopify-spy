@@ -234,24 +234,26 @@ def _woocommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
             name, value = _unescape(a.get("name")), a.get("value")
             if value not in (None, ""):
                 values[name] = _unescape(term_names.get((name, value), value))
-        # In attribute order, then any the product's attributes don't list
-        ordered = [values[n] for n in option_names if n in values]
-        ordered += [v for n, v in values.items() if n not in option_names]
+        # option1-3 line up with the options column, so an "any" value stays empty;
+        # without attribute names the variation's own order stands in
+        names = option_names or list(values)
+        title = [values[n] for n in names if n in values]
+        title += [v for n, v in values.items() if n not in names]
         rows.append(
             product
             | {
                 "variant_id": variation.get("id"),
-                "variant_title": " / ".join(str(v) for v in ordered) or None,
-                "option1": ordered[0] if len(ordered) > 0 else None,
-                "option2": ordered[1] if len(ordered) > 1 else None,
-                "option3": ordered[2] if len(ordered) > 2 else None,
+                "variant_title": " / ".join(str(v) for v in title) or None,
             }
+            | {f"option{i + 1}": values.get(n) for i, n in enumerate(names[:3])}
         )
     return rows or [product]
 
 
 def _below(price: Decimal | None, regular_price: Decimal | None) -> bool:
-    return price is not None and regular_price is not None and price < regular_price
+    if price is None or regular_price is None or price.is_nan() or regular_price.is_nan():
+        return False
+    return price < regular_price
 
 
 def _dicts(value: Any) -> list[dict[str, Any]]:

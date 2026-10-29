@@ -18,8 +18,8 @@
   JSON-encoded cell, which nothing could sort or filter on. Product columns repeat
   on each variant row, and descriptions are plain text. A `platform` column tells
   Shopify rows from WooCommerce ones, so one CSV can hold both. Booleans are `true`/`false`
-  in every CSV. See "CSV output" in the README for the columns. JSONL,
-  JSON and XML are unchanged. `write_items()` does the same for scraped items, and its
+  in every CSV. See "Unified schema" in the README for the columns. JSONL,
+  JSON and XML keep each item's native shape unless `--schema unified` is given. `write_items()` does the same for scraped items, and its
   `fields` now names these columns; other dicts still get a column per key.
   `append=True` refuses a CSV written by 0.3.0, whose columns were item fields.
 - `summarize()` WooCommerce prices keep the currency's decimals (`19.90`, not `19.9`).

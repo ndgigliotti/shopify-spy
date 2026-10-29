@@ -14,6 +14,7 @@ import io
 import json
 import logging
 from collections.abc import Iterable
+from decimal import Decimal
 from pathlib import Path
 from typing import IO, Any
 from xml.sax.saxutils import XMLGenerator
@@ -57,8 +58,19 @@ def schema_for(format: str, schema: str | None = None) -> str:
 
 
 def _dumps(value: Any) -> str:
-    # default=str covers unified rows' Decimal prices; native items are plain JSON
-    return json.dumps(value, ensure_ascii=False, default=str)
+    return json.dumps(value, ensure_ascii=False, default=_decimal_str)
+
+
+def _decimal_str(value: Any) -> str:
+    # Unified rows have Decimal prices; anything else that isn't JSON still raises
+    if isinstance(value, Decimal):
+        return str(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def unified_records(item: dict[str, Any], fields: list[str]) -> list[dict[str, Any]]:
+    """The item's unified rows as records keyed by ``fields`` (repeats collapse)."""
+    return [{f: row.get(f) for f in fields} for row in flatten(item) or [item]]
 
 
 class ItemWriter:
@@ -84,6 +96,8 @@ class ItemWriter:
         self.path = Path(path)
         self.format = format_for(self.path, format)
         self.schema = schema_for(self.format, schema)
+        if fields and self.schema == "native":
+            logger.warning("fields only applies to the unified schema; writing native items")
         if append and self.format not in ("jsonl", "csv"):
             raise ValueError("append is only supported for jsonl and csv")
         self.fields = list(fields) if fields else None
@@ -154,12 +168,16 @@ class ItemWriter:
         if self._file is None:
             self._open(item)
         assert self._file is not None
-        records = self._rows(item) if self.schema == "unified" else [item]
         if self.format == "csv":
-            self._csv.writerows([_csv_value(v) for v in row.values()] for row in records)
+            fields = self.fields or []
+            self._csv.writerows(
+                [_csv_value(row.get(f)) for f in fields] for row in self._rows(item)
+            )
+        elif self.schema == "unified":
+            for row in self._rows(item):
+                self._write_record({f: row.get(f) for f in self.fields or []})
         else:
-            for record in records:
-                self._write_record(record)
+            self._write_record(item)
         self.count += 1
 
     def _write_record(self, record: dict[str, Any]) -> None:
@@ -183,14 +201,13 @@ class ItemWriter:
         self._records += 1
 
     def _rows(self, item: dict[str, Any]) -> list[dict[str, Any]]:
-        """The item's unified rows, keyed by the settled columns."""
-        assert self.fields is not None
+        """The item's unified rows, warning once about fields the columns leave out."""
         rows = flatten(item) or [item]
         extra = set() if self._picked else rows[0].keys() - self._field_set - self._dropped
         if extra:
             self._dropped |= extra
             logger.warning("Columns are fixed; dropping field(s): %s", ", ".join(sorted(extra)))
-        return [{f: row.get(f) for f in self.fields} for row in rows]
+        return rows
 
     def close(self) -> None:
         if self._file is None:

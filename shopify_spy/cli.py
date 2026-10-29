@@ -26,9 +26,16 @@ from shopify_spy._config import (
     create_default_config,
     load_config,
 )
-from shopify_spy._export import EXTENSIONS, ItemWriter, schema_for, write_status
+from shopify_spy._export import (
+    EXTENSIONS,
+    UNIFIED_ONLY_FORMATS,
+    ItemWriter,
+    schema_for,
+    unified_records,
+    write_status,
+)
 from shopify_spy._fetch import FetcherFactory
-from shopify_spy._flatten import default_columns, flatten
+from shopify_spy._flatten import default_columns
 from shopify_spy._results import _PLATFORM_NAMES, RunResult, StoreResult, StoreStatus
 from shopify_spy._utils import normalize_url, read_url_file, split_valid_urls
 
@@ -187,7 +194,11 @@ def scrape(
     ] = False,
     peek: Annotated[
         bool,
-        typer.Option("--peek", help="Print 1 item to stdout as JSONL and exit. No file output."),
+        typer.Option(
+            "--peek",
+            help="Print 1 item to stdout as JSONL (its rows with --schema unified) and exit. "
+            "No file output.",
+        ),
     ] = False,
     verbose: Annotated[
         bool,
@@ -340,6 +351,9 @@ def apply_cli_overrides(
         output_dict["format"] = format
     if schema is not None:
         output_dict["schema_"] = schema
+    elif format in UNIFIED_ONLY_FORMATS and output_dict["schema_"] == "native":
+        # A config's native schema (meant for JSONL, say) doesn't block -F csv
+        output_dict["schema_"] = None
     if concurrent is not None:
         network_dict["concurrent_requests"] = concurrent
     if max_stores is not None:
@@ -455,8 +469,7 @@ def run_scrape(
             console.print(f"  Collections: {config.scrape.collections}")
         console.print(f"  Images: {config.scrape.images}")
         console.print(f"  Format: {config.output.format}")
-        if config.output.schema_:
-            console.print(f"  Schema: {config.output.schema_}")
+        console.print(f"  Schema: {schema_for(config.output.format, config.output.schema_)}")
         console.print(f"  Output: {output_dir}")
 
     saved = (logger.level, logger.propagate)
@@ -561,9 +574,8 @@ async def _scrape(
             async for item in run:
                 if peek:
                     columns = default_columns(item) if peek_rows else None
-                    rows = (flatten(item) or [item]) if columns else [item]
-                    for row in rows:
-                        record = {c: row.get(c) for c in columns} if columns else row
+                    for record in unified_records(item, columns) if columns else [item]:
+                        # default=str: unified rows have Decimal prices
                         print(json.dumps(record, ensure_ascii=False, default=str), flush=True)
                     break
                 assert writer is not None
