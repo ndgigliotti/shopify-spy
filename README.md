@@ -294,22 +294,23 @@ Detailed logs are written to a log file (not the terminal). Log files are stored
 
 ### Shopify output
 
-Each line contains the full product or collection JSON from Shopify's API, plus three added fields:
+Each line contains the full product or collection JSON from Shopify's API, plus four added fields (`platform` tells it from a WooCommerce item):
 
 ```json
 {
   "product": { "title": "...", "variants": [...], "images": [...], ... },
   "url": "https://store.com/products/item.json",
   "store": "store.com",
+  "platform": "shopify",
   "image_urls": ["https://cdn.shopify.com/.../product.jpg"]
 }
 ```
 
-With `--collections`, collection items have a `collection` object in place of `product`, with the same three added fields.
+With `--collections`, collection items have a `collection` object in place of `product`, with the same four added fields.
 
 ### WooCommerce output
 
-Each line contains the full product JSON from the WooCommerce Store API, plus two added fields:
+Each line contains the full product JSON from the WooCommerce Store API, plus three added fields:
 
 ```json
 {
@@ -321,6 +322,7 @@ Each line contains the full product JSON from the WooCommerce Store API, plus tw
   "prices": { "price": "5200", "currency_code": "USD", "currency_minor_unit": 2 },
   "images": [{ "id": 1, "src": "https://..." }],
   "store": "store.com",
+  "platform": "woocommerce",
   "image_urls": ["https://..."]
 }
 ```

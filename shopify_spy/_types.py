@@ -1,6 +1,6 @@
 """Documented item shapes. Items are plain dicts; these TypedDicts describe them."""
 
-from typing import Any, NotRequired, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 
 class ScrapedImage(TypedDict):
@@ -16,6 +16,7 @@ class ShopifyProductItem(TypedDict):
     product: dict[str, Any]  # the full Shopify product payload
     url: str
     store: str  # host
+    platform: Literal["shopify"]
     image_urls: list[str]  # empty unless images are enabled
     scraped_images: NotRequired[list[ScrapedImage]]  # only when images are enabled
 
@@ -24,13 +25,14 @@ class ShopifyCollectionItem(TypedDict):
     collection: dict[str, Any]
     url: str
     store: str
+    platform: Literal["shopify"]
     image_urls: list[str]
     scraped_images: NotRequired[list[ScrapedImage]]
 
 
 class WooCommerceProductItem(TypedDict, total=False):
-    """A WooCommerce Store API product: the API's fields plus ``store`` and
-    ``image_urls`` (and ``scraped_images`` with images enabled). Prices are strings
+    """A WooCommerce Store API product: the API's fields plus ``store``, ``platform``
+    and ``image_urls`` (and ``scraped_images`` with images enabled). Prices are strings
     in minor units (see ``prices.currency_minor_unit``). There is no ``url`` key."""
 
     id: int
@@ -39,5 +41,6 @@ class WooCommerceProductItem(TypedDict, total=False):
     prices: dict[str, Any]
     images: list[dict[str, Any]]
     store: str
+    platform: Literal["woocommerce"]
     image_urls: list[str]
     scraped_images: list[ScrapedImage]

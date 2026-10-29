@@ -440,6 +440,11 @@ _SCRAPE_DOC = """
     status and, sometimes, a ``hint`` (e.g. a likely wrong ``platform``). An empty
     store is not a failure. Invalid URLs and options raise ValueError at call time.
 
+    Items are each platform's native shape plus ``store``, ``platform``
+    ("shopify" or "woocommerce") and ``image_urls`` (see ``ShopifyProductItem``,
+    ``WooCommerceProductItem``); ``write_items(..., schema="unified")`` flattens them
+    into one row per variant with the same columns on both platforms.
+
     Nothing is written to disk unless ``images=True``, and no config file is read.
 """
 

@@ -82,6 +82,7 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
 
 def _item(product: dict[str, Any], store: str, images: bool) -> dict[str, Any]:
     product["store"] = store
+    product["platform"] = "woocommerce"
     images_field = product.get("images") or []  # may be null
     product["image_urls"] = (
         [img["src"] for img in images_field if isinstance(img, dict) and "src" in img]

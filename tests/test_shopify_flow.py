@@ -55,6 +55,7 @@ def test_bulk_item_shape():
             "product": product(0),
             "url": f"{STORE}/products/p0.json",
             "store": "shop.test",
+            "platform": "shopify",
             "image_urls": [],
         }
     ]
@@ -105,6 +106,7 @@ def test_bulk_fallback_triggers(trigger):
             "product": {"id": 7, "handle": "hat"},
             "url": f"{STORE}/products/hat.json",
             "store": "shop.test",
+            "platform": "shopify",
             "image_urls": [],
         }
     ]
@@ -199,6 +201,7 @@ def test_collections_fetched_after_complete_bulk_and_products_skipped():
             "collection": {"id": 3, "handle": "c"},
             "url": f"{STORE}/collections/c.json",
             "store": "shop.test",
+            "platform": "shopify",
             "image_urls": [],
         }
     ]

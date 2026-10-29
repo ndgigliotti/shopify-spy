@@ -22,6 +22,9 @@
   JSON and XML keep each item's native shape unless `--schema unified` is given. `write_items()` does the same for scraped items, and its
   `fields` now names these columns; other dicts still get a column per key.
   `append=True` refuses a CSV written by 0.3.0, whose columns were item fields.
+- Native items have a top-level `platform` field (`"shopify"` or `"woocommerce"`), so a
+  file that mixes runs says where each item came from. JSONL, JSON and XML output gains
+  this field.
 - `summarize()` WooCommerce prices keep the currency's decimals (`19.90`, not `19.9`).
 
 ## 0.3.0
