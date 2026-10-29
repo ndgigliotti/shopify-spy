@@ -153,3 +153,13 @@ def test_image_urls_come_from_the_payload_when_images_are_off():
     assert spy.summarize(collection).image_urls == ["https://cdn.test/c.jpg"]
     assert spy.summarize(woo).image_urls == ["https://woo.test/mug.jpg"]
     assert spy.summarize({**woo, "images": None}).image_urls == []
+
+
+def test_woocommerce_prices_survive_odd_amounts_and_units(caplog):
+    from shopify_spy._summary import woo_money
+
+    assert woo_money({"currency_minor_unit": "2.0"})("1990") == Decimal("19.90")
+    assert woo_money({"currency_minor_unit": 2})("1e30") == Decimal("1e28")
+    assert woo_money({"currency_minor_unit": 2})("Infinity") == Decimal("Infinity")
+    assert woo_money({"currency_minor_unit": "x"})("7") == Decimal("7")
+    assert "Unreadable currency_minor_unit" in caplog.text

@@ -1,7 +1,9 @@
 """Item writers (JSONL, JSON, CSV, XML) and the CLI's status file.
 
 JSONL, JSON and XML output matches what Scrapy's feed exporters wrote (UTF-8,
-``ensure_ascii=False``, no indentation). CSV encodes nested values as JSON.
+``ensure_ascii=False``, no indentation). CSV gives scraped items fixed columns with
+a row per variant (see ``_flatten``); other dicts get a column per key, nested values
+as JSON.
 """
 
 from __future__ import annotations
@@ -14,6 +16,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import IO, Any
 from xml.sax.saxutils import XMLGenerator
+
+from shopify_spy._flatten import default_columns, flatten, platform_columns
 
 logger = logging.getLogger("shopify_spy")
 
@@ -42,8 +46,9 @@ class ItemWriter:
     """Streams items to a file. Provisional API.
 
     Use as a context manager; the file is only created when the first item arrives,
-    so a run without items leaves no file (like the CLI always did). ``fields``
-    fixes CSV columns; otherwise they come from the first item.
+    so a run without items leaves no file (like the CLI always did). CSV writes a row
+    per variant of a scraped item; ``fields`` fixes the columns, which otherwise come
+    from the first item's platform (or its keys, for other dicts).
     """
 
     def __init__(
@@ -66,6 +71,8 @@ class ItemWriter:
         self._csv: Any = None
         self._xml: XMLGenerator | None = None
         self._dropped: set[str] = set()
+        # Columns the caller picked may leave out fields without a warning
+        self._picked = self.fields is not None
         self._field_set: set[str] = set()
 
     def __enter__(self) -> ItemWriter:
@@ -76,6 +83,8 @@ class ItemWriter:
 
     def _open(self, item: dict[str, Any]) -> None:
         existing = self.append and self.path.exists() and self.path.stat().st_size > 0
+        if self.format == "csv":
+            self._csv_columns(item, existing)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._file = open(self.path, "ab" if self.append else "wb")  # noqa: SIM115
         if self.format == "json":
@@ -90,14 +99,32 @@ class ItemWriter:
                 self._file, encoding="utf-8", newline="", write_through=True
             )
             self._csv = csv.writer(self._text)
-            if self.fields is None and existing:
-                with open(self.path, newline="", encoding="utf-8") as f:
-                    self.fields = next(csv.reader(f), None)
-            if self.fields is None:
-                self.fields = list(item.keys())
-            self._field_set = set(self.fields)
             if not existing:
                 self._csv.writerow(self.fields)
+
+    def _csv_columns(self, item: dict[str, Any], existing: bool) -> None:
+        """Settle the CSV columns before the file is touched."""
+        known = platform_columns(item)
+        if existing:
+            with open(self.path, newline="", encoding="utf-8") as f:
+                header = next(csv.reader(f), None) or []
+            if known and {"product", "collection", "prices"} & set(header):
+                raise ValueError(
+                    f"{self.path} has CSV columns from shopify-spy 0.3 or earlier "
+                    "(one per item field); write the new one-row-per-variant CSV to a new file"
+                )
+            if self.fields is None:
+                self.fields = header or None
+        if self.fields is None:
+            self.fields = default_columns(item) or list(item.keys())
+        elif known and self._picked:
+            unknown = [f for f in self.fields if f not in known]
+            if unknown:
+                logger.warning(
+                    "CSV field(s) not among the item's columns, left empty: %s",
+                    ", ".join(unknown),
+                )
+        self._field_set = set(self.fields)
 
     def write(self, item: dict[str, Any]) -> None:
         if self._file is None:
@@ -111,11 +138,14 @@ class ItemWriter:
             self._file.write(_dumps(item).encode("utf-8"))
         elif self.format == "csv":
             assert self.fields is not None
-            extra = item.keys() - self._field_set - self._dropped
+            rows = flatten(item) or [item]
+            extra = set() if self._picked else rows[0].keys() - self._field_set - self._dropped
             if extra:
                 self._dropped |= extra
-                logger.warning("CSV columns are fixed; dropping field(s): %s", ", ".join(extra))
-            self._csv.writerow([_csv_value(item.get(f)) for f in self.fields])
+                logger.warning(
+                    "CSV columns are fixed; dropping field(s): %s", ", ".join(sorted(extra))
+                )
+            self._csv.writerows([_csv_value(row.get(f)) for f in self.fields] for row in rows)
         else:
             assert self._xml is not None
             self._xml.startElement("item", {})
@@ -145,6 +175,8 @@ class ItemWriter:
 def _csv_value(value: Any) -> Any:
     if value is None:
         return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
     # Lists of strings are comma-joined, as Scrapy's CSV exporter did (image_urls);
     # other nested values are JSON, where Scrapy wrote unparseable Python reprs
     if isinstance(value, (list, tuple)) and all(isinstance(v, str) for v in value):
@@ -179,9 +211,13 @@ def write_items(
 
     ``items`` can be any iterable, including a run from ``scrape()``. The format
     comes from the extension (.jsonl, .json, .csv, .xml) unless ``format`` is given.
-    ``append=True`` adds to an existing JSONL or CSV file (CSV keeps its header).
-    ``fields`` fixes CSV columns; by default they come from the first item. No file
-    is created when there are no items.
+    ``append=True`` adds to an existing JSONL or CSV file (CSV keeps its header, and
+    refuses a 0.3.0 CSV of scraped items, which had a column per item field). CSV has
+    one row per product variant (WooCommerce: per variation; collections and products
+    without variants: one row), every cell a scalar, with fixed columns per platform;
+    ``fields`` picks the columns instead. Dicts that aren't scraped items, such as
+    ``summarize().asdict()``, get a column per key of the first one. Returns the number
+    of items, not rows. No file is created when there are no items.
     """
     with ItemWriter(path, format, fields=fields, append=append) as writer:
         for item in items:

@@ -9,10 +9,14 @@ from __future__ import annotations
 
 import dataclasses
 import html
+import logging
 import urllib.parse
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any
+
+logger = logging.getLogger("shopify_spy")
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,37 @@ def _decimal(value: Any) -> Decimal | None:
         return None
 
 
+def html_url(item: dict[str, Any], kind: str, handle: Any) -> str | None:
+    """A Shopify product or collection page, on the scheme the item was fetched over."""
+    store = item.get("store")
+    scheme = urllib.parse.urlsplit(item.get("url") or "").scheme or "https"
+    return f"{scheme}://{store}/{kind}s/{handle}" if store and handle else None
+
+
+def woo_money(prices: dict[str, Any]) -> Callable[[Any], Decimal | None]:
+    """Converts a Store API amount, in minor units, to a Decimal."""
+    minor = _decimal(prices.get("currency_minor_unit") or 0)
+    if minor is None or not minor.is_finite() or minor != minor.to_integral_value() or minor < 0:
+        logger.warning(
+            "Unreadable currency_minor_unit %r; prices are left in minor units",
+            prices.get("currency_minor_unit"),
+        )
+        minor = Decimal(0)
+    unit = Decimal(10) ** int(minor)
+
+    def money(value: Any) -> Decimal | None:
+        amount = _decimal(value)
+        if amount is None:
+            return None
+        try:
+            # Keep the currency's decimals: 1990 cents is 19.90, not 19.9
+            return (amount / unit).quantize(1 / unit)
+        except InvalidOperation:  # infinite, or too many digits to round
+            return amount / unit
+
+    return money
+
+
 def _images(item: dict[str, Any], payload: dict[str, Any]) -> list[str]:
     # image_urls is only filled when images are downloaded; fall back to the payload
     urls = item.get("image_urls") or [
@@ -71,10 +106,6 @@ def _shopify(item: dict[str, Any]) -> ItemSummary:
         for v in data.get("variants") or []
         if isinstance(v, dict) and (p := _decimal(v.get("price"))) is not None
     ]
-    store = item.get("store")
-    scheme = urllib.parse.urlsplit(item.get("url") or "").scheme or "https"
-    handle = data.get("handle")
-    html_url = f"{scheme}://{store}/{kind}s/{handle}" if store and handle else None
     return ItemSummary(
         kind=kind,
         platform="shopify",
@@ -83,20 +114,15 @@ def _shopify(item: dict[str, Any]) -> ItemSummary:
         min_price=min(prices) if prices else None,
         max_price=max(prices) if prices else None,
         currency=None,
-        html_url=html_url,
-        store=store,
+        html_url=html_url(item, kind, data.get("handle")),
+        store=item.get("store"),
         image_urls=_images(item, data),
     )
 
 
 def _woocommerce(item: dict[str, Any]) -> ItemSummary:
     prices = item.get("prices") if isinstance(item.get("prices"), dict) else {}
-    unit = Decimal(10) ** int(prices.get("currency_minor_unit") or 0)
-
-    def money(value: Any) -> Decimal | None:
-        amount = _decimal(value)
-        return amount / unit if amount is not None else None
-
+    money = woo_money(prices)
     price_range = prices.get("price_range") if isinstance(prices.get("price_range"), dict) else {}
     price = money(prices.get("price"))
     low = money(price_range.get("min_amount"))
