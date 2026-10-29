@@ -26,6 +26,15 @@
   file that mixes runs says where each item came from. JSONL, JSON and XML output gains
   this field.
 - `summarize()` WooCommerce prices keep the currency's decimals (`19.90`, not `19.9`).
+- **Shopify stores with more than 25,000 products** need far fewer requests. Once
+  `/products.json` stops at Shopify's 25,000-product limit, the scraper reads the
+  sitemap's product list, then pages `/collections/all` and the store's collections
+  (each has its own limit), largest first, while that saves requests: not when fewer
+  products are missing than a collection has pages, and not once every listed
+  product is found or they find less than one new product per request. Only the
+  products still missing are fetched one at a time from the sitemap. A
+  65,718-product store now takes about 1,700 requests instead of 41,000
+  ([#30](https://github.com/ndgigliotti/shopify-spy/issues/30)).
 
 ## 0.3.0
 
