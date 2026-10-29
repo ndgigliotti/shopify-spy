@@ -17,6 +17,11 @@ keywords = [
     "ecommerce",
     "web-scraping",
     "product-data",
+    "shopify-scraper",
+    "woocommerce-scraper",
+    "ecommerce-scraper",
+    "product-scraper",
+    "catalog",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
