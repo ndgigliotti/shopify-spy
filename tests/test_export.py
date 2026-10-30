@@ -535,3 +535,13 @@ def test_non_json_values_still_raise(tmp_path):
 def test_fields_with_native_schema_warn(tmp_path, caplog):
     write_items([SHOPIFY_PRODUCT], tmp_path / "out.jsonl", fields=["title"])
     assert "only applies to the unified schema" in caplog.text
+
+
+@pytest.mark.parametrize(("first", "then"), [("native", "unified"), ("unified", "native")])
+def test_jsonl_append_refuses_the_other_schema(tmp_path, first, then):
+    path = tmp_path / "out.jsonl"
+    write_items([SHOPIFY_PRODUCT], path, schema=first)
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match=f"holds {first} items"):
+        write_items([WOO_PRODUCT], path, schema=then, append=True)
+    assert path.read_bytes() == before

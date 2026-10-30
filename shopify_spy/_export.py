@@ -121,6 +121,8 @@ class ItemWriter:
 
     def _open(self, item: dict[str, Any]) -> None:
         existing = self.append and self.path.exists() and self.path.stat().st_size > 0
+        if existing and self.format == "jsonl" and item_platform(item):
+            self._check_jsonl_schema()
         if self.schema == "unified":
             self._columns(item, existing)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -139,6 +141,27 @@ class ItemWriter:
             self._csv = csv.writer(self._text)
             if not existing:
                 self._csv.writerow(self.fields)
+
+    def _check_jsonl_schema(self) -> None:
+        """Refuse to append scraped items in one schema to a JSONL file in the other."""
+        with open(self.path, encoding="utf-8") as f:
+            try:
+                first = json.loads(f.readline())
+            except ValueError:
+                return
+        if not isinstance(first, dict):
+            return
+        if item_platform(first):
+            found = "native"
+        elif {"platform", "kind", "variant_id"} <= first.keys():
+            found = "unified"
+        else:
+            return
+        if found != self.schema:
+            raise ValueError(
+                f"{self.path} holds {found} items; append with schema={found!r} "
+                f"or write {self.schema} items to a new file"
+            )
 
     def _columns(self, item: dict[str, Any], existing: bool) -> None:
         """Settle the unified columns before the file is touched."""
@@ -267,7 +290,8 @@ def write_items(
     ``items`` can be any iterable, including a run from ``scrape()``. The format
     comes from the extension (.jsonl, .json, .csv, .xml) unless ``format`` is given.
     ``append=True`` adds to an existing JSONL or CSV file (CSV keeps its header, and
-    refuses a 0.3.0 CSV of scraped items, which had a column per item field).
+    refuses a 0.3.0 CSV of scraped items, which had a column per item field;
+    JSONL refuses scraped items in the other schema).
 
     ``schema="native"`` writes each item as scraped; ``schema="unified"`` writes one
     row per product variant (WooCommerce: per variation; collections and products
