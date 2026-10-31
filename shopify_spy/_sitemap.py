@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import io
 import logging
-import urllib.parse
 import zlib
 from collections.abc import AsyncIterator, Callable
 
@@ -17,7 +16,8 @@ from defusedxml import ElementTree
 from defusedxml.common import DefusedXmlException
 
 from shopify_spy._fetch import FetchTooLarge, decompress
-from shopify_spy._session import RequestFailed, StoreSession
+from shopify_spy._session import STORE, RequestFailed, RequestKind, StoreSession
+from shopify_spy._utils import hostname
 
 logger = logging.getLogger("shopify_spy")
 
@@ -65,16 +65,13 @@ def parse(body: bytes) -> tuple[str | None, list[str]]:
     return root_type or None, locs
 
 
-def _host(url: str) -> str:
-    return (urllib.parse.urlsplit(url).hostname or "").lower()
-
-
 class SitemapWalk:
     """Async-iterable page URLs from a sitemap, following indexes on the same host.
 
     The store's hosts are the sitemap URL's host plus wherever it redirected to.
     ``root_ok`` becomes True once the top-level sitemap has been read.
     ``follow(child_url)`` decides which child sitemaps of an index are read.
+    ``kind`` is the request kind for every sitemap fetched.
     """
 
     def __init__(
@@ -82,12 +79,14 @@ class SitemapWalk:
         session: StoreSession,
         sitemap_url: str,
         follow: Callable[[str], bool] | None = None,
+        kind: RequestKind = STORE,
     ) -> None:
         self.session = session
+        self.kind = kind
         self.sitemap_url = sitemap_url
         self.follow = follow or (lambda url: True)
         self.root_ok = False
-        self.hosts = {_host(sitemap_url)}
+        self.hosts = {hostname(sitemap_url)}
         self._visited: set[str] = set()
 
     def __aiter__(self) -> AsyncIterator[str]:
@@ -98,7 +97,7 @@ class SitemapWalk:
             return
         self._visited.add(url)
         try:
-            response = await self.session.get(url)
+            response = await self.session.get(url, kind=self.kind)
         except RequestFailed as exc:
             logger.info("Sitemap request failed: %s", exc)
             return
@@ -106,11 +105,11 @@ class SitemapWalk:
             return
         root, locs = parse(response.body)
         if depth == 0:
-            self.hosts.add(_host(response.url))
+            self.hosts.add(hostname(response.url))
             self.root_ok = root is not None
         if root == "sitemapindex":
             for loc in locs:
-                if _host(loc) not in self.hosts:
+                if hostname(loc) not in self.hosts:
                     logger.info("Skipping off-host child sitemap %s", loc)
                 elif self.follow(loc):
                     async for page in self._walk(loc, depth + 1):
@@ -121,7 +120,10 @@ class SitemapWalk:
 
 
 def iter_locs(
-    session: StoreSession, sitemap_url: str, follow: Callable[[str], bool] | None = None
+    session: StoreSession,
+    sitemap_url: str,
+    follow: Callable[[str], bool] | None = None,
+    kind: RequestKind = STORE,
 ) -> SitemapWalk:
     """Walk a sitemap: ``async for loc in iter_locs(session, url)``."""
-    return SitemapWalk(session, sitemap_url, follow)
+    return SitemapWalk(session, sitemap_url, follow, kind)

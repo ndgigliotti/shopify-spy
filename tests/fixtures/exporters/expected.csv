@@ -1,4 +1,4 @@
-platform,kind,store,id,handle,title,vendor,product_type,categories,tags,options,created_at,updated_at,published_at,description,short_description,html_url,image_url,image_count,products_count,currency,min_price,max_price,on_sale,is_purchasable,average_rating,review_count,variant_count,variant_id,variant_title,sku,option1,option2,option3,price,compare_at_price,available,grams,requires_shipping,taxable,variant_position,variant_image_url,url
-shopify,product,a.com,1,,"Café ☕ ""quoted"" <tag> & amp",,,,"a, b,c",,,,,,,,,0,,,,,,,,,1,,,,,,,9.99,,true,,,,,,https://a.com/products/x.json
+platform,kind,store,id,handle,title,vendor,product_type,categories,tags,options,created_at,updated_at,published_at,description,short_description,html_url,image_url,image_count,products_count,currency,min_price,max_price,on_sale,is_purchasable,average_rating,review_count,variant_count,variant_id,variant_title,sku,option1,option2,option3,price,compare_at_price,available,grams,requires_shipping,taxable,variant_position,variant_image_url,url,source
+shopify,product,a.com,1,,"Café ☕ ""quoted"" <tag> & amp",,,,"a, b,c",,,,,,,,,0,,,,,,,,,1,,,,,,,9.99,,true,,,,,,https://a.com/products/x.json,
 shopify,collection,a.com,2,,"Line
-break",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,https://a.com/collections/y.json
+break",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,https://a.com/collections/y.json,

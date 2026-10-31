@@ -37,7 +37,11 @@ class WooCommerceProductItem(TypedDict, total=False):
 
     Each ``variations`` entry is the variation's own Store API record (``prices``,
     ``sku``, ``is_in_stock``, ...) with the listing's ``attributes``; only ``id`` and
-    ``attributes`` if the store refused the variation listing."""
+    ``attributes`` if the store refused the variation listing.
+
+    When the Store API is unavailable, items come from product pages instead:
+    ``source`` is ``"product_page"``, only the fields schema.org JSON-LD carries are
+    set (no ``variations``), and ``json_ld`` holds the page's Product object."""
 
     id: int
     name: str
@@ -49,3 +53,5 @@ class WooCommerceProductItem(TypedDict, total=False):
     platform: Literal["woocommerce"]
     image_urls: list[str]
     scraped_images: list[ScrapedImage]
+    source: str  # only on fallback items: "product_page"
+    json_ld: dict[str, Any]  # only on fallback items

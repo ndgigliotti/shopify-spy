@@ -66,6 +66,7 @@ COLUMNS = [
     "variant_position",
     "variant_image_url",
     "url",
+    "source",
     "image_paths",
 ]
 # Column types, for formats with typed cells (XLSX). IDs stay text: as numbers, Excel
@@ -235,6 +236,8 @@ def _woocommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
         "review_count": item.get("review_count"),
         "variant_count": len(variations),
         **_woo_offer(item),
+        # "product_page" for the partial items read from product pages' JSON-LD
+        "source": item.get("source", "store_api"),
     } | _image_paths(item)
     rows = []
     for variation in variations:

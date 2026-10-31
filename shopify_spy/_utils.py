@@ -84,6 +84,14 @@ def next_page_url(url: str) -> str:
     )
 
 
+def hostname(url: str) -> str:
+    """Return a URL's lowercased host, or "" if it has none or is malformed."""
+    try:
+        return urllib.parse.urlsplit(url).hostname or ""
+    except ValueError:  # e.g. "http://[::1"
+        return ""
+
+
 def origin(url: str) -> str:
     """Return scheme://host[:port] for a URL, the key for per-host state."""
     parsed = urllib.parse.urlsplit(url)
