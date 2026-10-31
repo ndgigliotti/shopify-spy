@@ -84,6 +84,7 @@ class StoreResult:
     suggested_platform: str | None = None  # set when the store looks like another platform
     responses_by_status: dict[int, int] = field(default_factory=dict)
     robots_disallowed: int = 0
+    rate_limited_requests: int = 0  # requests that ended on a 429, robots.txt's included
     images_failed: int = 0
     errors: list[str] = field(default_factory=list)
     duration: float = 0.0
@@ -168,8 +169,8 @@ def diagnose(
     store that also got a 2xx came up empty. A refusal (robots.txt, 403) wins over a
     429, and a 429 over a 404, which may only be a fallback's (a rate-limited
     products.json falls back to the sitemap). 5xx errors count last. A store that
-    ran out of time with no items after any 429 (robots.txt's included: its pause
-    holds the store's requests) is rate limited, not timed out.
+    ran out of time with no items, with a request whose 429 retries didn't get past
+    (robots.txt's included: its pause holds the store's requests), is rate limited.
     """
     if errored:
         return StoreStatus.error

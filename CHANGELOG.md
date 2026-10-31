@@ -69,9 +69,10 @@
   `summarize()` skips Shopify variant prices that aren't finite numbers (`NaN`,
   `Infinity`); a `NaN` price used to make it raise.
 - **A store that only answered 429 (Too Many Requests) is `rate_limited`, and one that
-  only answered 5xx errors is `unavailable`,** instead of `empty`. A store that got a
-  429 and then hit `--bail` with no items is `rate_limited` instead of `timed_out`,
-  even if some requests succeeded. Both are failures:
+  only answered 5xx errors is `unavailable`,** instead of `empty`. A store that hit
+  `--bail` with no items after a 429 its retries didn't get past (robots.txt's
+  included) is `rate_limited` instead of `timed_out`, even if other requests
+  succeeded; `StoreResult.rate_limited_requests` counts those requests. Both are failures:
   the status file's `status` is `rate limited (429)` or `unavailable (5xx)`, the CLI
   prints a hint to retry later, and `scrape()` raises `ScrapeFailed` when every store
   fails. A 403 or robots.txt block still takes precedence

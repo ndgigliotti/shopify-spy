@@ -116,6 +116,7 @@ def test_rate_limited_store_fails():
     assert store.status == spy.StoreStatus.rate_limited
     assert store.failed
     assert store.responses_by_status == {429: 3, 404: 1}  # then the sitemap fallback
+    assert store.rate_limited_requests == 1
 
 
 def test_on_failure_raise_not_when_some_succeed():

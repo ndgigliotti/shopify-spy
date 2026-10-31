@@ -305,7 +305,7 @@ File names start with the platform and a UTC timestamp. A status JSON file is wr
 | `403 Forbidden` | `forbidden` | The store returned 403s and no successful response |
 | `404 Not Found` | `not_found` | The store returned 404s and no successful response; check the URL and `--platform` |
 | `blocked by robots.txt` | `robots_blocked` | robots.txt forbade the store's requests; try `--ignore-robots` |
-| `rate limited (429)` | `rate_limited` | The store answered 429 (Too Many Requests) after retries and no successful response, or until `--bail` fired with no items; retry later with a lower `--concurrent` |
+| `rate limited (429)` | `rate_limited` | The store answered 429 (Too Many Requests) after retries and no successful response, or a 429 its retries didn't get past held it until `--bail` fired with no items; retry later with a lower `--concurrent` |
 | `unavailable (5xx)` | `unavailable` | The store answered 5xx server errors (often an outage or maintenance) and no successful response; retry later |
 | `TLS error` | `tls_error` | The certificate failed verification; try `--insecure` |
 | `no response` | `no_response` | The store never answered (DNS, connection or network failure) |

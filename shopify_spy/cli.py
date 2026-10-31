@@ -8,6 +8,7 @@ import logging
 import signal
 import sys
 import time
+from collections.abc import Container
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -677,8 +678,14 @@ def _display_status(store: StoreResult) -> str:
 def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
     """Return one hint per distinct zero-item status, in diagnosis order."""
 
-    def total(status: StoreStatus, code: int) -> int:
-        return sum(s.responses_by_status.get(code, 0) for s in stores if s.status == status)
+    def total(status: StoreStatus, codes: Container[int]) -> int:
+        return sum(
+            n
+            for s in stores
+            if s.status == status
+            for code, n in s.responses_by_status.items()
+            if code in codes
+        )
 
     present = {s.status for s in stores}
     hints = []
@@ -687,12 +694,12 @@ def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
         hints.append(f"{n} store(s) failed with an error.")
     if StoreStatus.forbidden in present:
         hints.append(
-            f"Received {total(StoreStatus.forbidden, 403)} HTTP 403 (Forbidden) response(s). "
+            f"Received {total(StoreStatus.forbidden, {403})} HTTP 403 (Forbidden) response(s). "
             "The server is actively blocking scrapers."
         )
     if StoreStatus.not_found in present:
         hints.append(
-            f"Received {total(StoreStatus.not_found, 404)} HTTP 404 (Not Found) response(s). "
+            f"Received {total(StoreStatus.not_found, {404})} HTTP 404 (Not Found) response(s). "
             "Check the URL and --platform flag."
         )
     if StoreStatus.robots_blocked in present:
@@ -700,21 +707,15 @@ def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
             "Likely blocked by robots.txt. Retry with [bold]--ignore-robots[/bold] (-i) to bypass."
         )
     if StoreStatus.rate_limited in present:
-        # Zero when only robots.txt got the 429 (it isn't counted per status)
-        n = total(StoreStatus.rate_limited, 429)
+        # Requests, not responses: robots.txt's 429 isn't in responses_by_status
+        n = sum(s.rate_limited_requests for s in stores if s.status == StoreStatus.rate_limited)
         hints.append(
-            f"Received {n or 'an'} HTTP 429 (Too Many Requests) response(s). "
+            f"{n} request(s) ended on HTTP 429 (Too Many Requests). "
             "The store is rate limiting requests; retry later, with a lower "
             "[bold]--concurrent[/bold] and AutoThrottle on."
         )
     if StoreStatus.unavailable in present:
-        n = sum(
-            count
-            for s in stores
-            if s.status == StoreStatus.unavailable
-            for code, count in s.responses_by_status.items()
-            if code >= 500
-        )
+        n = total(StoreStatus.unavailable, range(500, 600))
         hints.append(
             f"Received {n} HTTP 5xx (server error) response(s). "
             "The store may be down or under maintenance; retry later."
