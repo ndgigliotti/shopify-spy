@@ -131,10 +131,16 @@ def test_csv_shopify_price_range_skips_variants_without_prices(tmp_path):
     write_items([{"product": {"id": 1, "variants": variants}, "store": "a.com"}], path)
     rows = read_csv(path)
     assert [(r["min_price"], r["max_price"]) for r in rows] == [("5.00", "20")] * 3
-    path = tmp_path / "unpriced.csv"
-    write_items([{"product": {"id": 2, "variants": [{"id": 4, "price": ""}]}}], path)
-    (row,) = read_csv(path)
-    assert (row["min_price"], row["max_price"]) == ("", "")
+
+    # Prices that can't be compared are skipped instead of failing the write
+    odd = [{"id": 4, "price": ""}, {"id": 5, "price": "NaN"}, {"id": 6, "price": "Infinity"}]
+    for name, variants in [("unpriced", odd), ("not-a-list", 5)]:
+        path = tmp_path / f"{name}.csv"
+        write_items([{"product": {"id": 2, "variants": variants}}], path)
+        assert {(r["min_price"], r["max_price"]) for r in read_csv(path)} == {("", "")}
+    path = tmp_path / "mixed.csv"
+    write_items([{"product": {"id": 3, "variants": [*odd, {"id": 7, "price": "8"}]}}], path)
+    assert {(r["min_price"], r["max_price"]) for r in read_csv(path)} == {("8", "8")}
 
 
 def test_csv_collection_row(tmp_path):

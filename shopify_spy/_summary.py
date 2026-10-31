@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from shopify_spy._utils import dicts
+
 logger = logging.getLogger("shopify_spy")
 
 
@@ -101,23 +103,30 @@ def summarize(item: dict[str, Any]) -> ItemSummary:
 def _shopify(item: dict[str, Any]) -> ItemSummary:
     kind = "product" if isinstance(item.get("product"), dict) else "collection"
     data: dict[str, Any] = item[kind]
-    prices = [
-        p
-        for v in data.get("variants") or []
-        if isinstance(v, dict) and (p := _decimal(v.get("price"))) is not None
-    ]
+    low, high = shopify_price_range(data)
     return ItemSummary(
         kind=kind,
         platform="shopify",
         id=data.get("id"),
         title=data.get("title"),
-        min_price=min(prices) if prices else None,
-        max_price=max(prices) if prices else None,
+        min_price=low,
+        max_price=high,
         currency=None,
         html_url=html_url(item, kind, data.get("handle")),
         store=item.get("store"),
         image_urls=_images(item, data),
     )
+
+
+def shopify_price_range(product: dict[str, Any]) -> tuple[Decimal | None, Decimal | None]:
+    """The lowest and highest variant price of a Shopify product, or (None, None)."""
+    # NaN can't be compared, so min() and max() would raise on it
+    prices = [
+        p
+        for v in dicts(product.get("variants"))
+        if (p := _decimal(v.get("price"))) is not None and p.is_finite()
+    ]
+    return (min(prices), max(prices)) if prices else (None, None)
 
 
 def _woocommerce(item: dict[str, Any]) -> ItemSummary:

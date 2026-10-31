@@ -62,6 +62,14 @@ def test_shopify_product_without_variants():
     assert s.max_price is None
 
 
+def test_shopify_prices_that_cant_be_compared_are_skipped():
+    variants = [{"price": "NaN"}, {"price": "sNaN"}, {"price": "Infinity"}, {"price": "7"}, 3]
+    s = spy.summarize({**SHOPIFY_PRODUCT, "product": {"id": 1, "variants": variants}})
+    assert (s.min_price, s.max_price) == (Decimal("7"), Decimal("7"))
+    s = spy.summarize({**SHOPIFY_PRODUCT, "product": {"id": 1, "variants": 5}})
+    assert (s.min_price, s.max_price) == (None, None)
+
+
 def test_shopify_collection():
     s = spy.summarize(SHOPIFY_COLLECTION)
     assert s.kind == "collection"

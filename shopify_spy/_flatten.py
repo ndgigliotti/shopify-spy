@@ -20,7 +20,7 @@ from decimal import Decimal
 from html.parser import HTMLParser
 from typing import Any
 
-from shopify_spy._summary import html_url, summarize, woo_money
+from shopify_spy._summary import html_url, shopify_price_range, summarize, woo_money
 from shopify_spy._utils import dicts
 
 COLUMNS = [
@@ -149,7 +149,7 @@ def _shopify_product(item: dict[str, Any]) -> list[dict[str, Any]]:
     image_srcs = {image.get("id"): image.get("src") for image in images}
     variants = dicts(data.get("variants"))
     tags = data.get("tags")
-    summary = summarize(item)
+    min_price, max_price = shopify_price_range(data)
     product = _shopify_common(item, "product", data, images) | {
         "vendor": data.get("vendor"),
         "product_type": data.get("product_type"),
@@ -159,8 +159,8 @@ def _shopify_product(item: dict[str, Any]) -> list[dict[str, Any]]:
         "created_at": data.get("created_at"),
         "description": _text(data.get("body_html")),
         "image_count": len(images),
-        "min_price": summary.min_price,
-        "max_price": summary.max_price,
+        "min_price": min_price,
+        "max_price": max_price,
         "variant_count": len(variants),
     }
     rows = []
