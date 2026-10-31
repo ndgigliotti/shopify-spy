@@ -132,7 +132,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 )
                 return self._send(200, index, {"Content-Type": "application/xml"})
             return self._hang()
-        if s.startswith("woo_variations_"):
+        if s in ("woo_variations_ok", "woo_variations_403", "woo_variations_hang"):
             if path == "/robots.txt":
                 return self._send(404)
             if "type=variation" not in self.path:

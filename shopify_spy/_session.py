@@ -27,6 +27,7 @@ from shopify_spy._fetch import (
 from shopify_spy._policy import (
     RATE_LIMIT_STATUSES,
     ROBOTS_TOKEN,
+    ROTATE_ON_STATUSES,
     HostSlot,
     IdentityPool,
     RetryPolicy,
@@ -54,7 +55,7 @@ class RequestKind:
     check_robots: bool = True  # obey robots.txt for this request
     counted: bool = True  # counts toward the store's diagnosis stats
     dedupe: bool = True  # skip a URL this store already requested
-    rotate: bool = True  # a 403 swaps the store's user agent and retries
+    rotate: bool = True  # a 403 may swap the store's user agent and retry
 
 
 STORE = RequestKind("store")
@@ -345,7 +346,8 @@ class StoreSession:
                 )
                 retry_after = parse_retry_after(response.headers.get("retry-after"))
                 rate_limited = response.status in RATE_LIMIT_STATUSES
-                refused = response.status in self.retry.rotate_on and not kind.rotate
+                # Whatever the transport rotates on, a 403 to such a kind is final
+                refused = not kind.rotate and response.status in ROTATE_ON_STATUSES
                 if refused or not self.retry.should_retry_status(response.status, attempt):
                     if rate_limited:  # no retry left, but the host still has to back off
                         wait = self.retry.delay(attempt, retry_after, self.bail_time_left(), True)

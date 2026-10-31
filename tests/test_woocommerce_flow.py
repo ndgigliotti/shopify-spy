@@ -1,11 +1,12 @@
 """WooCommerce adapter flows through spy.scrape with a FakeFetcher (plan §3.3)."""
 
 import asyncio
+import json
 import time
 
 import pytest
 
-from shopify_spy._fetch import FetchConnectionError
+from shopify_spy._fetch import FakeFetcher, FetchConnectionError, FetcherCapabilities
 from shopify_spy._woocommerce import get_variations_url
 from tests.flow_support import STORE, redirect, requested, scrape, woo_url
 
@@ -262,6 +263,20 @@ def test_refused_variation_listing_is_not_retried_and_keeps_the_user_agent():
     assert len({r.identity.user_agent for r in fetcher.requests}) == 1
 
 
+def test_refused_variation_listing_is_not_retried_by_a_browser_transport():
+    # Browsers don't rotate identities, so their retry policy has no rotate statuses
+    fetcher = FakeFetcher(
+        {
+            woo_url(1): [variable(1, 10)],
+            variations_url(1): (403, "<html>Forbidden</html>"),
+            woo_url(2): [],
+        }
+    )
+    fetcher.capabilities = FetcherCapabilities(applies_identity_headers=False)
+    scrape_woo(fetcher)
+    assert fetcher.count(variations_url(1)) == 1
+
+
 def test_variation_listing_pages_past_a_capped_per_page():
     # A store that caps per_page below 100: short pages aren't the last
     routes = {
@@ -362,3 +377,47 @@ def test_slow_variation_listing_does_not_use_up_bail():
     assert "prices" in items[1]["variations"][0]
     assert result.stores[0].status == "ok"
     assert result.stores[0].complete
+
+
+@pytest.mark.parametrize("status", [408, 429])
+def test_throttled_variation_listing_is_tried_again_later(status):
+    routes = {
+        woo_url(1): [variable(1, 10)],
+        variations_url(1): (status, ""),
+        woo_url(2): [variable(2, 20)],
+        variations_url(2): [variation(20, 2)],
+        woo_url(3): [],
+    }
+    items, _, _ = scrape_woo(routes)
+    assert "prices" in items[1]["variations"][0]
+
+
+def test_failure_past_the_first_listing_page_is_not_a_refusal():
+    routes = {
+        woo_url(1): [variable(1, 10, 11)],
+        variations_url(1): [variation(10, 1)],  # 11 is hidden: no record
+        variations_url(1, page=2): (400, '{"code": "rest_post_invalid_page_number"}'),
+        woo_url(2): [variable(2, 20)],
+        variations_url(2): [variation(20, 2)],
+        woo_url(3): [],
+    }
+    items, _, _ = scrape_woo(routes)
+    assert "prices" in items[0]["variations"][0]
+    assert "prices" in items[1]["variations"][0]
+
+
+def test_total_pages_header_ends_the_listing():
+    routes = {
+        woo_url(1): [variable(1, 10, 11)],
+        variations_url(1): (200, json.dumps([variation(10, 1)]), {"X-WP-TotalPages": "1"}),
+        woo_url(2): [],
+    }
+    _, _, fetcher = scrape_woo(routes)
+    assert fetcher.count(variations_url(1, page=2)) == 0
+
+
+def test_variation_ids_match_across_types():
+    product = variable(1) | {"variations": [{"id": "10", "attributes": []}]}
+    routes = {woo_url(1): [product], variations_url(1): [variation(10, 1)], woo_url(2): []}
+    items, _, _ = scrape_woo(routes)
+    assert items[0]["variations"][0]["sku"] == "SKU-10"
