@@ -460,3 +460,38 @@ async def test_single_flight_shares_one_fetch_and_survives_owner_cancellation():
         assert await waiter == 2
         assert await flight.get("k", fetch) == 2  # cached afterwards
     assert calls == 2
+
+
+# --- Rate limits ---------------------------------------------------------------------
+
+
+async def test_rate_limits_count_requests_that_end_on_a_429():
+    session, _ = make_session(
+        {
+            f"{STORE}/limited": (429, ""),
+            f"{STORE}/recovered": Seq([(429, ""), (200, "")]),
+            f"{STORE}/then_error": Seq([(429, ""), FetchConnectionError("reset")]),
+            f"{STORE}/robots.txt": (429, ""),
+        }
+    )
+    assert (await get(session, f"{STORE}/limited")).status == 429
+    assert (await get(session, f"{STORE}/recovered")).status == 200
+    with pytest.raises(RequestFailed):
+        await get(session, f"{STORE}/then_error")
+    # robots.txt's 429 counts, though it isn't in by_status; /limited's 3 attempts count once
+    assert session.stats.rate_limits == 2
+    assert session.stats.by_status[429] == 5  # 3 + 1 + 1
+
+
+async def test_rate_limit_counted_when_its_retry_wait_is_cancelled():
+    session, _ = make_session(
+        {f"{STORE}/limited": (429, "")},
+        robots=False,
+        retry=RetryPolicy(retries=2, backoff=True, rate_limit_base_delay=60.0),
+    )
+    task = asyncio.create_task(session.get(f"{STORE}/limited"))
+    await asyncio.sleep(0.05)  # the first 429 arrived; the retry waits
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert session.stats.rate_limits == 1
