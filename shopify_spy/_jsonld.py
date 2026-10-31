@@ -1,4 +1,4 @@
-"""schema.org ``Product`` data from a product page's JSON-LD.
+"""Product page data: schema.org ``Product`` JSON-LD, and WooCommerce's variation form.
 
 Pages come from arbitrary servers: unparseable scripts are skipped and nesting is
 bounded. Scripts are found with regular expressions rather than an HTML parser,
@@ -7,9 +7,12 @@ which blocks the event loop for tens of milliseconds on a large page.
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import re
+import urllib.parse
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -159,3 +162,140 @@ def offers(value: Any) -> Offers:
             elif own is None:
                 result.current.append(spec_price)
     return result
+
+
+# --- WooCommerce's variation form -------------------------------------------------
+# A variable product's page embeds its variations as JSON on the form, unless it has
+# more than woocommerce_ajax_variation_threshold (30 by default): then the attribute
+# is "false" and the page asks for them as options are picked.
+VARIATIONS_ATTR = "data-product_variations"
+_ATTR_VALUE = re.compile(r"""\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+_TAG = re.compile(r"<[^>]*>")
+_ATTRS: dict[str, re.Pattern[str]] = {}
+# esc_attr()'s entities; html.unescape is ~10x slower on a large attribute
+_ENTITIES = (("&quot;", '"'), ("&#034;", '"'), ("&#039;", "'"), ("&#39;", "'"),
+             ("&lt;", "<"), ("&gt;", ">"), ("&amp;", "&"))  # fmt: skip
+
+
+def _element(tag: str) -> re.Pattern[str]:
+    """An element and its body. The body can't run past the next tag of its kind,
+    so an unclosed one costs a short scan, not one to the end of the page each."""
+    return re.compile(rf"<{tag}\b([^>]*)>([^<]*(?:<(?!/?{tag}\b)[^<]*)*)</{tag}\s*>", re.I)
+
+
+_LABEL = _element("label")
+_SELECT = _element("select")
+_OPTION = _element("option")
+
+
+def _attr(attrs: str, name: str) -> str | None:
+    """An attribute's value: exactly ``name`` (``id``, not ``data-id``)."""
+    pattern = _ATTRS.get(name)
+    if pattern is None:
+        pattern = _ATTRS[name] = re.compile(
+            rf"""(?<![\w-]){re.escape(name)}\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""", re.I
+        )
+    match = pattern.search(attrs)
+    if match is None:
+        return None
+    return html.unescape(next(g for g in match.groups() if g is not None))
+
+
+def _plain(markup: str) -> str:
+    return " ".join(html.unescape(_TAG.sub(" ", markup)).split())
+
+
+def field_name(field: str) -> str:
+    """A name for a form field without a label: ``attribute_pa_color`` -> ``color``."""
+    return urllib.parse.unquote(field.removeprefix("attribute_").removeprefix("pa_"))
+
+
+@dataclass
+class FormField:
+    name: str  # display name, from the field's label
+    terms: dict[str, str]  # option value (a term's slug, or a local value) -> its name
+
+
+@dataclass
+class VariationForm:
+    records: list[Any]  # the embedded variations, as WooCommerce wrote them
+    fields: dict[str, FormField]  # by field name, e.g. "attribute_pa_color"
+
+    def name(self, field: str) -> str:
+        known = self.fields.get(field)
+        return known.name if known else field_name(field)
+
+
+def _forms(page: str) -> Iterator[tuple[str, str, str]]:
+    """Each variation form's (opening tag's other attributes, JSON value, body)."""
+    start = 0
+    while (i := page.find(VARIATIONS_ATTR, start)) >= 0:
+        start = i + len(VARIATIONS_ATTR)
+        value = _ATTR_VALUE.match(page, start)
+        opening = page.rfind("<", 0, i)
+        if value is None or not page.startswith("<form", opening):
+            continue
+        tag_end = page.find(">", value.end())
+        if tag_end < 0:
+            return
+        close = page.find("</form", tag_end)
+        body = page[tag_end + 1 : close if close >= 0 else len(page)]
+        attrs = page[opening:i] + page[value.end() : tag_end]
+        yield attrs, value.group(1) if value.group(1) is not None else value.group(2), body
+        start = tag_end
+
+
+def _decode(raw: str) -> Any:
+    """The attribute's JSON: esc_attr()'s entities first, then any entity."""
+    fast = raw
+    for entity, char in _ENTITIES:
+        fast = fast.replace(entity, char)
+    for unescape in (lambda: fast, lambda: html.unescape(raw)):
+        try:
+            return json.loads(unescape(), strict=False)
+        except (ValueError, RecursionError):
+            continue
+    return None
+
+
+def variation_form(page: str, product_id: int | None) -> VariationForm | None:
+    """The product's variation form: the one whose ``data-product_id`` is the
+    product (a related product's can be on the page too), else the only one.
+
+    None when the page has none, or its variations aren't embedded."""
+    forms = list(_forms(page))
+    if product_id is not None:
+        mine = [f for f in forms if _attr(f[0], "data-product_id") == str(product_id)]
+        forms = mine or [f for f in forms if _attr(f[0], "data-product_id") is None]
+    if len(forms) != 1:
+        return None
+    _, raw, body = forms[0]
+    records = _decode(raw)
+    if not isinstance(records, list):  # false: too many to embed
+        return None
+    labels = {
+        target: _plain(text)
+        for attrs, text in _LABEL.findall(body)
+        if (target := _attr(attrs, "for"))
+    }
+    fields: dict[str, FormField] = {}
+    for attrs, options in _SELECT.findall(body):
+        field = _attr(attrs, "data-attribute_name") or _attr(attrs, "name") or ""
+        if not field.startswith("attribute_"):
+            continue
+        terms = {
+            value: _plain(text)
+            for option_attrs, text in _OPTION.findall(options)
+            if (value := _attr(option_attrs, "value"))
+        }
+        fields[field] = FormField(labels.get(_attr(attrs, "id") or "") or "", terms)
+    # Unlabeled fields are named from the field; where two would share a name
+    # (pa_size and a local size), keep the global one's pa_ prefix
+    for field, found in fields.items():
+        if not found.name:
+            found.name = field_name(field)
+    names = [f.name for f in fields.values()]
+    for field, found in fields.items():
+        if names.count(found.name) > 1:
+            found.name = urllib.parse.unquote(field.removeprefix("attribute_"))
+    return VariationForm(records, fields)

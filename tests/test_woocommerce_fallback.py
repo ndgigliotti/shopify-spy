@@ -1,5 +1,6 @@
 """WooCommerce fallback to product pages when the Store API is unavailable (#42)."""
 
+import html
 import json
 from decimal import Decimal
 
@@ -9,6 +10,7 @@ import shopify_spy as spy
 from shopify_spy._flatten import COLUMNS, flatten
 from shopify_spy._jsonld import offers as read_offers
 from shopify_spy._jsonld import parse_product_page
+from shopify_spy._jsonld import variation_form as read_form
 from shopify_spy._woocommerce import _prices, page_item
 from tests.flow_support import STORE, scrape, sitemapindex, urlset, woo_url
 
@@ -405,7 +407,8 @@ def offer(**fields):
     ids=["offer", "spec_with_list_price", "aggregate", "yoast_dict", "numbers", "none"],
 )
 def test_prices_from_offers(offers, expected):
-    prices = _prices(read_offers(offers))
+    found = read_offers(offers)
+    prices = _prices(found.current, found.listed, found.bounds, found.currency)
     assert prices["price"] == expected["price"]
     assert prices["sale_price"] == expected["price"]
     assert prices["regular_price"] == expected["regular_price"]
@@ -657,8 +660,6 @@ def test_deleted_listed_product_is_not_a_failure(status):
 
 def variation_form(records, selects=None):
     """WooCommerce's variation form, as cornforthimages.com renders it."""
-    import html as html_lib
-
     selects = selects or [
         ("pa_size", "Size", [("small", "Small"), ("large", "Large")]),
         ("paper-mounting", "Print Styles", [("Metal", "Metal"), ("Acrylic", "Acrylic")]),
@@ -674,7 +675,7 @@ def variation_form(records, selects=None):
     )
     return (
         '<form class="variations_form cart" method="post" data-product_id="7" '
-        f'data-product_variations="{html_lib.escape(data)}">'
+        f'data-product_variations="{html.escape(data)}">'
         f'<table class="variations"><tbody>{rows}</tbody></table></form>'
     )
 
@@ -753,7 +754,7 @@ def test_unreadable_variation_form_keeps_one_row(records):
         {"@type": "Product", "name": "Print", "offers": offer(price="12.50")},
         product_url("print"),
         7,
-        variation_form(records),
+        read_form(variation_form(records), 7),
     )
     assert "variations" not in item
     assert len(flatten(item)) == 1
@@ -761,7 +762,9 @@ def test_unreadable_variation_form_keeps_one_row(records):
 
 def test_variation_form_without_labels_uses_field_names():
     form = variation_form([variation(101, "small", "Metal", 10)]).replace("<label", "<span")
-    item = page_item({"@type": "Product", "name": "Print"}, product_url("print"), 7, form)
+    item = page_item(
+        {"@type": "Product", "name": "Print"}, product_url("print"), 7, read_form(form, 7)
+    )
     assert [a["name"] for a in item["variations"][0]["attributes"]] == [
         "size",
         "paper-mounting",
@@ -769,13 +772,84 @@ def test_variation_form_without_labels_uses_field_names():
 
 
 def test_variation_without_price_keeps_product_price():
-    form = variation_form([variation(101, "small", "Metal", None) | {"display_price": None}])
+    record = variation(101, "small", "Metal", None, sku="P-S", in_stock=False)
+    form = variation_form([record | {"display_price": ""}])
     item = page_item(
         {"@type": "Product", "name": "Print", "offers": offer(price="12.50")},
         product_url("print"),
         7,
-        form,
+        read_form(form, 7),
     )
     (row,) = flatten(item)
     assert row["variant_id"] == 101
     assert row["price"] == Decimal("12.50")
+    # Its own SKU and stock still apply
+    assert (row["sku"], row["available"]) == ("P-S", False)
+
+
+def test_related_products_variation_form_is_not_used():
+    mine = variation_form([variation(101, "small", "Metal", 10)])
+    related = mine.replace('data-product_id="7"', 'data-product_id="99"').replace("101", "991")
+    form = read_form(related + mine, 7)
+    assert [r["variation_id"] for r in form.records] == [101]
+    # A related product's form alone isn't this product's
+    assert read_form(related, 7) is None
+
+
+def test_two_forms_without_product_ids_are_ambiguous():
+    plain = variation_form([variation(101, "small", "Metal", 10)]).replace(
+        ' data-product_id="7"', ""
+    )
+    assert read_form(plain, 7) is not None
+    assert read_form(plain + plain, 7) is None
+
+
+def test_form_attributes_match_exact_names():
+    form = variation_form(
+        [variation(101, "small", "Metal", 10)],
+        selects=[("pa_size", "Size", [("small", "Small")])],
+    )
+    form = form.replace('<select id="pa_size"', '<select data-id="other" id="pa_size"').replace(
+        '<option value="small"', '<option data-value="#f00" value="small"'
+    )
+    found = read_form(form, 7)
+    assert found.fields["attribute_pa_size"].name == "Size"
+    assert found.fields["attribute_pa_size"].terms == {"small": "Small"}
+
+
+def test_unlabeled_global_and_local_attributes_keep_distinct_names():
+    record = {
+        "variation_id": 1,
+        "attributes": {"attribute_pa_size": "s", "attribute_size": "tall"},
+        "display_price": 5,
+    }
+    form = variation_form(
+        [record],
+        selects=[("pa_size", "", [("s", "S")]), ("size", "", [("tall", "Tall")])],
+    ).replace("<label", "<span")
+    found = read_form(form, 7)
+    assert [f.name for f in found.fields.values()] == ["pa_size", "size"]
+
+
+def test_escaped_names_are_unescaped_once():
+    form = variation_form(
+        [variation(101, "rd", "Metal", 10)],
+        selects=[("pa_size", "Size &amp; Fit", [("rd", "R&amp;D"), ("lt", "&amp;lt;3")])],
+    )
+    item = page_item(
+        {"@type": "Product", "name": "Print"}, product_url("print"), 7, read_form(form, 7)
+    )
+    (row,) = flatten(item)
+    assert row["options"].startswith("Size & Fit")
+    assert row["option1"] == "R&D"
+    assert item["attributes"][0]["terms"][1]["name"] == "&amp;lt;3"  # shows as "&lt;3"
+
+
+def test_hostile_unclosed_tags_parse_quickly():
+    import time
+
+    form = variation_form([variation(101, "small", "Metal", 10)])
+    hostile = form.replace("</form>", "") + "<label for=x>a" * 20_000 + "<select>" * 2_000
+    started = time.perf_counter()
+    read_form(hostile, 7)
+    assert time.perf_counter() - started < 1

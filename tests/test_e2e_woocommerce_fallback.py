@@ -210,7 +210,7 @@ def test_cli_falls_back_to_product_pages(tmp_path, stores):
     assert {r["source"] for r in rows} == {"product_page"}
     by_store: dict = {}
     for row in rows:
-        key = row["handle"] if not row["variant_id"] else f"{row['handle']}/{row['variant_id']}"
+        key = f"{row['handle']}/{row['variant_id']}" if row["variant_id"] else row["handle"]
         by_store.setdefault(row["store"], {})[key] = row
     hat = by_store[urls["api_401"].removeprefix("http://")]["hat"]
     assert hat["id"] == "11"
