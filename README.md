@@ -55,6 +55,8 @@ A script can also declare the dependency itself ([inline script metadata](https:
 import shopify_spy as spy
 ```
 
+Excel output (`--format xlsx`) needs the `excel` extra: `pipx install 'shopify-spy[excel]'`, `uv tool install 'shopify-spy[excel]'` or `uv add 'shopify-spy[excel]'`.
+
 Requires Python 3.11+.
 
 ### Nix
@@ -114,7 +116,7 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 spy scrape --ignore-robots https://www.example.com
 ```
 
-Results are saved as JSONL in the output directory (default: `./output`). Use `--format` to choose JSON, CSV, or XML instead, and `--schema unified` for one row per variant with the same columns on both platforms. A live item counter is displayed during scraping.
+Results are saved as JSONL in the output directory (default: `./output`). Use `--format` to choose JSON, CSV, Excel (XLSX) or XML instead, and `--schema unified` for one row per variant with the same columns on both platforms. A live item counter is displayed during scraping.
 
 ### Python
 
@@ -185,8 +187,9 @@ spy scrape [URL] [OPTIONS]
 - `--collections / --no-collections` - Scrape collections (default: no; Shopify only)
 - `--images / --no-images` - Download images (default: no)
 - `--output, -o PATH` - Output directory (default: `./output`)
+- `--format, -F FORMAT` - Output format: `json`, `jsonl`, `csv`, `xlsx`, `xml` (default: `jsonl`; `xlsx` needs the `excel` extra, see [Excel output](#excel-output))
 - `--format, -F FORMAT` - Output format: `json`, `jsonl`, `csv`, `xml` (default: `jsonl`)
-- `--schema SCHEMA` - Item shape: `native` (as scraped) or `unified` (a row per variant; see [Unified schema](#unified-schema)). Default: `native`, except CSV, which is always `unified`
+- `--schema SCHEMA` - Item shape: `native` (as scraped) or `unified` (a row per variant; see [Unified schema](#unified-schema)). Default: `native`, except CSV and XLSX, which are always `unified`
 - `--config, -c FILE` - Path to YAML config file
 - `--concurrent INT` - Concurrent requests per host (default: 16)
 - `--max-stores INT` - Stores scraped at once (default: 16)
@@ -228,8 +231,8 @@ scrape:
 
 output:
   dir: ./output       # Output directory for results
-  format: jsonl       # Output format: json, jsonl, csv, xml
-  # schema: unified   # native (as scraped) or unified (row per variant; csv always)
+  format: jsonl       # Output format: json, jsonl, csv, xlsx, xml
+  # schema: unified   # native (as scraped) or unified (row per variant; csv and xlsx always)
   images_subdir: images  # Subdirectory for downloaded images
 
 network:
@@ -280,12 +283,14 @@ File names start with the platform and a UTC timestamp. A status JSON file is wr
 ```json
 {
   "items_scraped": 47,
+  "items_written": 47,
   "urls": [
     {"url": "https://store.com", "items": 47, "status": "ok", "code": "ok"}
   ],
   "finish_reason": "finished",
   "duration_seconds": 12.3,
-  "log_file": "/home/user/.local/state/shopify-spy/logs/shopify_spider_2024-01-15T10-30-00+00-00.log"
+  "log_file": "/home/user/.local/state/shopify-spy/logs/shopify_spider_2024-01-15T10-30-00+00-00.log",
+  "output_error": null
 }
 ```
 
@@ -306,7 +311,7 @@ File names start with the platform and a UTC timestamp. A status JSON file is wr
 | `stopped` | `stopped` | Interrupted (Ctrl-C) before producing anything |
 | `invalid URL` | `invalid_url` | The URL was malformed and skipped before scraping |
 
-`finish_reason` summarizes the run: `finished`, `item_limit` (a store reached `--limit`), `bail` (a store hit the `--bail` timeout), `crawler_failed` (a store raised an unexpected error), or `shutdown` (interrupted).
+`finish_reason` summarizes the run: `finished`, `item_limit` (a store reached `--limit`), `bail` (a store hit the `--bail` timeout), `crawler_failed` (a store raised an unexpected error), or `shutdown` (interrupted). `items_written` is how many items the data file holds. `output_error` is `null` unless writing the data file failed (such as a full disk or an unwritable directory), in any format. Then it holds the error, the run stops early (`finish_reason` is `shutdown`), the command exits with status 1, and the file keeps the whole items written before the error; a partly written item is cut off (in XLSX, rows of the failed item already handed to the workbook stay). `items_written` then falls short of `items_scraped`, which also counts the item that failed and any already fetched. An XLSX file is removed only if building the workbook at the end fails. A crash or a killed process writes no status file.
 
 Detailed logs are written to a log file (not the terminal). Log files are stored in the platform-appropriate state directory (e.g., `~/.local/state/shopify-spy/logs/` on Linux). Use `--verbose` to also print logs to the terminal.
 
@@ -371,7 +376,7 @@ Images are saved in their original format, named by the SHA-1 of their URL, with
 
 ### Unified schema
 
-The unified schema has one row per variant and a plain value in every cell (no embedded JSON), so you can sort and filter it in a spreadsheet or load it as a table. CSV always uses it; JSONL, JSON and XML use it with `--schema unified`. The product's columns repeat on each of its variant rows; a product without variants still gets one row. Both platforms share the same columns, so one file can hold Shopify and WooCommerce items; a column only one platform has is blank for the other (empty in CSV and XML, `null` in JSON). The native schema keeps each platform's full item; the unified schema keeps these columns:
+The unified schema has one row per variant and a plain value in every cell (no embedded JSON), so you can sort and filter it in a spreadsheet or load it as a table. CSV and Excel (XLSX) always use it; JSONL, JSON and XML use it with `--schema unified`. The product's columns repeat on each of its variant rows; a product without variants still gets one row. Both platforms share the same columns, so one file can hold Shopify and WooCommerce items; a column only one platform has is blank for the other (empty in CSV and XML, `null` in JSON). The native schema keeps each platform's full item; the unified schema keeps these columns:
 
 | Column | Shopify | WooCommerce |
 |---|---|---|
@@ -406,6 +411,20 @@ The unified schema has one row per variant and a plain value in every cell (no e
 Prices are decimal amounts (WooCommerce's minor units are converted). A WooCommerce variation row's `sku`, `price`, `compare_at_price` and `available` are the variation's own; if the store refuses the variation listing, they're the product's. WooCommerce's `type` (`simple`, `variable`, ...) and descriptive attributes are only in the native schema. In JSON, prices are strings and booleans are `true`/`false`.
 
 With `--images`, `image_paths` lists the downloaded files (relative to the images directory). In CSV and unified XML, booleans are `true`/`false` and an empty cell means no value. Appending to a CSV written by 0.3.0 or earlier, which had a column per item field, is refused; start a new file.
+
+### Excel output
+
+`--format xlsx` (with the `excel` extra installed) writes the [unified schema](#unified-schema)'s rows to an Excel workbook, Shopify and WooCommerce in one sheet, avoiding the CSV's problems in Excel: text is UTF-8-safe and never evaluated as a formula, prices, counts and ratings are numbers, booleans are `TRUE`/`FALSE`, and `created_at`, `updated_at` and `published_at` are dates in UTC (Excel has no time zones). IDs stay text, since Excel would show them in scientific notation. The header row is frozen and has filters. Text longer than Excel's cell limit (32,767 characters) is cut, with a warning in the log. Past Excel's 1,048,576 rows, items continue on a new sheet (`items 2`, ...), keeping a product's variant rows together.
+
+The file is written when the run ends, including after Ctrl-C (the CLI ignores Ctrl-C while it writes), so a killed process leaves no usable file and there is no `append`. If building the workbook fails, the partial file is removed. During the run, rows are kept in a temporary folder next to the output file (`products.xlsx.tmp-…`), which needs disk space for roughly the uncompressed data; it is deleted at the end, but a killed process leaves it behind, and it can be deleted. For long runs, write JSONL and convert it afterwards:
+
+```python
+import json
+import shopify_spy as spy
+
+with open("products.jsonl", encoding="utf-8") as f:
+    spy.write_items((json.loads(line) for line in f), "products.xlsx")
+```
 
 ### Parsing Output
 
@@ -479,7 +498,7 @@ spy.write_items(spy.scrape(blocked, respect_robots_txt=False), "products.jsonl",
 - **Failures are never silent.** By default `scrape()` raises `ScrapeFailed` (listing each store's status) when every store failed; `on_failure="warn"` or `"ignore"` relax that, and `strict=True` raises when any store failed. Each `StoreResult` has a `status`, an item count and sometimes a `hint`, such as a likely wrong `platform`.
 - **Options** match the CLI: `platform`, `products`, `collections`, `images` (with `images_dir`), `max_items_per_store` (per store; use `itertools.islice` for a total), `bail`, `concurrent_requests`, `request_timeout`, `retries`, `user_agent`, `respect_robots_txt`, `verify_tls`, `max_concurrent_stores` and the `throttle_*` settings.
 - **Images:** `images=True, images_dir="images"` saves files under `images/full/`; each item's `scraped_images` records have a `path` relative to `images_dir`, so the file is `Path(images_dir) / record["path"]`.
-- **Schemas:** `write_items(run, "products.jsonl")` writes items as scraped; `schema="unified"` writes the same one-row-per-variant records as the CLI's `--schema unified`, shared by both platforms (see [Unified schema](#unified-schema)), so items from Shopify and WooCommerce runs can go in one file. CSV is always unified (`schema="native"` raises `ValueError`). `fields=[...]` picks unified columns (a name that isn't one of them is logged and left empty). Other dicts, such as `summarize(item).asdict()`, get a column per key.
+- **Schemas:** `write_items(run, "products.jsonl")` writes items as scraped; `schema="unified"` writes the same one-row-per-variant records as the CLI's `--schema unified`, shared by both platforms (see [Unified schema](#unified-schema)), so items from Shopify and WooCommerce runs can go in one file. CSV and Excel are always unified (`schema="native"` raises `ValueError`). `fields=[...]` picks unified columns (a name that isn't one of them is logged and left empty). Other dicts, such as `summarize(item).asdict()`, get a column per key. `"products.xlsx"` writes the unified rows as typed cells (see [Excel output](#excel-output)), keeping rows in a temporary folder next to the file until it closes. A write that fails partway leaves the file ending on the last whole item.
 - **No side effects:** nothing is written unless `images=True`, no config file is read, and nothing is printed (logs go to the `shopify_spy` logger).
 - **Async code and notebooks** use `scrape_async()`, which takes the same options:
 

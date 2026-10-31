@@ -68,6 +68,24 @@ COLUMNS = [
     "url",
     "image_paths",
 ]
+# Column types, for formats with typed cells (XLSX). IDs stay text: as numbers, Excel
+# shows them in scientific notation. Numbers may arrive as strings (Shopify prices,
+# WooCommerce ratings, summarize().asdict() prices), which also share these names.
+ID_COLUMNS = {"id", "variant_id"}
+NUMBER_COLUMNS = {
+    "price",
+    "compare_at_price",
+    "min_price",
+    "max_price",
+    "average_rating",
+    "review_count",
+    "image_count",
+    "variant_count",
+    "products_count",
+    "grams",
+    "variant_position",
+}
+DATE_COLUMNS = {"created_at", "updated_at", "published_at"}
 
 
 def _builder(item: dict[str, Any]) -> Callable[[dict[str, Any]], list[dict[str, Any]]] | None:

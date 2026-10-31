@@ -3,6 +3,8 @@ captured from Scrapy 2.14 before it was removed; CSV differs on purpose, D2)."""
 
 import csv
 import json
+import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -359,6 +361,8 @@ def test_status_file(tmp_path):
         {"url": "bad url", "items": 0, "status": "invalid URL", "code": "invalid_url"},
     ]
     assert data["duration_seconds"] == 1.2
+    assert data["output_error"] is None
+    assert data["items_written"] is None
 
 
 def test_csv_description_keeps_inline_markup_together(tmp_path):
@@ -560,3 +564,83 @@ def test_jsonl_append_refuses_the_other_schema(tmp_path, first, then):
     with pytest.raises(ValueError, match=f"holds {first} items"):
         write_items([WOO_PRODUCT], path, schema=then, append=True)
     assert path.read_bytes() == before
+
+
+class _FailingFile:
+    """Wraps a writer's file; once armed, a write stores half its bytes and raises."""
+
+    def __init__(self, file):
+        self.file = file
+        self.armed = False
+
+    def write(self, data):
+        if self.armed:
+            self.file.write(bytes(data[: len(data) // 2]))
+            raise OSError("disk full")
+        return self.file.write(data)
+
+    def __getattr__(self, name):
+        return getattr(self.file, name)
+
+
+@pytest.mark.parametrize(
+    ("fmt", "schema"),
+    [("jsonl", None), ("json", None), ("csv", None), ("xml", None)]
+    + [(f, "unified") for f in ("jsonl", "json", "xml")],
+)
+def test_failed_write_leaves_whole_items_only(tmp_path, fmt, schema):
+    path = tmp_path / f"out.{fmt}"
+    with ItemWriter(path, schema=schema) as writer:
+        writer.write(ITEMS[0])
+        writer._file = failing = _FailingFile(writer._file)
+        failing.armed = True
+        with pytest.raises(OSError, match="disk full"):
+            writer.write(ITEMS[1])
+        failing.armed = False
+        assert writer.count == 1
+    # The file is what writing only the first item gives
+    write_items(ITEMS[:1], tmp_path / f"expected.{fmt}", schema=schema)
+    assert path.read_bytes() == (tmp_path / f"expected.{fmt}").read_bytes()
+
+
+def test_lone_surrogates_become_replacement_characters(tmp_path):
+    # json.loads accepts a broken escape, which UTF-8 can't encode
+    bad = json.loads('{"title": "bad \\ud83d", "ok": "\\ud83d\\ude00"}')
+    for fmt in ("jsonl", "json", "csv"):
+        path = tmp_path / f"out.{fmt}"
+        write_items([bad], path)
+        text = path.read_text(encoding="utf-8")
+        assert "bad \ufffd" in text and "\U0001f600" in text, fmt
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs a FIFO")
+def test_writes_to_a_pipe(tmp_path):
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    received = []
+    reader = threading.Thread(target=lambda: received.append(fifo.read_bytes()))
+    reader.start()
+    write_items(ITEMS, fifo, format="jsonl")
+    reader.join(timeout=10)
+    assert received == [(FIXTURES / "scrapy.jsonl").read_bytes()]
+
+
+def test_failed_header_write_leaves_no_file(tmp_path, monkeypatch):
+    path = tmp_path / "out.csv"
+    original = ItemWriter._write_all
+    calls = []
+
+    def fail_first(self, data):
+        calls.append(data)
+        if len(calls) == 1:
+            raise OSError("disk full")
+        original(self, data)
+
+    monkeypatch.setattr(ItemWriter, "_write_all", fail_first)
+    with ItemWriter(path) as writer:
+        with pytest.raises(OSError):
+            writer.write(SHOPIFY_PRODUCT)
+        assert not path.exists()
+        # The next write starts the file again, header first
+        writer.write(SHOPIFY_PRODUCT)
+    assert path.read_text(encoding="utf-8").startswith("platform,kind,")

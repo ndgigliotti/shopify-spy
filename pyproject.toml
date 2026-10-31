@@ -49,6 +49,9 @@ dependencies = [
     "defusedxml>=0.7",
 ]
 
+[project.optional-dependencies]
+excel = ["xlsxwriter>=3.0"]
+
 [project.urls]
 Homepage = "https://github.com/ndgigliotti/shopify-spy"
 Repository = "https://github.com/ndgigliotti/shopify-spy"
@@ -96,4 +99,6 @@ dev = [
     "respx>=0.22",
     "ruff>=0.9",
     "pre-commit>=4.0",
+    "xlsxwriter>=3.0",
+    "openpyxl>=3.1",
 ]

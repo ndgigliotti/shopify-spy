@@ -16,8 +16,10 @@
   pyyaml,
   rich,
   typer,
+  xlsxwriter,
 
   # tests
+  openpyxl,
   pytest-asyncio,
   pytestCheckHook,
   respx,
@@ -39,9 +41,12 @@ buildPythonPackage {
     pyyaml
     rich
     typer
+    # The excel extra: the packaged CLI supports --format xlsx
+    xlsxwriter
   ];
 
   nativeCheckInputs = [
+    openpyxl
     pytest-asyncio
     pytestCheckHook
     respx
