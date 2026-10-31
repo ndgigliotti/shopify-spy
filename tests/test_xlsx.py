@@ -52,6 +52,8 @@ def test_shopify_rows_have_typed_cells(tmp_path):
     assert (first["id"], first["variant_id"]) == ("7", "71")
     assert (first["price"], first["compare_at_price"]) == (10, None)
     assert (second["price"], second["compare_at_price"]) == (12.5, 15)
+    for row in (first, second):
+        assert (row["min_price"], row["max_price"]) == (10, 12.5)
     assert (first["image_count"], first["variant_count"]) == (2, 2)
     assert (first["available"], second["available"]) == (True, False)
     # Timestamps are dates in UTC; unparseable ones stay text

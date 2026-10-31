@@ -62,6 +62,12 @@
   listing's `attributes`. Unified rows take `sku`, `price`, `compare_at_price` and
   `available` from it instead of repeating the product's. If the store refuses the
   listing, the variations keep their old shape and values, and the store still succeeds.
+- Unified rows (CSV, XLSX, `--schema unified`) fill `min_price` and `max_price` for
+  Shopify products too: the lowest and highest variant price, on each of the product's
+  rows, as `summarize()` gives them. They used to be WooCommerce-only. Collections leave
+  them blank ([#52](https://github.com/ndgigliotti/shopify-spy/issues/52)).
+  `summarize()` skips Shopify variant prices that aren't finite numbers (`NaN`,
+  `Infinity`); a `NaN` price used to make it raise.
 
 ## 0.3.0
 
