@@ -398,7 +398,7 @@ The unified schema has one row per variant and a plain value in every cell (no e
 | `image_url` | the first image | the first image |
 | `products_count` | collections only | |
 | `currency` | | `currency_code` |
-| `min_price`, `max_price` | | the price range |
+| `min_price`, `max_price` | the lowest and highest variant price (products only) | the price range |
 | `on_sale`, `is_purchasable`, `average_rating`, `review_count` | | yes |
 | `variant_count` | variants | variations |
 | `variant_id` | the variant's ID | the variation's ID |
@@ -411,7 +411,7 @@ The unified schema has one row per variant and a plain value in every cell (no e
 | `url` | the scraped JSON document | |
 | `source` | | `store_api`, or `product_page` for the partial items read from product pages |
 
-Prices are decimal amounts (WooCommerce's minor units are converted). A WooCommerce variation row's `sku`, `price`, `compare_at_price` and `available` are the variation's own; if the store refuses the variation listing, they're the product's. WooCommerce's `type` (`simple`, `variable`, ...) and descriptive attributes are only in the native schema. In JSON, prices are strings and booleans are `true`/`false`.
+Prices are decimal amounts (WooCommerce's minor units are converted). `min_price` and `max_price` are the product's price range on each of its rows. A WooCommerce variation row's `sku`, `price`, `compare_at_price` and `available` are the variation's own; if the store refuses the variation listing, they're the product's. WooCommerce's `type` (`simple`, `variable`, ...) and descriptive attributes are only in the native schema. In JSON, prices are strings and booleans are `true`/`false`.
 
 With `--images`, `image_paths` lists the downloaded files (relative to the images directory). In CSV and unified XML, booleans are `true`/`false` and an empty cell means no value. Appending to a CSV written by 0.3.0 or earlier, which had a column per item field, is refused; start a new file.
 

@@ -100,6 +100,8 @@ def test_csv_writes_a_row_per_variant(tmp_path):
         assert row["image_url"] == "https://cdn/a.jpg"
         assert row["image_count"] == "2"
         assert row["variant_count"] == "2"
+        # The product's price span across its variants; Shopify has no currency
+        assert (row["min_price"], row["max_price"], row["currency"]) == ("10.00", "12.50", "")
     assert (first["variant_id"], first["option1"], first["option2"]) == ("71", "Red", "S")
     assert (first["price"], first["compare_at_price"], first["available"]) == ("10.00", "", "true")
     assert first["variant_image_url"] == "https://cdn/b.jpg"
@@ -120,6 +122,19 @@ def test_csv_product_without_variants_gets_one_row(tmp_path):
         "0",
         "",
     )
+    assert (row["min_price"], row["max_price"]) == ("", "")
+
+
+def test_csv_shopify_price_range_skips_variants_without_prices(tmp_path):
+    path = tmp_path / "out.csv"
+    variants = [{"id": 1, "price": "20"}, {"id": 2, "price": None}, {"id": 3, "price": "5.00"}]
+    write_items([{"product": {"id": 1, "variants": variants}, "store": "a.com"}], path)
+    rows = read_csv(path)
+    assert [(r["min_price"], r["max_price"]) for r in rows] == [("5.00", "20")] * 3
+    path = tmp_path / "unpriced.csv"
+    write_items([{"product": {"id": 2, "variants": [{"id": 4, "price": ""}]}}], path)
+    (row,) = read_csv(path)
+    assert (row["min_price"], row["max_price"]) == ("", "")
 
 
 def test_csv_collection_row(tmp_path):
@@ -145,7 +160,7 @@ def test_csv_collection_row(tmp_path):
         "4",
     )
     assert row["html_url"] == "http://a.com/collections/sale"
-    assert row["variant_id"] == ""
+    assert (row["variant_id"], row["min_price"], row["max_price"]) == ("", "", "")
 
 
 WOO_PRODUCT = {
@@ -481,6 +496,7 @@ def test_unified_jsonl_writes_a_record_per_row(tmp_path):
     assert (rows[0]["available"], rows[0]["compare_at_price"]) == (True, None)
     # Decimal prices become strings, like Shopify's
     assert (rows[2]["price"], rows[2]["compare_at_price"]) == ("19.99", "24.99")
+    assert (rows[0]["min_price"], rows[0]["max_price"]) == ("10.00", "12.50")
 
 
 def test_unified_json_and_fields(tmp_path):

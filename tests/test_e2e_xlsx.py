@@ -1,8 +1,9 @@
-"""End-to-end Excel output: the real CLI writes -F xlsx for local stores.
+"""End-to-end unified output: the real CLI writes -F xlsx (and -F csv) for local stores.
 
 Run with: uv run pytest -m e2e
 """
 
+import csv
 import http.server
 import json
 import subprocess
@@ -137,6 +138,8 @@ def test_shopify_store_to_xlsx(tmp_path, store):
         False,
     )
     assert (hat_s["grams"], hat_s["variant_count"], gift["variant_count"]) == (200, 2, 0)
+    # The product's price span, as numbers, on every variant row; none without prices
+    assert [(r["min_price"], r["max_price"]) for r in rows] == [(10, 12.5)] * 2 + [(None, None)]
     assert hat_s["sku"] == "00123"
     assert hat_s["created_at"] == datetime(2024, 1, 15, 15, 30)
     assert hat_s["description"] == "Café \U0001f600"
@@ -144,11 +147,26 @@ def test_shopify_store_to_xlsx(tmp_path, store):
     title_col = list(next(sheet.iter_rows(max_row=1, values_only=True))).index("title") + 1
     cell = sheet.cell(row=2, column=title_col)
     assert (cell.value, cell.data_type) == ('=HYPERLINK("http://evil")', "s")
-    for col in ("id", "variant_id", "price", "available", "created_at"):
+    types = {"price": "n", "min_price": "n", "max_price": "n", "available": "b", "created_at": "d"}
+    for col in ("id", "variant_id", *types):
         cell = sheet.cell(row=2, column=COLUMNS.index(col) + 1)
-        assert cell.data_type == {"price": "n", "available": "b", "created_at": "d"}.get(
-            col, "s"
-        ), col
+        assert cell.data_type == types.get(col, "s"), col
+
+
+def test_shopify_store_to_csv_has_the_price_range(tmp_path, store):
+    result = subprocess.run(
+        [sys.executable, "-m", "shopify_spy.cli", "scrape", store, "-F", "csv",
+         "--output", str(tmp_path), "--quiet"],
+        capture_output=True, text=True, timeout=120, cwd=tmp_path,
+    )  # fmt: skip
+    assert result.returncode == 0, result.stdout + result.stderr
+    (path,) = tmp_path.glob("data/*.csv")
+    rows = list(csv.DictReader(path.open(newline="", encoding="utf-8")))
+    assert [(r["variant_id"], r["price"], r["min_price"], r["max_price"]) for r in rows] == [
+        ("45123456789012", "10.00", "10.00", "12.50"),
+        ("45123456789013", "12.50", "10.00", "12.50"),
+        ("", "", "", ""),
+    ]
 
 
 def test_woocommerce_store_to_xlsx(tmp_path, store):
