@@ -360,6 +360,7 @@ def test_status_file(tmp_path):
     ]
     assert data["duration_seconds"] == 1.2
     assert data["output_error"] is None
+    assert data["items_written"] is None
 
 
 def test_csv_description_keeps_inline_markup_together(tmp_path):

@@ -104,6 +104,7 @@ def _scrape_xlsx(tmp_path, url, *args):
     assert list(path.parent.iterdir()) == [path]
     status = json.loads(next(tmp_path.glob("status/*_status.json")).read_text())
     assert status["output_error"] is None
+    assert status["items_written"] == status["items_scraped"]
     book = openpyxl.load_workbook(path)
     sheet = book.active
     header, *rows = sheet.iter_rows(values_only=True)

@@ -18,6 +18,7 @@ from rich.console import Console
 
 import shopify_spy._config as config_module
 import shopify_spy._runner as engine
+import shopify_spy._xlsx as xlsx_module
 from shopify_spy import cli as cli_module
 from shopify_spy._config import Config, Platform
 from shopify_spy._fetch import FakeFetcher, FetchConnectionError, FetchTLSError, Seq
@@ -1270,13 +1271,15 @@ def test_failed_output_write_still_writes_status(cli, monkeypatch):
     def fail(self):
         raise OSError("disk full")
 
-    monkeypatch.setattr(cli_module.ItemWriter, "close", fail)
+    # Building the workbook fails; ItemWriter removes the partial file
+    monkeypatch.setattr(xlsx_module.XlsxWriter, "close", fail)
     run = cli(shop("store.com", 2), "-F", "xlsx", "store.com")
 
     assert run.exit_code == 1
     assert "Could not write" in run.stderr and "disk full" in run.stderr
     status = run.status()
     assert (status["items_scraped"], status["output_error"]) == (2, "disk full")
+    assert status["items_written"] == 0
 
 
 @pytest.mark.parametrize("fmt", ["jsonl", "json", "csv", "xml", "xlsx"])
@@ -1297,7 +1300,7 @@ def test_failed_item_write_stops_the_run_and_writes_status(cli, monkeypatch, fmt
     status = run.status()
     assert (status["finish_reason"], status["output_error"]) == ("shutdown", "disk full")
     # The run stopped instead of scraping items it couldn't save
-    assert status["items_scraped"] < 5
+    assert status["items_written"] == 1 < status["items_scraped"] < 5
     (path,) = run.data_files()
     assert path.suffix == f".{fmt}"
 
@@ -1329,6 +1332,7 @@ def test_unwritable_output_path_fails_at_the_first_item(cli, monkeypatch):
 
     assert run.exit_code == 1
     assert run.status()["output_error"] == "permission denied"
+    assert run.status()["items_written"] == 0
     assert "kept" not in run.stderr
     assert not run.data_files()
 

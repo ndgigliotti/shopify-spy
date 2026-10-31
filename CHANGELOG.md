@@ -15,8 +15,8 @@
   formula), with a frozen, filterable header and a new sheet past Excel's row limit.
   Needs the `excel` extra (`pip install 'shopify-spy[excel]'`). See "Excel output" in
   the README.
-- The status JSON has an `output_error` field: `null`, or why the data file couldn't
-  be written. A failed write now stops the run, keeps the items already written and
+- The status JSON has an `output_error` field (`null`, or why the data file couldn't
+  be written) and an `items_written` field (how many items the data file holds). A failed write now stops the run, keeps the items already written and
   still writes the status file; it used to end the command with a traceback and no
   status file.
 

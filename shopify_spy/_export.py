@@ -383,11 +383,14 @@ def write_status(
     log_file: str | None,
     skipped_urls: list[str] | None = None,
     output_error: str | None = None,
+    items_written: int | None = None,
 ) -> None:
     """Write the CLI's per-run status file, ``status/<name>_status.json`` (provisional API).
 
     Per-URL ``status`` strings are the CLI's labels; ``code`` is the StoreStatus.
-    ``output_error`` says why the data file couldn't be written (None when it was).
+    ``output_error`` says why the data file couldn't be written (None when it was), and
+    ``items_written`` how many items the data file holds; it falls short of
+    ``items_scraped`` when a write failed.
     """
     entries = [
         {
@@ -404,6 +407,7 @@ def write_status(
     ]
     data = {
         "items_scraped": sum(s.items for s in stores),
+        "items_written": items_written,
         "urls": entries,
         "finish_reason": finish_reason,
         "duration_seconds": round(duration, 1),

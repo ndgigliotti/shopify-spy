@@ -523,6 +523,8 @@ def run_scrape(
             log_file=str(log_file) if log_file else None,
             skipped_urls=skipped_urls,
             output_error=output_error,
+            # A removed XLSX (failed close) holds nothing
+            items_written=writer.count if writer and writer.path.exists() else 0,
         )
 
     if output_error is not None:

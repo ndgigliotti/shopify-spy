@@ -283,6 +283,7 @@ File names start with the platform and a UTC timestamp. A status JSON file is wr
 ```json
 {
   "items_scraped": 47,
+  "items_written": 47,
   "urls": [
     {"url": "https://store.com", "items": 47, "status": "ok", "code": "ok"}
   ],
@@ -310,7 +311,7 @@ File names start with the platform and a UTC timestamp. A status JSON file is wr
 | `stopped` | `stopped` | Interrupted (Ctrl-C) before producing anything |
 | `invalid URL` | `invalid_url` | The URL was malformed and skipped before scraping |
 
-`finish_reason` summarizes the run: `finished`, `item_limit` (a store reached `--limit`), `bail` (a store hit the `--bail` timeout), `crawler_failed` (a store raised an unexpected error), or `shutdown` (interrupted). `output_error` is `null` unless writing the data file failed (such as a full disk or an unwritable directory), in any format. Then it holds the error, the run stops early (`finish_reason` is `shutdown`), the command exits with status 1, and the file keeps the whole items written before the error; a partly written item is cut off. An XLSX file is removed only if building the workbook at the end fails. A crash or a killed process writes no status file.
+`finish_reason` summarizes the run: `finished`, `item_limit` (a store reached `--limit`), `bail` (a store hit the `--bail` timeout), `crawler_failed` (a store raised an unexpected error), or `shutdown` (interrupted). `items_written` is how many items the data file holds. `output_error` is `null` unless writing the data file failed (such as a full disk or an unwritable directory), in any format. Then it holds the error, the run stops early (`finish_reason` is `shutdown`), the command exits with status 1, and the file keeps the whole items written before the error; a partly written item is cut off. `items_written` then falls short of `items_scraped`, which also counts the item that failed and any already fetched. An XLSX file is removed only if building the workbook at the end fails. A crash or a killed process writes no status file.
 
 Detailed logs are written to a log file (not the terminal). Log files are stored in the platform-appropriate state directory (e.g., `~/.local/state/shopify-spy/logs/` on Linux). Use `--verbose` to also print logs to the terminal.
 
