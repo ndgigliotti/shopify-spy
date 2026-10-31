@@ -8,9 +8,11 @@ accounting. Plan references (§, D) are to .context/httpx-library-rewrite.md.
 import asyncio
 import csv
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import openpyxl
 import pytest
 from rich.console import Console
 
@@ -1243,6 +1245,92 @@ def test_peek_with_unified_schema_prints_rows(cli):
 def test_peek_with_csv_format_stays_native(cli):
     run = cli(shop("store.com", 1), "--peek", "-F", "csv", "store.com", output=False)
     assert "product" in json.loads(run.stdout.splitlines()[0])
+
+
+def test_xlsx_output(cli):
+    run = cli(shop("store.com", 2), "-F", "xlsx", "store.com")
+
+    (path,) = run.data_files()
+    assert path.suffix == ".xlsx"
+    header, *rows = openpyxl.load_workbook(path).active.iter_rows(values_only=True)
+    assert list(header) == [c for c in COLUMNS if c != "image_paths"]
+    assert len(rows) == 2
+
+
+def test_xlsx_without_xlsxwriter_fails_before_scraping(cli, monkeypatch):
+    monkeypatch.setitem(sys.modules, "xlsxwriter", None)
+    run = cli(shop("store.com", 1), "-F", "xlsx", "store.com")
+
+    assert run.exit_code == 1
+    assert "pip install 'shopify-spy[excel]'" in run.stderr
+    assert not run.data_files()
+
+
+def test_failed_output_write_still_writes_status(cli, monkeypatch):
+    def fail(self):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(cli_module.ItemWriter, "close", fail)
+    run = cli(shop("store.com", 2), "-F", "xlsx", "store.com")
+
+    assert run.exit_code == 1
+    assert "Could not write" in run.stderr and "disk full" in run.stderr
+    status = run.status()
+    assert (status["items_scraped"], status["output_error"]) == (2, "disk full")
+
+
+@pytest.mark.parametrize("fmt", ["jsonl", "json", "csv", "xml", "xlsx"])
+def test_failed_item_write_stops_the_run_and_writes_status(cli, monkeypatch, fmt):
+    original = cli_module.ItemWriter.write
+
+    def fail_second(self, item):
+        if self.count == 1:
+            raise OSError("disk full")
+        original(self, item)
+
+    monkeypatch.setattr(cli_module.ItemWriter, "write", fail_second)
+    run = cli(shop("store.com", 5), "-F", fmt, "store.com")
+
+    assert run.exit_code == 1
+    assert "Could not write" in run.stderr and "disk full" in run.stderr
+    assert "The 1 item(s) written before it are kept." in run.stderr
+    status = run.status()
+    assert (status["finish_reason"], status["output_error"]) == ("shutdown", "disk full")
+    # The run stopped instead of scraping items it couldn't save
+    assert status["items_scraped"] < 5
+    (path,) = run.data_files()
+    assert path.suffix == f".{fmt}"
+
+
+def test_failed_write_and_close_report_both_errors(cli, monkeypatch):
+    def fail_write(self, item):
+        raise OSError("disk full")
+
+    def fail_close(self):
+        raise OSError("still full")
+
+    monkeypatch.setattr(cli_module.ItemWriter, "write", fail_write)
+    monkeypatch.setattr(cli_module.ItemWriter, "close", fail_close)
+    run = cli(shop("store.com", 2), "-F", "jsonl", "store.com")
+
+    assert run.exit_code == 1
+    error = "disk full; then closing the file failed: still full"
+    assert run.status()["output_error"] == error
+    assert error in run.stderr
+    assert "kept" not in run.stderr
+
+
+def test_unwritable_output_path_fails_at_the_first_item(cli, monkeypatch):
+    def fail(self, item):
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(cli_module.ItemWriter, "_open", fail)
+    run = cli(shop("store.com", 3), "-F", "xlsx", "store.com")
+
+    assert run.exit_code == 1
+    assert run.status()["output_error"] == "permission denied"
+    assert "kept" not in run.stderr
+    assert not run.data_files()
 
 
 # --- finish_reason tests (status file) ---

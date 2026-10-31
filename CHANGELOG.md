@@ -10,6 +10,15 @@
   JSONL, JSON and XML. `unified` writes one record per variant with the same columns on
   both platforms, the ones CSV uses; in XML each row is an `<item>`. CSV is always unified,
   so `--schema native` with CSV is an error. `--peek --schema unified` prints the rows.
+- **Excel output:** `--format xlsx` and `write_items(..., "products.xlsx")` write the
+  unified schema's rows (always unified, like CSV) as typed cells (numbers, booleans, UTC dates; text is never a
+  formula), with a frozen, filterable header and a new sheet past Excel's row limit.
+  Needs the `excel` extra (`pip install 'shopify-spy[excel]'`). See "Excel output" in
+  the README.
+- The status JSON has an `output_error` field: `null`, or why the data file couldn't
+  be written. A failed write now stops the run, keeps the items already written and
+  still writes the status file; it used to end the command with a traceback and no
+  status file.
 
 ### Changed
 

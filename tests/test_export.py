@@ -359,6 +359,7 @@ def test_status_file(tmp_path):
         {"url": "bad url", "items": 0, "status": "invalid URL", "code": "invalid_url"},
     ]
     assert data["duration_seconds"] == 1.2
+    assert data["output_error"] is None
 
 
 def test_csv_description_keeps_inline_markup_together(tmp_path):
@@ -560,3 +561,50 @@ def test_jsonl_append_refuses_the_other_schema(tmp_path, first, then):
     with pytest.raises(ValueError, match=f"holds {first} items"):
         write_items([WOO_PRODUCT], path, schema=then, append=True)
     assert path.read_bytes() == before
+
+
+class _FailingFile:
+    """Wraps a writer's file; once armed, a write stores half its bytes and raises."""
+
+    def __init__(self, file):
+        self.file = file
+        self.armed = False
+
+    def write(self, data):
+        if self.armed:
+            self.file.write(bytes(data[: len(data) // 2]))
+            raise OSError("disk full")
+        return self.file.write(data)
+
+    def __getattr__(self, name):
+        return getattr(self.file, name)
+
+
+@pytest.mark.parametrize(
+    ("fmt", "schema"),
+    [("jsonl", None), ("json", None), ("csv", None), ("xml", None)]
+    + [(f, "unified") for f in ("jsonl", "json", "xml")],
+)
+def test_failed_write_leaves_whole_items_only(tmp_path, fmt, schema):
+    path = tmp_path / f"out.{fmt}"
+    with ItemWriter(path, schema=schema) as writer:
+        writer.write(ITEMS[0])
+        writer._file = failing = _FailingFile(writer._file)
+        failing.armed = True
+        with pytest.raises(OSError, match="disk full"):
+            writer.write(ITEMS[1])
+        failing.armed = False
+        assert writer.count == 1
+    # The file is what writing only the first item gives
+    write_items(ITEMS[:1], tmp_path / f"expected.{fmt}", schema=schema)
+    assert path.read_bytes() == (tmp_path / f"expected.{fmt}").read_bytes()
+
+
+def test_unencodable_item_writes_nothing(tmp_path):
+    path = tmp_path / "out.json"
+    bad = json.loads('{"title": "bad \\ud83d"}')
+    with ItemWriter(path) as writer:
+        writer.write(ITEMS[0])
+        with pytest.raises(UnicodeEncodeError):
+            writer.write(bad)
+    assert json.loads(path.read_text(encoding="utf-8")) == ITEMS[:1]

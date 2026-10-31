@@ -38,6 +38,7 @@ from shopify_spy._fetch import FetcherFactory
 from shopify_spy._flatten import default_columns
 from shopify_spy._results import _PLATFORM_NAMES, RunResult, StoreResult, StoreStatus
 from shopify_spy._utils import normalize_url, read_url_file, split_valid_urls
+from shopify_spy._xlsx import require_xlsxwriter
 
 # Shown under --help so agents find the Python API, not just the CLI
 LIBRARY_EPILOG = (
@@ -121,7 +122,11 @@ def scrape(
     ] = None,
     format: Annotated[
         OutputFormat | None,
-        typer.Option("--format", "-F", help="Output format: json, jsonl, csv, xml."),
+        typer.Option(
+            "--format",
+            "-F",
+            help="Output format: json, jsonl, csv, xlsx (needs shopify-spy\\[excel]), xml.",
+        ),
     ] = None,
     schema: Annotated[
         OutputSchema | None,
@@ -242,6 +247,12 @@ def scrape(
         quiet = True
 
     # Validate flag combinations
+    if config.output.format == "xlsx" and not peek:
+        try:
+            require_xlsxwriter()
+        except ModuleNotFoundError as e:
+            err_console.print(f"[red]Error: {escape(str(e))}[/red]")
+            raise typer.Exit(1) from None
     if verbose and quiet:
         err_console.print("[red]Error: Cannot use both --verbose and --quiet[/red]")
         raise typer.Exit(1)
@@ -475,8 +486,9 @@ def run_scrape(
     saved = (logger.level, logger.propagate)
     handlers = _setup_logging(log_file, verbose, quiet)
     show_counter = not peek and not quiet
+    close_error: Exception | None = None
     try:
-        result, forced = asyncio.run(
+        result, forced, write_error = asyncio.run(
             _scrape(
                 urls,
                 kwargs,
@@ -487,7 +499,10 @@ def run_scrape(
             )
         )
     finally:
+        if writer is not None:
+            close_error = _close_writer(writer)
         _restore_logging(handlers, *saved)
+    output_error = _output_error(write_error, close_error)
 
     if show_counter and result.total_items > 0:
         print("\r" + " " * 40 + "\r", end="", flush=True)
@@ -498,7 +513,8 @@ def run_scrape(
     failures = sum(s.status == StoreStatus.error for s in stores)
 
     if not peek:
-        finish_reason = "shutdown" if forced else result.finish_reason
+        # A failed write stops the run early, like Ctrl-C
+        finish_reason = "shutdown" if forced or write_error else result.finish_reason
         write_status(
             output_dir / "status" / f"{name}_{timestamp}_status.json",
             stores,
@@ -506,7 +522,19 @@ def run_scrape(
             duration=result.duration,
             log_file=str(log_file) if log_file else None,
             skipped_urls=skipped_urls,
+            output_error=output_error,
         )
+
+    if output_error is not None:
+        assert writer is not None
+        err_console.print(
+            f"[red]Error: Could not write {escape(str(writer.path))}: {escape(output_error)}[/red]"
+        )
+        if close_error is None and writer.count and writer.path.exists():
+            err_console.print(f"  The {writer.count} item(s) written before it are kept.")
+        if log_file:
+            err_console.print(f"  Log: {log_file}")
+        raise typer.Exit(1)
 
     if total > 0:
         if not peek:
@@ -546,8 +574,12 @@ async def _scrape(
     peek: bool,
     show_counter: bool,
     peek_rows: bool = False,
-) -> tuple[RunResult, bool]:
-    """Run the scrape; first Ctrl-C stops gracefully, a second one forces it."""
+) -> tuple[RunResult, bool, Exception | None]:
+    """Run the scrape; first Ctrl-C stops gracefully, a second one forces it.
+
+    Returns the result, whether the stop was forced, and the error that stopped the
+    run if an item couldn't be written (there's no point scraping what can't be saved).
+    """
     run: AsyncScrapeRun = scrape_async(urls, **kwargs)
     loop = asyncio.get_running_loop()
     task = asyncio.current_task()
@@ -567,6 +599,7 @@ async def _scrape(
 
     previous = signal.signal(signal.SIGINT, on_sigint)
     forced = False
+    write_error: Exception | None = None
     count = 0
     last_draw = 0.0
     try:
@@ -579,7 +612,12 @@ async def _scrape(
                         print(json.dumps(record, ensure_ascii=False, default=str), flush=True)
                     break
                 assert writer is not None
-                writer.write(item)
+                try:
+                    writer.write(item)
+                except Exception as e:
+                    logger.exception("Could not write %s; stopping", writer.path)
+                    write_error = e
+                    break
                 count += 1
                 # Redraw at most ten times a second; printing every item is slow
                 if show_counter and (now := time.monotonic()) - last_draw >= 0.1:
@@ -591,11 +629,35 @@ async def _scrape(
             task.uncancel()
     finally:
         signal.signal(signal.SIGINT, previous)
-        if writer is not None:
-            writer.close()
     if show_counter and count:  # the throttled redraw can skip the final count
         print(f"\r  Scraped {count} items...", end="", flush=True)
-    return run.result, forced
+    return run.result, forced, write_error
+
+
+def _output_error(write_error: Exception | None, close_error: Exception | None) -> str | None:
+    """Why the data file couldn't be written, naming both errors when there were two."""
+    if write_error and close_error:
+        return f"{write_error}; then closing the file failed: {close_error}"
+    error = write_error or close_error
+    return None if error is None else str(error)
+
+
+def _close_writer(writer: ItemWriter) -> Exception | None:
+    """Close the output file, returning the error instead of raising it so the status
+    file is still written. XLSX is written here, which can take a while on big runs."""
+
+    def on_sigint(signum: int, frame: object) -> None:
+        err_console.print(f"\n[yellow]Still writing {escape(writer.path.name)}...[/yellow]")
+
+    previous = signal.signal(signal.SIGINT, on_sigint)
+    try:
+        writer.close()
+    except Exception as e:
+        logger.exception("Could not write %s", writer.path)
+        return e
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    return None
 
 
 def _host(url: str) -> str:

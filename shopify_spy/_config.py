@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-OutputFormat = Literal["json", "jsonl", "csv", "xml"]
+OutputFormat = Literal["json", "jsonl", "csv", "xlsx", "xml"]
 OutputSchema = Literal["native", "unified"]
 
 
@@ -120,7 +120,7 @@ scrape:
 
 output:
   dir: ./output       # Output directory for results
-  format: jsonl       # Output format: json, jsonl, csv, xml
+  format: jsonl       # Output format: json, jsonl, csv, xlsx, xml
   # schema: unified   # native (as scraped) or unified (row per variant; csv always)
   images_subdir: images  # Subdirectory for downloaded images
 

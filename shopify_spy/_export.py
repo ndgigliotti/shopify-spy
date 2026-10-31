@@ -1,10 +1,11 @@
-"""Item writers (JSONL, JSON, CSV, XML) and the CLI's status file.
+"""Item writers (JSONL, JSON, CSV, XLSX, XML) and the CLI's status file.
 
 Two schemas: ``native`` writes each item as scraped, and ``unified`` writes a scraped
 item's rows (one per variant, the same columns on both platforms; see ``_flatten``).
 JSONL, JSON and XML default to native, which matches what Scrapy's feed exporters wrote
 (UTF-8, ``ensure_ascii=False``, no indentation). CSV is always unified; other dicts get a
-column per key, nested values as JSON.
+column per key, nested values as JSON. XLSX is always unified too, as typed cells (see
+``_xlsx``).
 """
 
 from __future__ import annotations
@@ -20,14 +21,21 @@ from typing import IO, Any
 from xml.sax.saxutils import XMLGenerator
 
 from shopify_spy._flatten import COLUMNS, default_columns, flatten, item_platform
+from shopify_spy._xlsx import XlsxWriter, require_xlsxwriter
 
 logger = logging.getLogger("shopify_spy")
 
-FORMATS: dict[str, str] = {".jsonl": "jsonl", ".json": "json", ".csv": "csv", ".xml": "xml"}
+FORMATS: dict[str, str] = {
+    ".jsonl": "jsonl",
+    ".json": "json",
+    ".csv": "csv",
+    ".xlsx": "xlsx",
+    ".xml": "xml",
+}
 EXTENSIONS: dict[str, str] = {v: k for k, v in FORMATS.items()}
 SCHEMAS = ("native", "unified")
 # Formats that hold one fixed table and so only take unified rows
-UNIFIED_ONLY_FORMATS = {"csv"}
+UNIFIED_ONLY_FORMATS = {"csv", "xlsx"}
 
 
 def format_for(path: str | Path, format: str | None = None) -> str:
@@ -38,7 +46,7 @@ def format_for(path: str | Path, format: str | None = None) -> str:
     suffix = Path(path).suffix.lower()
     if suffix not in FORMATS:
         raise ValueError(
-            f"can't tell the format of {path}; pass format='jsonl' (or json, csv, xml)"
+            f"can't tell the format of {path}; pass format='jsonl' (or json, csv, xlsx, xml)"
         )
     return FORMATS[suffix]
 
@@ -81,7 +89,12 @@ class ItemWriter:
     (see ``write_items``) picks between items as scraped and unified rows, a row per
     variant of a scraped item; ``fields`` picks a unified row's columns, which
     otherwise are ``_flatten.COLUMNS`` for scraped items of either platform (or the
-    first item's keys, for other dicts).
+    first item's keys, for other dicts). XLSX needs the ``excel`` extra and is only
+    written on close.
+
+    Each item is encoded in full before any of it is written, and a failed write is
+    rolled back, so the file holds whole items only (XLSX: rows already handed to
+    xlsxwriter stay).
     """
 
     def __init__(
@@ -100,14 +113,16 @@ class ItemWriter:
             logger.warning("fields only applies to the unified schema; writing native items")
         if append and self.format not in ("jsonl", "csv"):
             raise ValueError("append is only supported for jsonl and csv")
+        if self.format == "xlsx":
+            require_xlsxwriter()
         self.fields = list(fields) if fields else None
         self.append = append
         self.count = 0
         self._records = 0
         self._file: IO[bytes] | None = None
-        self._text: io.TextIOWrapper | None = None
-        self._csv: Any = None
-        self._xml: XMLGenerator | None = None
+        self._csv_buffer = io.StringIO()
+        self._csv = csv.writer(self._csv_buffer)
+        self._xlsx: XlsxWriter | None = None
         self._dropped: set[str] = set()
         # Columns the caller picked may leave out fields without a warning
         self._picked = self.fields is not None
@@ -126,21 +141,18 @@ class ItemWriter:
         if self.schema == "unified":
             self._columns(item, existing)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._file = open(self.path, "ab" if self.append else "wb")  # noqa: SIM115
+        if self.format == "xlsx":
+            assert self.fields is not None
+            self._xlsx = XlsxWriter(self.path, self.fields)
+            return
+        # Unbuffered: each item is one write, so a failed one can be cut off cleanly
+        self._file = open(self.path, "ab" if self.append else "wb", buffering=0)  # noqa: SIM115
         if self.format == "json":
-            self._file.write(b"[\n")
+            self._write_all(b"[\n")
         elif self.format == "xml":
-            self._xml = XMLGenerator(self._file, encoding="utf8")
-            self._xml.startDocument()
-            self._xml.startElement("items", {})
-            self._xml.characters("\n")
-        elif self.format == "csv":
-            self._text = io.TextIOWrapper(
-                self._file, encoding="utf-8", newline="", write_through=True
-            )
-            self._csv = csv.writer(self._text)
-            if not existing:
-                self._csv.writerow(self.fields)
+            self._write_all(b'<?xml version="1.0" encoding="utf8"?>\n<items>\n')
+        elif self.format == "csv" and not existing:
+            self._write_all(self._csv_rows([self.fields]))
 
     def _check_jsonl_schema(self) -> None:
         """Refuse to append scraped items in one schema to a JSONL file in the other."""
@@ -188,40 +200,73 @@ class ItemWriter:
         self._field_set = set(self.fields)
 
     def write(self, item: dict[str, Any]) -> None:
-        if self._file is None:
+        if self._file is None and self._xlsx is None:
             self._open(item)
-        assert self._file is not None
+        fields = self.fields or []
+        if self.format == "xlsx":
+            assert self._xlsx is not None
+            rows = self._rows(item)
+            self._xlsx.write([[_xlsx_value(row.get(f)) for f in fields] for row in rows])
+            self.count += 1
+            return
         if self.format == "csv":
-            fields = self.fields or []
-            self._csv.writerows(
+            data = self._csv_rows(
                 [_csv_value(row.get(f)) for f in fields] for row in self._rows(item)
             )
-        elif self.schema == "unified":
-            for row in self._rows(item):
-                self._write_record({f: row.get(f) for f in self.fields or []})
+            records = 0
         else:
-            self._write_record(item)
+            if self.schema == "unified":
+                items = [{f: row.get(f) for f in fields} for row in self._rows(item)]
+            else:
+                items = [item]
+            data = b"".join(self._encode(r, self._records + i) for i, r in enumerate(items))
+            records = len(items)
+        self._write_item(data)
+        self._records += records
         self.count += 1
 
-    def _write_record(self, record: dict[str, Any]) -> None:
-        assert self._file is not None
+    def _encode(self, record: dict[str, Any], index: int) -> bytes:
+        """A JSONL, JSON or XML record; ``index`` is its place in the file."""
         if self.format == "jsonl":
-            self._file.write((_dumps(record) + "\n").encode("utf-8"))
-        elif self.format == "json":
-            if self._records:
-                self._file.write(b",\n")
-            self._file.write(_dumps(record).encode("utf-8"))
-        else:
-            assert self._xml is not None
-            self._xml.startElement("item", {})
-            for name, value in record.items():
-                # Unified rows read like CSV cells: true/false, and empty for None
-                _xml_field(
-                    self._xml, name, _csv_value(value) if self.schema == "unified" else value
-                )
-            self._xml.endElement("item")
-            self._xml.characters("\n")
-        self._records += 1
+            return (_dumps(record) + "\n").encode("utf-8")
+        if self.format == "json":
+            return (",\n" if index else "").encode() + _dumps(record).encode("utf-8")
+        out = io.BytesIO()
+        xml = XMLGenerator(out, encoding="utf8")
+        xml.startElement("item", {})
+        for name, value in record.items():
+            # Unified rows read like CSV cells: true/false, and empty for None
+            _xml_field(xml, name, _csv_value(value) if self.schema == "unified" else value)
+        xml.endElement("item")
+        xml.characters("\n")
+        xml.endDocument()  # flushes
+        return out.getvalue()
+
+    def _csv_rows(self, rows: Iterable[Iterable[Any]]) -> bytes:
+        self._csv_buffer.seek(0)
+        self._csv_buffer.truncate()
+        self._csv.writerows(rows)
+        return self._csv_buffer.getvalue().encode("utf-8")
+
+    def _write_item(self, data: bytes) -> None:
+        assert self._file is not None
+        start = self._file.tell()
+        try:
+            self._write_all(data)
+        except BaseException:
+            # Cut off the partial item so the file ends on a whole one
+            try:
+                self._file.truncate(start)
+                self._file.seek(start)
+            except OSError:
+                logger.exception("Could not remove a partly written item from %s", self.path)
+            raise
+
+    def _write_all(self, data: bytes) -> None:
+        assert self._file is not None
+        view = memoryview(data)
+        while view:
+            view = view[self._file.write(view) :]
 
     def _rows(self, item: dict[str, Any]) -> list[dict[str, Any]]:
         """The item's unified rows, warning once about fields the columns leave out."""
@@ -233,17 +278,21 @@ class ItemWriter:
         return rows
 
     def close(self) -> None:
+        if self._xlsx is not None:
+            xlsx, self._xlsx = self._xlsx, None
+            try:
+                xlsx.close()
+            except BaseException:
+                # Don't leave a half-written zip that Excel can't open
+                self.path.unlink(missing_ok=True)
+                raise
         if self._file is None:
             return
         try:
             if self.format == "json":
-                self._file.write(b"\n]")
-            elif self.format == "xml" and self._xml is not None:
-                self._xml.endElement("items")
-                self._xml.endDocument()
-            if self._text is not None:
-                self._text.flush()
-                self._text.detach()
+                self._write_all(b"\n]")
+            elif self.format == "xml":
+                self._write_all(b"</items>")
         finally:
             self._file.close()
             self._file = None
@@ -261,6 +310,11 @@ def _csv_value(value: Any) -> Any:
     if isinstance(value, (dict, list, tuple)):
         return _dumps(value)
     return value
+
+
+def _xlsx_value(value: Any) -> Any:
+    """Scalars as they are, for typed cells; nested values as in CSV."""
+    return _csv_value(value) if isinstance(value, (dict, list, tuple)) else value
 
 
 def _xml_field(xml: XMLGenerator, name: str, value: Any) -> None:
@@ -288,7 +342,7 @@ def write_items(
     """Write items to a file, streaming; return how many were written.
 
     ``items`` can be any iterable, including a run from ``scrape()``. The format
-    comes from the extension (.jsonl, .json, .csv, .xml) unless ``format`` is given.
+    comes from the extension (.jsonl, .json, .csv, .xlsx, .xml) unless ``format`` is given.
     ``append=True`` adds to an existing JSONL or CSV file (CSV keeps its header, and
     refuses a 0.3.0 CSV of scraped items, which had a column per item field;
     JSONL refuses scraped items in the other schema).
@@ -296,11 +350,23 @@ def write_items(
     ``schema="native"`` writes each item as scraped; ``schema="unified"`` writes one
     row per product variant (WooCommerce: per variation; collections and products
     without variants: one row), every value a scalar, with the same columns on both
-    platforms and a ``platform`` column. JSONL, JSON and XML default to native; CSV is
-    always unified (``schema="native"`` raises ValueError). ``fields`` picks a unified
+    platforms and a ``platform`` column. JSONL, JSON and XML default to native; CSV and
+    XLSX are always unified (``schema="native"`` raises ValueError). ``fields`` picks a unified
     row's columns. Dicts that aren't scraped items, such as ``summarize().asdict()``,
     get a column per key of the first one. Returns the number of items, not rows. No
     file is created when there are no items.
+
+    XLSX (needs ``pip install 'shopify-spy[excel]'``) has the unified rows as typed
+    cells: prices, counts and ratings are numbers, booleans are booleans, timestamps
+    are dates in UTC, and IDs and other text are strings (never formulas), cut at
+    Excel's 32,767-character cell limit. The header is frozen and filterable; past
+    Excel's 1,048,576 rows the items continue on a new sheet. Rows wait in a temporary
+    folder next to the file (``<name>.tmp-*``, deleted on close) and the workbook is
+    built when the writer closes (a failure there removes the partial file), so a
+    killed process leaves no usable file; write JSONL for long runs and convert it
+    afterwards.
+
+    A write that fails partway is cut off, so the file ends on the last whole item.
     """
     with ItemWriter(path, format, fields=fields, append=append, schema=schema) as writer:
         for item in items:
@@ -316,10 +382,12 @@ def write_status(
     duration: float,
     log_file: str | None,
     skipped_urls: list[str] | None = None,
+    output_error: str | None = None,
 ) -> None:
-    """Write the CLI's ``_status.json`` (provisional API).
+    """Write the CLI's per-run status file, ``status/<name>_status.json`` (provisional API).
 
     Per-URL ``status`` strings are the CLI's labels; ``code`` is the StoreStatus.
+    ``output_error`` says why the data file couldn't be written (None when it was).
     """
     entries = [
         {
@@ -340,6 +408,7 @@ def write_status(
         "finish_reason": finish_reason,
         "duration_seconds": round(duration, 1),
         "log_file": log_file,
+        "output_error": output_error,
     }
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")

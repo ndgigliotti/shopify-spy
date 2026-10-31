@@ -169,6 +169,6 @@ def test_cli_second_ctrl_c_forces_stop_and_keeps_result():
         loop.call_later(0.4, os.kill, os.getpid(), signal.SIGINT)  # forced
         return await cli._scrape([STORE], kwargs, writer=None, peek=True, show_counter=False)
 
-    result, forced = asyncio.run(main())
+    result, forced, _ = asyncio.run(main())
     assert forced
     assert result.stores[0].finish_reason == "shutdown"
