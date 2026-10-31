@@ -46,7 +46,7 @@ LIBRARY_EPILOG = (
     "Also a Python library: [bold]import shopify_spy as spy[/bold]; "
     "spy.scrape(urls) yields items as dicts (options: help(spy.scrape)). "
     "Run a script without installing anything: "
-    "[bold]uv run --with 'shopify-spy>=0.3' python script.py[/bold]"
+    "[bold]uv run --with 'shopify-spy>=0.4' python script.py[/bold]"
 )
 
 app = typer.Typer(
