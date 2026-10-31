@@ -58,7 +58,6 @@ COLUMNS = [
     "option3",
     "price",
     "compare_at_price",
-    "sale_price",
     "available",
     "grams",
     "requires_shipping",
@@ -224,7 +223,6 @@ def _woocommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
         "price": price,
         # Like Shopify's, set only when the item sells below it
         "compare_at_price": regular_price if _below(price, regular_price) else None,
-        "sale_price": money(prices.get("sale_price")),
         "available": item.get("is_in_stock"),
     } | _image_paths(item)
     rows = []

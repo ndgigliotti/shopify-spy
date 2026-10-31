@@ -188,11 +188,8 @@ def test_csv_woocommerce_rows(tmp_path):
     assert (row["platform"], row["kind"], row["handle"]) == ("woocommerce", "product", "pan")
     assert row["title"] == "17″ Pan"
     assert row["html_url"] == "https://w.com/product/pan/"
-    assert (row["price"], row["compare_at_price"], row["sale_price"]) == (
-        "19.99",
-        "24.99",
-        "19.99",
-    )
+    assert (row["price"], row["compare_at_price"]) == ("19.99", "24.99")
+    assert "sale_price" not in row
     assert (row["min_price"], row["max_price"]) == ("19.99", "29.99")
     assert row["currency"] == "USD"
     assert row["categories"] == "Kitchen & Home, Pans"
@@ -359,7 +356,7 @@ def test_csv_woocommerce_prices_keep_currency_decimals(tmp_path):
     prices = {"price": "1990", "regular_price": "500", "currency_minor_unit": 2}
     write_items([WOO_PRODUCT | {"prices": prices, "variations": []}], path)
     (row,) = read_csv(path)
-    assert (row["price"], row["sale_price"], row["min_price"]) == ("19.90", "", "19.90")
+    assert (row["price"], row["compare_at_price"], row["min_price"]) == ("19.90", "", "19.90")
 
 
 def test_csv_woocommerce_options_skip_missing_and_unescape(tmp_path):

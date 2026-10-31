@@ -377,7 +377,6 @@ The unified schema has one row per variant and a plain value in every cell (no e
 | `option1`-`option3` | the variant's option values | the variation's attribute values, in the product's attribute order |
 | `price` | the variant's price | `price` |
 | `compare_at_price` | the variant's `compare_at_price` | `regular_price`, only when `price` is below it |
-| `sale_price` | | `sale_price` |
 | `available` | the variant's `available` | `is_in_stock` |
 | `grams`, `requires_shipping`, `taxable`, `variant_position`, `variant_image_url` | the variant's | |
 | `url` | the scraped JSON document | |
