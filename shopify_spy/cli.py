@@ -247,18 +247,14 @@ def scrape(
         quiet = True
 
     # Validate flag combinations
-    if config.output.format == "xlsx" and not peek:
-        try:
-            require_xlsxwriter()
-        except ModuleNotFoundError as e:
-            err_console.print(f"[red]Error: {escape(str(e))}[/red]")
-            raise typer.Exit(1) from None
     if verbose and quiet:
         err_console.print("[red]Error: Cannot use both --verbose and --quiet[/red]")
         raise typer.Exit(1)
     try:
         schema_for(config.output.format, config.output.schema_)
-    except ValueError as exc:
+        if config.output.format == "xlsx" and not peek:
+            require_xlsxwriter()
+    except (ValueError, ModuleNotFoundError) as exc:
         err_console.print(f"[red]Error: {escape(str(exc))}[/red]")
         raise typer.Exit(1) from None
 
@@ -523,8 +519,7 @@ def run_scrape(
             log_file=str(log_file) if log_file else None,
             skipped_urls=skipped_urls,
             output_error=output_error,
-            # A removed XLSX (failed close) holds nothing
-            items_written=writer.count if writer and writer.path.exists() else 0,
+            items_written=writer.count,
         )
 
     if output_error is not None:
@@ -532,7 +527,7 @@ def run_scrape(
         err_console.print(
             f"[red]Error: Could not write {escape(str(writer.path))}: {escape(output_error)}[/red]"
         )
-        if close_error is None and writer.count and writer.path.exists():
+        if close_error is None and writer.count:
             err_console.print(f"  The {writer.count} item(s) written before it are kept.")
         if log_file:
             err_console.print(f"  Log: {log_file}")

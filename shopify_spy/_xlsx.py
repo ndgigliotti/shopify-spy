@@ -18,6 +18,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from shopify_spy._flatten import DATE_COLUMNS, ID_COLUMNS, NUMBER_COLUMNS
 from shopify_spy._summary import _decimal
 
 logger = logging.getLogger("shopify_spy")
@@ -26,24 +27,6 @@ MAX_ROWS = 1_048_576
 MAX_TEXT = 32_767
 SHEET = "items"
 
-# IDs stay text: Excel shows numbers over 11 digits in scientific notation
-_TEXT_COLUMNS = {"id", "variant_id"}
-# Numbers that may arrive as strings (Shopify prices, WooCommerce ratings,
-# summarize().asdict() prices)
-_NUMBER_COLUMNS = {
-    "price",
-    "compare_at_price",
-    "min_price",
-    "max_price",
-    "average_rating",
-    "review_count",
-    "image_count",
-    "variant_count",
-    "products_count",
-    "grams",
-    "variant_position",
-}
-_DATE_COLUMNS = {"created_at", "updated_at", "published_at"}
 # Beyond 15 digits Excel rounds the number
 _MAX_DIGITS = 15
 
@@ -63,8 +46,7 @@ class XlsxWriter:
     """Writes rows of scalar values under a fixed header, a sheet at a time."""
 
     def __init__(self, path: Path, fields: list[str]) -> None:
-        import xlsxwriter
-
+        xlsxwriter = require_xlsxwriter()
         self.fields = fields
         # Row data goes to temp files next to the output, not to /tmp (often RAM). The
         # folder goes away even when the close fails, and is visible if a kill leaves it
@@ -105,6 +87,9 @@ class XlsxWriter:
             self._finish_sheet()
             self._book.close()
         finally:
+            # A failed close leaves the row-data files open; Windows can't delete open files
+            for sheet in self._book.worksheets():
+                sheet._opt_close()
             self._tmp.cleanup()
 
     def _new_sheet(self) -> None:
@@ -115,7 +100,7 @@ class XlsxWriter:
         )
         self._sheet.freeze_panes(1, 0)
         for col, field in enumerate(self.fields):
-            if field in _DATE_COLUMNS:
+            if field in DATE_COLUMNS:
                 # Narrower date columns show ####
                 self._sheet.set_column(col, col, 19)
             self._sheet.write_string(0, col, field, self._header)
@@ -135,17 +120,17 @@ class XlsxWriter:
         # Values Excel can't type are written as the text they arrived as
         original = value
         if isinstance(value, str):
-            if field in _NUMBER_COLUMNS:
+            if field in NUMBER_COLUMNS:
                 number = _decimal(value)
                 value = value if number is None else number
-            elif field in _DATE_COLUMNS:
+            elif field in DATE_COLUMNS:
                 value = _parse_datetime(value)
         if isinstance(value, date):
             timestamp = _excel_datetime(value)
             if timestamp is not None:
                 sheet.write_datetime(row, col, timestamp, self._date)
                 return
-        if isinstance(value, (int, float, Decimal)) and field not in _TEXT_COLUMNS:
+        if isinstance(value, (int, float, Decimal)) and field not in ID_COLUMNS:
             number = _number(value)
             if number is not None:
                 sheet.write_number(row, col, number)

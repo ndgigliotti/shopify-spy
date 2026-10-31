@@ -16,7 +16,9 @@
   Needs the `excel` extra (`pip install 'shopify-spy[excel]'`). See "Excel output" in
   the README.
 - The status JSON has an `output_error` field (`null`, or why the data file couldn't
-  be written) and an `items_written` field (how many items the data file holds). A failed write now stops the run, keeps the items already written and
+  be written) and an `items_written` field (how many items the data file holds).
+- Text with a lone surrogate (a broken `\uXXXX` escape in a store's JSON) is written
+  with U+FFFD in its place; JSONL, JSON and CSV output used to fail on it. A failed write now stops the run, keeps the items already written and
   still writes the status file; it used to end the command with a traceback and no
   status file.
 

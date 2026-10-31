@@ -3,6 +3,8 @@ captured from Scrapy 2.14 before it was removed; CSV differs on purpose, D2)."""
 
 import csv
 import json
+import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -601,11 +603,44 @@ def test_failed_write_leaves_whole_items_only(tmp_path, fmt, schema):
     assert path.read_bytes() == (tmp_path / f"expected.{fmt}").read_bytes()
 
 
-def test_unencodable_item_writes_nothing(tmp_path):
-    path = tmp_path / "out.json"
-    bad = json.loads('{"title": "bad \\ud83d"}')
+def test_lone_surrogates_become_replacement_characters(tmp_path):
+    # json.loads accepts a broken escape, which UTF-8 can't encode
+    bad = json.loads('{"title": "bad \\ud83d", "ok": "\\ud83d\\ude00"}')
+    for fmt in ("jsonl", "json", "csv"):
+        path = tmp_path / f"out.{fmt}"
+        write_items([bad], path)
+        text = path.read_text(encoding="utf-8")
+        assert "bad \ufffd" in text and "\U0001f600" in text, fmt
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs a FIFO")
+def test_writes_to_a_pipe(tmp_path):
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    received = []
+    reader = threading.Thread(target=lambda: received.append(fifo.read_bytes()))
+    reader.start()
+    write_items(ITEMS, fifo, format="jsonl")
+    reader.join(timeout=10)
+    assert received == [(FIXTURES / "scrapy.jsonl").read_bytes()]
+
+
+def test_failed_header_write_leaves_no_file(tmp_path, monkeypatch):
+    path = tmp_path / "out.csv"
+    original = ItemWriter._write_all
+    calls = []
+
+    def fail_first(self, data):
+        calls.append(data)
+        if len(calls) == 1:
+            raise OSError("disk full")
+        original(self, data)
+
+    monkeypatch.setattr(ItemWriter, "_write_all", fail_first)
     with ItemWriter(path) as writer:
-        writer.write(ITEMS[0])
-        with pytest.raises(UnicodeEncodeError):
-            writer.write(bad)
-    assert json.loads(path.read_text(encoding="utf-8")) == ITEMS[:1]
+        with pytest.raises(OSError):
+            writer.write(SHOPIFY_PRODUCT)
+        assert not path.exists()
+        # The next write starts the file again, header first
+        writer.write(SHOPIFY_PRODUCT)
+    assert path.read_text(encoding="utf-8").startswith("platform,kind,")

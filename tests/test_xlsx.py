@@ -11,7 +11,7 @@ import xlsxwriter
 
 import shopify_spy._xlsx as xlsx_module
 from shopify_spy._export import ItemWriter, format_for, write_items
-from shopify_spy._flatten import COLUMNS
+from shopify_spy._flatten import COLUMNS, DATE_COLUMNS, ID_COLUMNS, NUMBER_COLUMNS
 from shopify_spy._summary import summarize
 
 from .test_export import SHOPIFY_PRODUCT, WOO_PRODUCT
@@ -310,3 +310,23 @@ def test_subnormal_numbers_stay_text(tmp_path):
     write_items([{"price": "1e-310", "x": 1e-310, "compare_at_price": "0.000"}], path)
     (row,) = read_rows(path)
     assert row == {"price": "1e-310", "x": "1e-310", "compare_at_price": 0}
+
+
+def test_failed_close_closes_the_temp_files(tmp_path, monkeypatch):
+    # Windows can't delete the temp folder while xlsxwriter's row files are open
+    writer = xlsx_module.XlsxWriter(tmp_path / "out.xlsx", ["a"])
+    writer.write([["x"]])
+    sheets = writer._book.worksheets()
+
+    def fail(self):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(xlsxwriter.Workbook, "close", fail)
+    with pytest.raises(OSError):
+        writer.close()
+    assert all(sheet.row_data_fh_closed for sheet in sheets)
+
+
+def test_typed_columns_are_unified_columns():
+    # A renamed column would otherwise turn into text cells without notice
+    assert ID_COLUMNS | NUMBER_COLUMNS | DATE_COLUMNS <= set(COLUMNS)

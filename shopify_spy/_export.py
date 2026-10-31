@@ -69,6 +69,16 @@ def _dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=_decimal_str)
 
 
+def _utf8(text: str) -> bytes:
+    try:
+        return text.encode("utf-8")
+    except UnicodeEncodeError:
+        # A lone surrogate (from a broken JSON escape) becomes U+FFFD, not a failed run
+        return (
+            text.encode("utf-16-le", "surrogatepass").decode("utf-16-le", "replace").encode("utf-8")
+        )
+
+
 def _decimal_str(value: Any) -> str:
     # Unified rows have Decimal prices; anything else that isn't JSON still raises
     if isinstance(value, Decimal):
@@ -114,14 +124,17 @@ class ItemWriter:
         if append and self.format not in ("jsonl", "csv"):
             raise ValueError("append is only supported for jsonl and csv")
         if self.format == "xlsx":
-            require_xlsxwriter()
+            require_xlsxwriter()  # fail before any scraping
         self.fields = list(fields) if fields else None
         self.append = append
+        # Items in the file (0 once a failed XLSX close removed it)
         self.count = 0
-        self._records = 0
         self._file: IO[bytes] | None = None
-        self._csv_buffer = io.StringIO()
-        self._csv = csv.writer(self._csv_buffer)
+        self._seekable = False
+        # One buffer per format, reused for every item
+        self._buffer = io.StringIO() if self.format == "csv" else io.BytesIO()
+        self._csv = csv.writer(self._buffer) if self.format == "csv" else None
+        self._xml = XMLGenerator(self._buffer, encoding="utf8") if self.format == "xml" else None
         self._xlsx: XlsxWriter | None = None
         self._dropped: set[str] = set()
         # Columns the caller picked may leave out fields without a warning
@@ -147,12 +160,22 @@ class ItemWriter:
             return
         # Unbuffered: each item is one write, so a failed one can be cut off cleanly
         self._file = open(self.path, "ab" if self.append else "wb", buffering=0)  # noqa: SIM115
-        if self.format == "json":
-            self._write_all(b"[\n")
-        elif self.format == "xml":
-            self._write_all(b'<?xml version="1.0" encoding="utf8"?>\n<items>\n')
-        elif self.format == "csv" and not existing:
-            self._write_all(self._csv_rows([self.fields]))
+        # A pipe can't seek, so there's nothing to cut off there
+        self._seekable = self._file.seekable()
+        try:
+            if self.format == "json":
+                self._write_all(b"[\n")
+            elif self.format == "xml":
+                self._write_all(b'<?xml version="1.0" encoding="utf8"?>\n<items>\n')
+            elif self.format == "csv" and not existing:
+                self._write_all(self._csv_rows([self.fields]))
+        except BaseException:
+            # Without its header the file is no use; the next write starts it again
+            self._file.close()
+            self._file = None
+            if not existing:
+                self.path.unlink(missing_ok=True)
+            raise
 
     def _check_jsonl_schema(self) -> None:
         """Refuse to append scraped items in one schema to a JSONL file in the other."""
@@ -213,43 +236,47 @@ class ItemWriter:
             data = self._csv_rows(
                 [_csv_value(row.get(f)) for f in fields] for row in self._rows(item)
             )
-            records = 0
         else:
             if self.schema == "unified":
-                items = [{f: row.get(f) for f in fields} for row in self._rows(item)]
+                records = [{f: row.get(f) for f in fields} for row in self._rows(item)]
             else:
-                items = [item]
-            data = b"".join(self._encode(r, self._records + i) for i, r in enumerate(items))
-            records = len(items)
+                records = [item]
+            if self.format == "json":
+                # Every item has a record, so the count says whether one came before
+                data = b",\n".join(_utf8(_dumps(r)) for r in records)
+                data = (b",\n" if self.count else b"") + data
+            elif self.format == "jsonl":
+                data = b"".join(_utf8(_dumps(r) + "\n") for r in records)
+            else:
+                data = b"".join(self._xml_record(r) for r in records)
         self._write_item(data)
-        self._records += records
         self.count += 1
 
-    def _encode(self, record: dict[str, Any], index: int) -> bytes:
-        """A JSONL, JSON or XML record; ``index`` is its place in the file."""
-        if self.format == "jsonl":
-            return (_dumps(record) + "\n").encode("utf-8")
-        if self.format == "json":
-            return (",\n" if index else "").encode() + _dumps(record).encode("utf-8")
-        out = io.BytesIO()
-        xml = XMLGenerator(out, encoding="utf8")
-        xml.startElement("item", {})
+    def _xml_record(self, record: dict[str, Any]) -> bytes:
+        assert self._xml is not None and isinstance(self._buffer, io.BytesIO)
+        self._buffer.seek(0)
+        self._buffer.truncate()
+        self._xml.startElement("item", {})
         for name, value in record.items():
             # Unified rows read like CSV cells: true/false, and empty for None
-            _xml_field(xml, name, _csv_value(value) if self.schema == "unified" else value)
-        xml.endElement("item")
-        xml.characters("\n")
-        xml.endDocument()  # flushes
-        return out.getvalue()
+            _xml_field(self._xml, name, _csv_value(value) if self.schema == "unified" else value)
+        self._xml.endElement("item")
+        self._xml.characters("\n")
+        self._xml.endDocument()  # only flushes
+        return self._buffer.getvalue()
 
     def _csv_rows(self, rows: Iterable[Iterable[Any]]) -> bytes:
-        self._csv_buffer.seek(0)
-        self._csv_buffer.truncate()
+        assert self._csv is not None and isinstance(self._buffer, io.StringIO)
+        self._buffer.seek(0)
+        self._buffer.truncate()
         self._csv.writerows(rows)
-        return self._csv_buffer.getvalue().encode("utf-8")
+        return _utf8(self._buffer.getvalue())
 
     def _write_item(self, data: bytes) -> None:
         assert self._file is not None
+        if not self._seekable:
+            self._write_all(data)
+            return
         start = self._file.tell()
         try:
             self._write_all(data)
@@ -284,7 +311,11 @@ class ItemWriter:
                 xlsx.close()
             except BaseException:
                 # Don't leave a half-written zip that Excel can't open
-                self.path.unlink(missing_ok=True)
+                try:
+                    self.path.unlink(missing_ok=True)
+                except OSError:  # still open on Windows; the close error matters more
+                    logger.exception("Could not remove the partial %s", self.path)
+                self.count = 0
                 raise
         if self._file is None:
             return

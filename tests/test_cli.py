@@ -12,7 +12,6 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import openpyxl
 import pytest
 from rich.console import Console
 
@@ -28,6 +27,7 @@ from shopify_spy._utils import is_valid_url
 from shopify_spy.cli import app, apply_cli_overrides, get_urls
 
 from .conftest import runner, strip_ansi
+from .test_xlsx import read_rows
 
 DISALLOW_ALL = "User-agent: *\nDisallow: /\n"
 
@@ -1253,8 +1253,8 @@ def test_xlsx_output(cli):
 
     (path,) = run.data_files()
     assert path.suffix == ".xlsx"
-    header, *rows = openpyxl.load_workbook(path).active.iter_rows(values_only=True)
-    assert list(header) == [c for c in COLUMNS if c != "image_paths"]
+    rows = read_rows(path)
+    assert list(rows[0]) == [c for c in COLUMNS if c != "image_paths"]
     assert len(rows) == 2
 
 
