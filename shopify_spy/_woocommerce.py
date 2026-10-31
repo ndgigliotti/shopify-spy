@@ -8,13 +8,17 @@ When the Store API's first page is unusable (an error status other than a 429 ra
 limit, no product list, a failed request or robots.txt), product pages are read
 instead: their URLs come from the WordPress REST API's product listing or, failing
 that, the product sitemaps, and each page's schema.org JSON-LD becomes a partial
-item in the Store API's shape (with no variation listing: pages don't have one).
+item in the Store API's shape, with a variable product's variations from the page's
+variation form.
 """
 
 from __future__ import annotations
 
 import asyncio
+import html
+import json
 import logging
+import re
 import urllib.parse
 from collections.abc import AsyncIterator
 from decimal import Decimal
@@ -334,7 +338,7 @@ async def _product_pages(ctx: StoreContext, emit: Emit) -> bool:
             if product is None:
                 logger.info("No schema.org Product on %s", response.url)
                 return
-            item = page_item(product, response.url, post_id or listed_id)
+            item = page_item(product, response.url, post_id or listed_id, response.text)
             store = urllib.parse.urlsplit(response.url).netloc
             await emit(_item(item, store, ctx.images))
         finally:
@@ -491,14 +495,18 @@ def _is_product_sitemap(url: str) -> bool:
     return name.startswith(PRODUCT_SITEMAPS)
 
 
-def page_item(product: dict[str, Any], url: str, post_id: int | None) -> dict[str, Any]:
+def page_item(
+    product: dict[str, Any], url: str, post_id: int | None, page: str = ""
+) -> dict[str, Any]:
     """A Store API-shaped product from a page's schema.org Product.
 
-    Only the fields JSON-LD carries are set; ``source`` marks the item as partial
-    and ``json_ld`` keeps the original.
+    Only the fields JSON-LD carries are set, plus a variable product's
+    ``attributes`` and ``variations`` from the page's variation form; ``source``
+    marks the item as partial and ``json_ld`` keeps the original.
     """
     found = jsonld.offers(product.get("offers"))
     prices = _prices(found)
+    attributes, variations = _variation_form(page, found.currency)
     return {
         "id": post_id,
         "name": jsonld.text(product.get("name")),
@@ -516,9 +524,112 @@ def page_item(product: dict[str, Any], url: str, post_id: int | None) -> dict[st
         "is_in_stock": (
             None if found.availability is None else found.availability not in OUT_OF_STOCK
         ),
+        **({"attributes": attributes, "variations": variations} if variations else {}),
         "source": PAGE_SOURCE,
         "json_ld": product,
     }
+
+
+# WooCommerce's variation form embeds a variable product's variations as JSON
+# (unless it has more than woocommerce_ajax_variation_threshold, 30 by default:
+# then the attribute is "false" and the page asks for them as options are picked)
+_VARIATIONS = re.compile(r"""\bdata-product_variations\s*=\s*(["'])(.*?)\1""", re.S)
+_SELECT = re.compile(r"<select\b([^>]*)>(.*?)</select\s*>", re.I | re.S)
+_OPTION = re.compile(r"<option\b([^>]*)>(.*?)</option\s*>", re.I | re.S)
+_LABEL = re.compile(r"<label\b([^>]*)>(.*?)</label\s*>", re.I | re.S)
+_TAG = re.compile(r"<[^>]*>")
+
+
+def _attr(attrs: str, name: str) -> str | None:
+    match = re.search(rf"""\b{name}\s*=\s*(["'])(.*?)\1""", attrs, re.S)
+    return html.unescape(match.group(2)) if match else None
+
+
+def _plain(markup: str) -> str:
+    return " ".join(html.unescape(_TAG.sub(" ", markup)).split())
+
+
+def _variation_form(
+    page: str, currency: str | None
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """A variable product's Store API-shaped ``attributes`` and ``variations`` from
+    its page's variation form; empty when the page has none to read."""
+    match = _VARIATIONS.search(page)
+    if match is None:
+        return [], []
+    try:
+        records = json.loads(html.unescape(match.group(2)), strict=False)
+    except (ValueError, RecursionError):
+        return [], []
+    if not isinstance(records, list):  # false: too many to embed
+        return [], []
+    labels = {
+        target: _plain(text)
+        for attrs, text in _LABEL.findall(page)
+        if (target := _attr(attrs, "for"))
+    }
+    # The form's selects, by field name ("attribute_pa_color"): display name and the
+    # option names by value
+    fields: dict[str, tuple[str, dict[str, str]]] = {}
+    for attrs, options in _SELECT.findall(page):
+        field = _attr(attrs, "data-attribute_name") or _attr(attrs, "name") or ""
+        if not field.startswith("attribute_"):
+            continue
+        name = labels.get(_attr(attrs, "id") or "") or _slug_name(field)
+        terms = {
+            value: _plain(text)
+            for option_attrs, text in _OPTION.findall(options)
+            if (value := _attr(option_attrs, "value"))
+        }
+        fields[field] = (name, terms)
+    variations = []
+    for record in dicts(records):
+        values = record.get("attributes")
+        if not isinstance(values, dict):
+            continue
+        entry: dict[str, Any] = {
+            "id": record.get("variation_id"),
+            "attributes": [
+                {"name": fields.get(field, (_slug_name(field), {}))[0], "value": value}
+                for field, value in values.items()
+                if isinstance(field, str) and isinstance(value, str)
+            ],
+        }
+        # Without its own price, the variation's row keeps the product's price, SKU
+        # and stock, as a Store API variation the listing didn't return does
+        prices = _variation_prices(record, currency)
+        if prices["price"] is not None:
+            entry |= {
+                "prices": prices,
+                "sku": jsonld.text(record.get("sku")) or None,
+                "is_in_stock": (
+                    record["is_in_stock"] if isinstance(record.get("is_in_stock"), bool) else None
+                ),
+            }
+        variations.append(entry)
+    attributes = [
+        {
+            "name": name,
+            "has_variations": True,
+            "terms": [{"slug": value, "name": label} for value, label in terms.items()],
+        }
+        for name, terms in fields.values()
+    ]
+    return attributes, variations
+
+
+def _slug_name(field: str) -> str:
+    """A name for a form field without a label: ``attribute_pa_color`` -> ``color``."""
+    name = field.removeprefix("attribute_")
+    return urllib.parse.unquote(name.removeprefix("pa_"))
+
+
+def _variation_prices(record: dict[str, Any], currency: str | None) -> dict[str, Any]:
+    price = jsonld.amount(record.get("display_price"))
+    regular = jsonld.amount(record.get("display_regular_price"))
+    listed = [regular] if regular is not None and price is not None and regular > price else []
+    current = [price] if price is not None else []
+    return _prices(jsonld.Offers(current=current, listed=listed, currency=currency))
 
 
 def _prices(found: jsonld.Offers) -> dict[str, Any]:

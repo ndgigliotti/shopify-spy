@@ -650,3 +650,132 @@ def test_deleted_listed_product_is_not_a_failure(status):
     items, result, _ = scrape_woo(routes)
     assert [i["slug"] for i in items] == ["hat"]
     assert result.stores[0].status == "ok"
+
+
+# --- Variation form ---------------------------------------------------------------
+
+
+def variation_form(records, selects=None):
+    """WooCommerce's variation form, as cornforthimages.com renders it."""
+    import html as html_lib
+
+    selects = selects or [
+        ("pa_size", "Size", [("small", "Small"), ("large", "Large")]),
+        ("paper-mounting", "Print Styles", [("Metal", "Metal"), ("Acrylic", "Acrylic")]),
+    ]
+    data = records if isinstance(records, str) else json.dumps(records)
+    rows = "".join(
+        f'<tr><th class="label"><label for="{field}">{label}</label></th><td class="value">'
+        f'<select id="{field}" name="attribute_{field}" data-attribute_name="attribute_{field}">'
+        '<option value="">Choose an option</option>'
+        + "".join(f'<option value="{v}" >{t}</option>' for v, t in options)
+        + "</select></td></tr>"
+        for field, label, options in selects
+    )
+    return (
+        '<form class="variations_form cart" method="post" data-product_id="7" '
+        f'data-product_variations="{html_lib.escape(data)}">'
+        f'<table class="variations"><tbody>{rows}</tbody></table></form>'
+    )
+
+
+def variation(vid, size, style, price, regular=None, sku="", in_stock=True):
+    return {
+        "variation_id": vid,
+        "attributes": {"attribute_pa_size": size, "attribute_paper-mounting": style},
+        "display_price": price,
+        "display_regular_price": regular if regular is not None else price,
+        "sku": sku,
+        "is_in_stock": in_stock,
+        "variation_is_active": True,
+    }
+
+
+def variable_page(form):
+    return page_html("print", price="12.50", post_id=7, extra=form)
+
+
+def test_variation_form_becomes_variation_rows():
+    form = variation_form(
+        [
+            variation(101, "small", "Metal", 12.5, sku="P-S-M"),
+            variation(102, "large", "Acrylic", 30, regular=45, in_stock=False),
+            variation(103, "large", "", 28),  # "any" print style
+        ]
+    )
+    routes = {
+        woo_url(1): (500, ""),
+        wp_list(1): listed("print"),
+        product_url("print"): variable_page(form),
+    }
+    items, _, _ = scrape_woo(routes)
+    (item,) = items
+    assert [a["name"] for a in item["attributes"]] == ["Size", "Print Styles"]
+    assert item["variations"][0] == {
+        "id": 101,
+        "attributes": [
+            {"name": "Size", "value": "small"},
+            {"name": "Print Styles", "value": "Metal"},
+        ],
+        "prices": {
+            "price": "125",
+            "regular_price": "125",
+            "sale_price": "125",
+            "price_range": None,
+            "currency_code": "USD",
+            "currency_minor_unit": 1,
+        },
+        "sku": "P-S-M",
+        "is_in_stock": True,
+    }
+    rows = flatten(item)
+    assert [
+        (r["variant_id"], r["variant_title"], r["option1"], r["option2"], r["sku"], r["price"])
+        for r in rows
+    ] == [
+        (101, "Small / Metal", "Small", "Metal", "P-S-M", Decimal("12.5")),
+        (102, "Large / Acrylic", "Large", "Acrylic", None, Decimal("30")),
+        (103, "Large", "Large", None, None, Decimal("28")),
+    ]
+    assert rows[0]["options"] == "Size, Print Styles"
+    assert rows[1]["compare_at_price"] == Decimal("45")
+    assert rows[1]["available"] is False
+    assert {r["source"] for r in rows} == {"product_page"}
+
+
+@pytest.mark.parametrize(
+    "records",
+    ["false", "[not json", '{"not": "a list"}'],
+    ids=["too_many_to_embed", "broken_json", "not_a_list"],
+)
+def test_unreadable_variation_form_keeps_one_row(records):
+    item = page_item(
+        {"@type": "Product", "name": "Print", "offers": offer(price="12.50")},
+        product_url("print"),
+        7,
+        variation_form(records),
+    )
+    assert "variations" not in item
+    assert len(flatten(item)) == 1
+
+
+def test_variation_form_without_labels_uses_field_names():
+    form = variation_form([variation(101, "small", "Metal", 10)]).replace("<label", "<span")
+    item = page_item({"@type": "Product", "name": "Print"}, product_url("print"), 7, form)
+    assert [a["name"] for a in item["variations"][0]["attributes"]] == [
+        "size",
+        "paper-mounting",
+    ]
+
+
+def test_variation_without_price_keeps_product_price():
+    form = variation_form([variation(101, "small", "Metal", None) | {"display_price": None}])
+    item = page_item(
+        {"@type": "Product", "name": "Print", "offers": offer(price="12.50")},
+        product_url("print"),
+        7,
+        form,
+    )
+    (row,) = flatten(item)
+    assert row["variant_id"] == 101
+    assert row["price"] == Decimal("12.50")

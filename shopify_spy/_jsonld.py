@@ -106,17 +106,18 @@ def image_urls(value: Any) -> list[str]:
     return urls
 
 
-def _amount(value: Any) -> Decimal | None:
+def amount(value: Any) -> Decimal | None:
+    """A non-negative, finite, bounded price, or None."""
     if isinstance(value, bool) or not isinstance(value, (str, int, float)):
         return None
     try:
-        amount = Decimal(str(value).strip())
+        parsed = Decimal(str(value).strip())
     except InvalidOperation:
         return None
     # Bounded, so minor-unit arithmetic can't overflow on a hostile "1e5000"
-    if not amount.is_finite() or amount < 0 or amount.adjusted() > MAX_PRICE_DIGITS:
+    if not parsed.is_finite() or parsed < 0 or parsed.adjusted() > MAX_PRICE_DIGITS:
         return None
-    return amount
+    return parsed
 
 
 @dataclass
@@ -139,9 +140,9 @@ def offers(value: Any) -> Offers:
         if result.availability is None and isinstance(availability, str) and availability:
             result.availability = availability.rstrip("/").rsplit("/", 1)[-1]
         for key in ("lowPrice", "highPrice"):
-            if (amount := _amount(offer.get(key))) is not None:
-                result.bounds.append(amount)
-        own = _amount(offer.get("price"))
+            if (bound := amount(offer.get(key))) is not None:
+                result.bounds.append(bound)
+        own = amount(offer.get("price"))
         if own is not None:
             result.current.append(own)
         raw = offer.get("priceSpecification")
@@ -149,12 +150,12 @@ def offers(value: Any) -> Offers:
         if isinstance(raw, dict):  # Yoast merges specifications into {"0": {...}, ...}
             specs += _dicts(list(raw.values()))
         for spec in specs:
-            amount = _amount(spec.get("price"))
-            if amount is None:
+            spec_price = amount(spec.get("price"))
+            if spec_price is None:
                 continue
             result.currency = result.currency or text(spec.get("priceCurrency"))
             if str(spec.get("priceType") or "").rsplit("/", 1)[-1] in LIST_PRICES:
-                result.listed.append(amount)
+                result.listed.append(spec_price)
             elif own is None:
-                result.current.append(amount)
+                result.current.append(spec_price)
     return result

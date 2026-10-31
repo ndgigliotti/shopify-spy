@@ -41,7 +41,8 @@ class WooCommerceProductItem(TypedDict, total=False):
 
     When the Store API is unavailable, items come from product pages instead:
     ``source`` is ``"product_page"``, only the fields schema.org JSON-LD carries are
-    set (no ``variations``), and ``json_ld`` holds the page's Product object."""
+    set (plus ``attributes`` and ``variations`` from a variable product's variation
+    form), and ``json_ld`` holds the page's Product object."""
 
     id: int
     name: str

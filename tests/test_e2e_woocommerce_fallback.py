@@ -5,6 +5,7 @@ Run with: uv run pytest -m e2e
 """
 
 import csv
+import html
 import http.server
 import json
 import subprocess
@@ -21,7 +22,25 @@ PRODUCTS = {
     "hat": ("Hat", "19.90", 11),
     "cap": ("Cap", "5.00", 12),
     "scarf": ("Scarf", "42.50", 13),
+    "tee": ("Tee", "20.00", 14),  # variable: its page has a variation form
 }
+TEE_VARIATIONS = [
+    {"variation_id": 141, "attributes": {"attribute_pa_size": "s"}, "display_price": 20,
+     "display_regular_price": 20, "sku": "TEE-S", "is_in_stock": True},
+    {"variation_id": 142, "attributes": {"attribute_pa_size": "l"}, "display_price": 24,
+     "display_regular_price": 30, "sku": "TEE-L", "is_in_stock": False},
+]  # fmt: skip
+
+
+def _variation_form() -> str:
+    data = html.escape(json.dumps(TEE_VARIATIONS))
+    return (
+        f'<form class="variations_form cart" data-product_variations="{data}">'
+        '<label for="pa_size">Size</label>'
+        '<select id="pa_size" name="attribute_pa_size" data-attribute_name="attribute_pa_size">'
+        '<option value="">Choose an option</option><option value="s">Small</option>'
+        '<option value="l">Large</option></select></form>'
+    )
 
 
 def _page(slug: str, host: str) -> bytes:
@@ -48,7 +67,8 @@ def _page(slug: str, host: str) -> bytes:
     }
     return (
         f'<html><head><script type="application/ld+json">{json.dumps(ld)}</script></head>'
-        f'<body class="single-product postid-{post_id}"><h1>{name}</h1></body></html>'
+        f'<body class="single-product postid-{post_id}"><h1>{name}</h1>'
+        f"{_variation_form() if slug == 'tee' else ''}</body></html>"
     ).encode()
 
 
@@ -168,11 +188,11 @@ def _scrape(tmp_path, urls):
 
 EXPECTED = {
     # scenario: (status code, items)
-    "api_401": ("ok", 3),
-    "api_404": ("ok", 3),
-    "api_html": ("ok", 3),
-    "sitemap_only": ("ok", 3),
-    "page_503": ("partial", 2),
+    "api_401": ("ok", 4),
+    "api_404": ("ok", 4),
+    "api_html": ("ok", 4),
+    "sitemap_only": ("ok", 4),
+    "page_503": ("partial", 3),
 }
 
 
@@ -182,15 +202,16 @@ def test_cli_falls_back_to_product_pages(tmp_path, stores):
     entries = {e["url"]: e for e in status["urls"]}
     actual = {s: (entries[u]["code"], entries[u]["items"]) for s, u in urls.items()}
     assert actual == EXPECTED, result.stderr
-    assert status["items_scraped"] == 14
+    assert status["items_scraped"] == 19
 
-    # One row per product: every fallback row is marked and carries the page's data
-    assert len(rows) == 14
+    # A row per simple product and per variation, all marked and with the page's data
+    assert len(rows) == 24
     assert {r["platform"] for r in rows} == {"woocommerce"}
     assert {r["source"] for r in rows} == {"product_page"}
-    by_store = {}
+    by_store: dict = {}
     for row in rows:
-        by_store.setdefault(row["store"], {})[row["handle"]] = row
+        key = row["handle"] if not row["variant_id"] else f"{row['handle']}/{row['variant_id']}"
+        by_store.setdefault(row["store"], {})[key] = row
     hat = by_store[urls["api_401"].removeprefix("http://")]["hat"]
     assert hat["id"] == "11"
     assert hat["title"] == "Hat"
@@ -199,4 +220,19 @@ def test_cli_falls_back_to_product_pages(tmp_path, stores):
     assert hat["currency"] == "USD"
     assert hat["available"] == "true"
     assert hat["html_url"] == f"{urls['api_401']}/product/hat/"
-    assert set(by_store[urls["page_503"].removeprefix("http://")]) == {"hat", "cap"}
+    store = by_store[urls["api_401"].removeprefix("http://")]
+    small, large = store["tee/141"], store["tee/142"]
+    assert (small["options"], small["variant_title"], small["option1"]) == (
+        "Size",
+        "Small",
+        "Small",
+    )
+    assert (small["sku"], small["price"], small["available"]) == ("TEE-S", "20", "true")
+    assert (large["variant_title"], large["sku"], large["price"]) == ("Large", "TEE-L", "24")
+    assert (large["compare_at_price"], large["available"]) == ("30", "false")
+    assert set(by_store[urls["page_503"].removeprefix("http://")]) == {
+        "hat",
+        "cap",
+        "tee/141",
+        "tee/142",
+    }
