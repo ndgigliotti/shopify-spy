@@ -43,14 +43,14 @@ To use it as a Python library (`import shopify_spy`), the package has to be in t
 uv add shopify-spy        # or: pip install shopify-spy
 
 # A one-off script, no project or virtual environment needed
-uv run --with 'shopify-spy>=0.3' python script.py
+uv run --with 'shopify-spy>=0.4' python script.py
 ```
 
 A script can also declare the dependency itself ([inline script metadata](https://packaging.python.org/en/latest/specifications/inline-script-metadata/)), so `uv run script.py` works from any directory:
 
 ```python
 # /// script
-# dependencies = ["shopify-spy>=0.3"]
+# dependencies = ["shopify-spy>=0.4"]
 # ///
 import shopify_spy as spy
 ```
@@ -150,10 +150,10 @@ See [Use as a library](#use-as-a-library) for the options, failure handling, ima
 - **Status JSON.** Each run writes a machine-readable status file with each URL's item count and status code, and the run's timing.
 - **Bail timeout.** Automatically aborts if no items are scraped within `--bail` seconds (default: 30).
 - **Coding-agent friendly.** Designed for use by AI coding agents (Claude Code, Cursor, etc.):
-  - Suggested workflow, with nothing to install: `uvx shopify-spy scrape --peek URL` to see an item's shape, then a script run with `uv run --with 'shopify-spy>=0.3' python script.py` that filters and saves only what the task needs. Use the CLI for whole-catalog dumps and image downloads.
+  - Suggested workflow, with nothing to install: `uvx shopify-spy scrape --peek URL` to see an item's shape, then a script run with `uv run --with 'shopify-spy>=0.4' python script.py` that filters and saves only what the task needs. Use the CLI for whole-catalog dumps and image downloads.
   - Agents can write Python scripts against the library instead of driving the CLI: items are plain dicts with typed definitions (`ShopifyProductItem`, `ShopifyCollectionItem`, `WooCommerceProductItem`), `summarize()` gives the same fields on both platforms, and every option is documented in `help(spy.scrape)`
   - `--peek` pipes a single item to stdout for quick schema inspection; warnings and errors go to stderr, so stdout stays valid JSONL
-  - Non-zero exit codes on failure with diagnostic messages explaining why
+  - Exit status 1 with a diagnostic message when no store produced items or the output couldn't be written (a run where only some stores failed exits 0 and lists their statuses)
   - Status JSON with a machine-readable status code for each URL
   - `--bail` prevents dead runs from hanging indefinitely
   - `--quiet` suppresses visual noise; log files capture the details separately
@@ -182,7 +182,7 @@ spy scrape [URL] [OPTIONS]
 **Options:**
 - `--platform, -p PLATFORM` - Ecommerce platform: `shopify`, `woocommerce` (default: `shopify`)
 - `--limit, -n INT` - Stop each store after N items (per store; useful for sampling or testing)
-- `--url-file, -f FILE` - File containing URLs (one per line; `#` starts a comment)
+- `--url-file, -f FILE` - File containing URLs (one per line; lines starting with `#` are comments)
 - `--products / --no-products` - Scrape products (default: yes; Shopify only)
 - `--collections / --no-collections` - Scrape collections (default: no; Shopify only)
 - `--images / --no-images` - Download images (default: no)
@@ -315,13 +315,13 @@ File names start with the platform and a UTC timestamp. A status JSON file is wr
 | `stopped` | `stopped` | Interrupted (Ctrl-C) before producing anything |
 | `invalid URL` | `invalid_url` | The URL was malformed and skipped before scraping |
 
-`finish_reason` summarizes the run: `finished`, `item_limit` (a store reached `--limit`), `bail` (a store hit the `--bail` timeout), `crawler_failed` (a store raised an unexpected error), or `shutdown` (interrupted). `items_written` is how many items the data file holds. `output_error` is `null` unless writing the data file failed (such as a full disk or an unwritable directory), in any format. Then it holds the error, the run stops early (`finish_reason` is `shutdown`), the command exits with status 1, and the file keeps the whole items written before the error; a partly written item is cut off (in XLSX, rows of the failed item already handed to the workbook stay). `items_written` then falls short of `items_scraped`, which also counts the item that failed and any already fetched. An XLSX file is removed only if building the workbook at the end fails. A crash or a killed process writes no status file.
+`finish_reason` summarizes the run: `finished`, `item_limit` (a store reached `--limit`), `bail` (a store hit the `--bail` timeout), `crawler_failed` (a store raised an unexpected error), or `shutdown` (interrupted). `items_written` is how many items the data file holds. `output_error` is `null` unless writing the data file failed (such as a full disk or an unwritable directory), in any format. Then it holds the error and the command exits with status 1. If an item failed to write, the run stops early (`finish_reason` is `shutdown`) and the file keeps the whole items written before the error; a partly written item is cut off (in XLSX, rows of the failed item already handed to the workbook stay). `items_written` then falls short of `items_scraped`, which also counts the item that failed and any already fetched. If only finishing the file failed (the closing bytes of JSON or XML, or building an XLSX workbook), the run itself finished and `finish_reason` says how; an XLSX file is then removed and `items_written` is 0. A crash or a killed process writes no status file.
 
 Detailed logs are written to a log file (not the terminal). Log files are stored in the platform-appropriate state directory (e.g., `~/.local/state/shopify-spy/logs/` on Linux). Use `--verbose` to also print logs to the terminal.
 
 ### Shopify output
 
-Each line contains the full product or collection JSON from Shopify's API, plus four added fields (`platform` tells it from a WooCommerce item):
+Each line contains the full product or collection JSON from Shopify's API, plus four added fields (`platform` tells it from a WooCommerce item; `image_urls` is empty unless `--images` is given):
 
 ```json
 {
@@ -337,7 +337,7 @@ With `--collections`, collection items have a `collection` object in place of `p
 
 ### WooCommerce output
 
-Each line contains the full product JSON from the WooCommerce Store API, plus three added fields:
+Each line contains the full product JSON from the WooCommerce Store API, plus three added fields (`image_urls` is empty unless `--images` is given):
 
 ```json
 {
@@ -358,7 +358,7 @@ Each entry in `variations` is the variation's own Store API record (its `prices`
 
 Note: WooCommerce prices are strings in minor currency units (divide by `10^currency_minor_unit` to get the decimal value).
 
-When a store's Store API is unavailable (an error other than a 429 rate limit, an answer that isn't a product list, or robots.txt disallows it), Shopify Spy reads its product pages instead. It finds them through the WordPress REST API's product list (`/wp-json/wp/v2/product`), or the product sitemaps (WordPress core's `/wp-sitemap.xml`, Yoast's or Rank Math's `/sitemap_index.xml`), and turns each page's schema.org `Product` data into a partial item in the same shape. These items have `"source": "product_page"`, carry only `id`, `name`, `slug`, `permalink`, `sku`, `description`, `images`, `prices`, `on_sale` and `is_in_stock` (plus the added `store`, `platform` and `image_urls`), and keep the page's original structured data in `json_ld`. Names lose the site name an SEO plugin may append (`Hat - My Shop`), and a SKU that's really the product ID (WooCommerce's placeholder for a missing SKU) is left out. A variable product also gets `attributes` and `variations` from the page's variation form, each variation with its own `prices`, `sku` and `is_in_stock`, so the unified schema has a row per variation; WooCommerce embeds that form's data only for products with up to 30 variations (by default), so larger ones keep just the price range. Pages without that data are skipped, as are deleted (404 or 410) pages; other pages that fail to load mark the store `partial`. In XML output, keys that aren't valid element names (such as JSON-LD's `@type`) have their invalid characters replaced with `_`.
+When a store's Store API is unavailable on its first page (an error status other than a 429 rate limit, a failed request, an answer that isn't a product list, or robots.txt disallows it), Shopify Spy reads its product pages instead. It finds them through the WordPress REST API's product list (`/wp-json/wp/v2/product`), or the product sitemaps (WordPress core's `/wp-sitemap.xml`, Yoast's or Rank Math's `/sitemap_index.xml`), and turns each page's schema.org `Product` data into a partial item in the same shape. These items have `"source": "product_page"`, carry only `id`, `name`, `slug`, `permalink`, `sku`, `description`, `images`, `prices`, `on_sale` and `is_in_stock` (plus the added `store`, `platform` and `image_urls`), and keep the page's original structured data in `json_ld`. Names lose the site name an SEO plugin may append (`Hat - My Shop`), and a SKU that's really the product ID (WooCommerce's placeholder for a missing SKU) is set to `null`. A variable product also gets `attributes` and `variations` from the page's variation form, each variation with its own `prices`, `sku` and `is_in_stock`, so the unified schema has a row per variation; WooCommerce embeds that form's data only for products with up to 30 variations (by default), so larger ones keep just the price range. Pages without schema.org `Product` data are skipped, as are deleted (404 or 410) pages; other pages that fail to load mark the store `partial`. In XML output, keys that aren't valid element names (such as JSON-LD's `@type`) have their invalid characters replaced with `_`.
 
 ### Image Metadata
 
@@ -439,21 +439,21 @@ with open("products.jsonl", encoding="utf-8") as f:
 **With jq:**
 ```bash
 # Shopify: extract product titles
-cat output/data/*.jsonl | jq '.product.title'
+cat output/data/*.jsonl | jq 'select(.product) | .product.title'
 
 # WooCommerce: extract product names and prices
-cat output/data/*.jsonl | jq '{name: .name, price: .prices.price, currency: .prices.currency_code}'
+cat output/data/*.jsonl | jq 'select(.prices) | {name: .name, price: .prices.price, currency: .prices.currency_code}'
 
 # Unified schema (--schema unified): the same fields on both platforms, a line per variant
 cat output/data/*.jsonl | jq -r '[.platform, .title, .variant_title, .price] | @tsv'
 ```
 
-**With DuckDB** (no conversion needed; it reads JSONL and CSV directly). Each run writes a new timestamped file, so a glob over `output/data/` queries every run at once, such as each variant's price over time:
+**With DuckDB** (no conversion needed; it reads JSONL and CSV directly). Each run writes a new timestamped file, so a glob over `output/data/` queries every run at once, such as each variant's price over time. Point a query at files of one shape: a JSONL query that reads `product` fails if the glob also matches WooCommerce or unified files.
 ```bash
 # Native JSONL from Shopify runs
-duckdb -c "select regexp_extract(filename, '(\d{4}-\d\d-\d\d)') as run, v.id, v.price
+duckdb -c "select regexp_extract(filename, '\d{4}-\d\d-\d\dT[\d-]+', 0) as run, v.id, v.price
            from (select filename, unnest(product.variants) as v
-                 from read_json('output/data/*.jsonl', filename=true))
+                 from read_json('output/data/shopify_spider_*.jsonl', filename=true))
            order by v.id, run"
 
 # Unified CSV from any platform
@@ -492,7 +492,8 @@ df.groupby(["platform", "store"])["price"].agg(["count", "min", "max"])
 ```python
 import polars as pl
 
-df = pl.read_ndjson("output/data/shopify_spider_2024-01-15T10-30-00+00-00.jsonl")
+df = pl.read_ndjson("output/data/shopify_spider_2024-01-15T10-30-00+00-00.jsonl")  # native Shopify
+rows = pl.read_csv("output/data/shopify_spider_2024-01-15T10-30-00+00-00.csv")  # unified
 ```
 
 ## Use as a library
@@ -531,7 +532,7 @@ spy.write_items(spy.scrape(blocked, respect_robots_txt=False), "products.jsonl",
 - **Options** match the CLI: `platform`, `products`, `collections`, `images` (with `images_dir`), `max_items_per_store` (per store; use `itertools.islice` for a total), `bail`, `concurrent_requests`, `request_timeout`, `retries`, `user_agent`, `respect_robots_txt`, `verify_tls`, `max_concurrent_stores`, `throttle` and the `throttle_*` settings.
 - **Images:** `images=True, images_dir="images"` saves files under `images/full/`; each item's `scraped_images` records have a `path` relative to `images_dir`, so the file is `Path(images_dir) / record["path"]`.
 - **Schemas:** `write_items(run, "products.jsonl")` writes items as scraped; `schema="unified"` writes the same one-row-per-variant records as the CLI's `--schema unified`, shared by both platforms (see [Unified schema](#unified-schema)), so items from Shopify and WooCommerce runs can go in one file. CSV and Excel are always unified (`schema="native"` raises `ValueError`). `fields=[...]` picks unified columns (a name that isn't one of them is logged and left empty). Other dicts, such as `summarize(item).asdict()`, get a column per key. `"products.xlsx"` writes the unified rows as typed cells (see [Excel output](#excel-output)), keeping rows in a temporary folder next to the file until it closes. A write that fails partway leaves the file ending on the last whole item.
-- **No side effects:** nothing is written unless `images=True`, no config file is read, and nothing is printed (logs go to the `shopify_spy` logger).
+- **No side effects:** nothing is written unless `images=True`, no config file is read, and nothing is printed (logs go to the `shopify_spy` logger; `on_failure="warn"` issues a `ScrapeWarning`, which Python shows on stderr).
 - **Async code and notebooks** use `scrape_async()`, which takes the same options:
 
 ```python
@@ -545,11 +546,11 @@ result = await spy.scrape_async(urls, platform="woocommerce")  # RunResult with 
 
 ## Limitations
 
-**Large Shopify catalogs take more requests past 25,000 products.** Shopify's `products.json` stops paging at 25,000 items (100 pages of 250). Past that, the scraper reads the sitemap's product list to see what's missing (not with `--limit`, which may need only a sliver of a huge catalog), then pages `/collections/all` and the store's collections, largest first, each with its own 25,000 limit. Collections are paged only while they can save requests: they're skipped when fewer products are missing than they have pages, and stop once every listed product is found or they find less than one new product per request. Whatever is still missing, including products in no collection, is fetched through the sitemap one product per request. On a 65,718-product store, collections found 99.7% of the catalog and the whole scrape took about 1,700 requests, against about 41,000 through the sitemap alone ([#30](https://github.com/ndgigliotti/shopify-spy/issues/30)). Catalogs whose collections are far larger than 25,000 products (some print-on-demand stores list over a million) stay mostly out of reach; use `--limit` to sample them.
+**Large Shopify catalogs take more requests past 25,000 products.** Shopify's `products.json` stops paging at 25,000 items (100 pages of 250). Past that, the scraper reads the sitemap's product list to see what's missing (not with `--limit`, which may need only a sliver of a huge catalog), then pages `/collections/all` and the store's collections, largest first, each with its own 25,000 limit. Collections are paged only while they can save requests: they're skipped when fewer products are missing than they have pages, and stop once every listed product is found or they find less than one new product per request. Whatever is still missing, including products in no collection, is fetched through the sitemap one product per request. On a 65,718-product store, bulk paging and collections together found 99.7% of the catalog and the whole scrape took about 1,700 requests, against about 41,000 with bulk paging and the sitemap alone ([#30](https://github.com/ndgigliotti/shopify-spy/issues/30)). Catalogs whose collections are far larger than 25,000 products (some print-on-demand stores list over a million) stay mostly out of reach; use `--limit` to sample them.
 
 **WooCommerce Store API preferred.** WooCommerce scraping uses the public Store API (`/wp-json/wc/store/v1/products`), built into WooCommerce since version 6.4 (2022). When it's unavailable, products come from the product pages' structured data instead, which has no categories or tags, and variations only for products with up to 30 of them; stores whose pages have no schema.org `Product` data, or that broadly block crawlers, may not be scrapeable. When a scrape returns 0 items, the tool prints a diagnostic message explaining the likely cause (403 Forbidden, 404 Not Found, robots.txt blocking, a 429 rate limit, etc.) and exits with code 1.
 
-**Rate limiting.** Stores rate-limit by IP address: past some request rate they answer 429 (Too Many Requests), whatever the user agent. Auto-throttling is enabled by default: each host is slowed to match its response times, and a 429 or 503 pauses that host for its `Retry-After` time. A store that stays rate-limited ends as `rate_limited`; retry it later, with a lower `--concurrent` and throttling on. You can adjust the throttle settings or disable it for faster scraping:
+**Rate limiting.** Stores rate-limit by IP address: past some request rate they answer 429 (Too Many Requests), whatever the user agent. Auto-throttling is enabled by default: each host is slowed to match its response times, and a 429 or 503 pauses that host for its `Retry-After` time (at most 60 seconds, and never past `--bail`), even with `--no-throttle`. A store that stays rate-limited ends as `rate_limited`; retry it later, with a lower `--concurrent` and throttling on. You can adjust the throttle settings or disable it for faster scraping:
 
 ```bash
 # Disable throttling (faster but riskier)
