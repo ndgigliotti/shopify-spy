@@ -495,3 +495,14 @@ async def test_rate_limit_counted_when_its_retry_wait_is_cancelled():
     with pytest.raises(asyncio.CancelledError):
         await task
     assert session.stats.rate_limits == 1
+
+
+async def test_image_429s_do_not_count_as_rate_limits():
+    """A probe's 429 pauses the host and holds up the store; an image's comes after
+    its item was scraped."""
+    session, _ = make_session(
+        {f"{STORE}/probe": (429, ""), f"{STORE}/image": (429, "")}, robots=False
+    )
+    await get(session, f"{STORE}/probe", kind=PROBE)
+    await get(session, f"{STORE}/image", kind=IMAGE)
+    assert session.stats.rate_limits == 1

@@ -1023,6 +1023,13 @@ def test_diagnose_429_before_404(cli, rate_limited):
     assert "HTTP 404" not in run.stdout
 
 
+def test_diagnose_recovered_429_then_404_is_not_found(cli):
+    """A 429 the retry got past (it answered 404) isn't why the store failed."""
+    run = cli({products_url("store.com"): Seq([(429, ""), (404, "")])}, "store.com")
+
+    assert _single_status(run) == "404 Not Found"
+
+
 def test_diagnose_429_before_5xx(cli):
     run = cli({products_url("store.com"): Seq([(503, ""), (429, "")])}, "store.com")
 

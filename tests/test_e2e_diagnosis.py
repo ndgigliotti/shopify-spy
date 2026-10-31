@@ -141,6 +141,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(404)
             status = 429 if "rate_limited" in s else 503
             return self._send(status, headers={"Retry-After": "0"})
+        if s == "woo_fallback_rate_limited":
+            if path == "/robots.txt" or path.startswith("/wp-json/wc/store/"):
+                return self._send(404)
+            return self._send(429, headers={"Retry-After": "0"})
         if s == "robots_rate_limited":
             # Shopify per IP: robots.txt 429s with Retry-After: 60, past --bail
             if path == "/robots.txt":
@@ -247,7 +251,12 @@ def test_woocommerce_single_request_robots_redirect(tmp_path, stores):
 
 @pytest.mark.parametrize(
     ("scenario", "expected"),
-    [("woo_rate_limited", "rate limited (429)"), ("woo_unavailable", "unavailable (5xx)")],
+    [
+        ("woo_rate_limited", "rate limited (429)"),
+        ("woo_unavailable", "unavailable (5xx)"),
+        # Store API gone, and the product-page fallback is rate limited
+        ("woo_fallback_rate_limited", "rate limited (429)"),
+    ],
 )
 def test_woocommerce_rate_limited_or_unavailable(tmp_path, stores, scenario, expected):
     """A Store API 429 ends the store; a 503 falls back to product pages, which 503 too.
