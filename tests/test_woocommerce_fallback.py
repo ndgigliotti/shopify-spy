@@ -853,3 +853,39 @@ def test_hostile_unclosed_tags_parse_quickly():
     started = time.perf_counter()
     read_form(hostile, 7)
     assert time.perf_counter() - started < 1
+
+
+def test_product_id_in_place_of_a_missing_sku_is_dropped():
+    # WooCommerce's JSON-LD fills an empty SKU with the product ID
+    item = page_item({"@type": "Product", "name": "Hat", "sku": 417}, product_url("hat"), 417)
+    assert item["sku"] is None
+    item = page_item({"@type": "Product", "name": "Hat", "sku": "H-1"}, product_url("hat"), 417)
+    assert item["sku"] == "H-1"
+
+
+@pytest.mark.parametrize(
+    ("name", "site", "expected"),
+    [
+        ("Clear Lake Crew - Cabin Street", "Cabin Street", "Clear Lake Crew"),
+        ("Gift Card &bull; Landyachtz", "Landyachtz", "Gift Card"),
+        ("Hat | Shop &amp; Co", "Shop & Co", "Hat"),
+        ("Hat - Blue", "Shop", "Hat - Blue"),  # not the site's name
+        ("Cabin Street", "Cabin Street", "Cabin Street"),  # nothing before it
+        ("Hat - Cabin Street", None, "Hat - Cabin Street"),  # no og:site_name
+        ("Overlay&amp;amp;Sparkler", None, "Overlay&Sparkler"),  # escaped twice
+    ],
+)
+def test_site_name_suffix_is_stripped(name, site, expected):
+    item = page_item({"@type": "Product", "name": name}, product_url("hat"), 1, site=site)
+    assert spy.summarize(item).title == expected
+
+
+def test_site_name_from_open_graph():
+    from shopify_spy._jsonld import site_name
+
+    head = (
+        '<head><meta property="og:type" content="product" />'
+        '<meta content="Shop &amp; Co" property="og:site_name" /></head>'
+    )
+    assert site_name(head + "<body></body>") == "Shop & Co"
+    assert site_name("<head></head><body></body>") is None

@@ -336,7 +336,7 @@ async def _product_pages(ctx: StoreContext, emit: Emit) -> bool:
                 return
             post_id = post_id or listed_id
             form = jsonld.variation_form(text, post_id)
-            item = page_item(product, response.url, post_id, form)
+            item = page_item(product, response.url, post_id, form, jsonld.site_name(text))
             store = urllib.parse.urlsplit(response.url).netloc
             await emit(_item(item, store, ctx.images))
         finally:
@@ -498,6 +498,7 @@ def page_item(
     url: str,
     post_id: int | None,
     form: jsonld.VariationForm | None = None,
+    site: str | None = None,
 ) -> dict[str, Any]:
     """A Store API-shaped product from a page's schema.org Product.
 
@@ -509,12 +510,13 @@ def page_item(
     prices = _prices(found.current, found.listed, found.bounds, found.currency)
     return {
         "id": post_id,
-        "name": jsonld.text(product.get("name")),
+        "name": _name(jsonld.text(product.get("name")), site),
         "slug": urllib.parse.unquote(
             urllib.parse.urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1]
         ),
         "permalink": url,
-        "sku": jsonld.text(product.get("sku")),
+        # With no SKU, WooCommerce's JSON-LD gives the product ID in its place
+        "sku": sku if (sku := jsonld.text(product.get("sku"))) != str(post_id) else None,
         "description": jsonld.text(product.get("description")),
         "images": [{"src": src} for src in jsonld.image_urls(product.get("image"))],
         "prices": prices,
@@ -571,6 +573,22 @@ def _variations(
         for found in form.fields.values()
     ]
     return {"attributes": attributes, "variations": variations}
+
+
+def _name(name: str | None, site: str | None) -> str | None:
+    """The product's name, escaped once like the Store API's, without the site name
+    an SEO plugin may have added to the JSON-LD's (``Hat - Shop``).
+
+    JSON-LD names should be plain text but come escaped, sometimes twice
+    (``&amp;amp;``), so they're unescaped until they stop changing.
+    """
+    if name is None:
+        return None
+    for _ in range(3):
+        if (plain := html.unescape(name)) == name:
+            break
+        name = plain
+    return _escape(jsonld.strip_site_name(name, site) or name)
 
 
 def _escape(text: str) -> str:

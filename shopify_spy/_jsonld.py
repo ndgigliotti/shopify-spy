@@ -164,6 +164,33 @@ def offers(value: Any) -> Offers:
     return result
 
 
+_META = re.compile(r"<meta\b([^>]*)>", re.I)
+# Separators SEO plugins put between a title and the site name
+TITLE_SEPARATORS = (" - ", " – ", " — ", " | ", " • ", " · ", " :: ")
+
+
+def site_name(page: str) -> str | None:
+    """The site's name from ``og:site_name`` in the page's head (Yoast, Rank Math)."""
+    end = page.find("</head")
+    for attrs in _META.findall(page[: end if end >= 0 else len(page)]):
+        if _attr(attrs, "property") == "og:site_name":
+            return _attr(attrs, "content") or None
+    return None
+
+
+def strip_site_name(title: str, site: str | None) -> str | None:
+    """The title without a trailing site name (``Hat - Shop`` -> ``Hat``) that an
+    SEO plugin added, or None if it has none."""
+    if not site:
+        return None
+    plain = html.unescape(title).strip()
+    for separator in TITLE_SEPARATORS:
+        suffix = separator + site.strip()
+        if plain.endswith(suffix) and len(plain) > len(suffix):
+            return plain[: -len(suffix)].rstrip()
+    return None
+
+
 # --- WooCommerce's variation form -------------------------------------------------
 # A variable product's page embeds its variations as JSON on the form, unless it has
 # more than woocommerce_ajax_variation_threshold (30 by default): then the attribute
