@@ -75,7 +75,7 @@ spy scrape --peek https://www.example.com
 nix develop github:ndgigliotti/shopify-spy
 ```
 
-In your own flake, `overlays.default` adds `python3Packages.shopify-spy` (for every Python version) and a top-level `shopify-spy`.
+The Nix package includes Excel support, so `--format xlsx` works without the `excel` extra. In your own flake, `overlays.default` adds `python3Packages.shopify-spy` (for every Python version) and a top-level `shopify-spy`.
 
 ## Quick Start
 
@@ -147,14 +147,14 @@ See [Use as a library](#use-as-a-library) for the options, failure handling, ima
 - **Failure diagnostics.** When a scrape returns 0 items, the tool explains why for each store (403, 404, robots.txt, 429 rate limits, 5xx errors, TLS errors, timeout, no response) and suggests flags to try, including the other `--platform` when a store looks like it runs on it. Malformed URLs are skipped with a warning instead of breaking the run.
 - **Python library.** `import shopify_spy` gives the same scraping engine as the CLI; see [Use as a library](#use-as-a-library).
 - **Log files.** Detailed logs go to a log file, keeping the terminal clean. Use `--verbose` to also print to the terminal.
-- **Status JSON.** Each run writes a machine-readable status file with per-URL results, errors, and timing.
+- **Status JSON.** Each run writes a machine-readable status file with each URL's item count and status code, and the run's timing.
 - **Bail timeout.** Automatically aborts if no items are scraped within `--bail` seconds (default: 30).
 - **Coding-agent friendly.** Designed for use by AI coding agents (Claude Code, Cursor, etc.):
   - Suggested workflow, with nothing to install: `uvx shopify-spy scrape --peek URL` to see an item's shape, then a script run with `uv run --with 'shopify-spy>=0.3' python script.py` that filters and saves only what the task needs. Use the CLI for whole-catalog dumps and image downloads.
-  - Agents can write Python scripts against the library instead of driving the CLI: items are plain dicts with typed definitions (`ShopifyProductItem`, `WooCommerceProductItem`), `summarize()` gives the same fields on both platforms, and every option is documented in `help(spy.scrape)`
+  - Agents can write Python scripts against the library instead of driving the CLI: items are plain dicts with typed definitions (`ShopifyProductItem`, `ShopifyCollectionItem`, `WooCommerceProductItem`), `summarize()` gives the same fields on both platforms, and every option is documented in `help(spy.scrape)`
   - `--peek` pipes a single item to stdout for quick schema inspection; warnings and errors go to stderr, so stdout stays valid JSONL
   - Non-zero exit codes on failure with diagnostic messages explaining why
-  - Status JSON with machine-readable per-URL results and error details
+  - Status JSON with a machine-readable status code for each URL
   - `--bail` prevents dead runs from hanging indefinitely
   - `--quiet` suppresses visual noise; log files capture the details separately
   - A Python API whose failures are explicit: `ScrapeFailed` when every store fails, per-store statuses and hints
@@ -188,7 +188,6 @@ spy scrape [URL] [OPTIONS]
 - `--images / --no-images` - Download images (default: no)
 - `--output, -o PATH` - Output directory (default: `./output`)
 - `--format, -F FORMAT` - Output format: `json`, `jsonl`, `csv`, `xlsx`, `xml` (default: `jsonl`; `xlsx` needs the `excel` extra, see [Excel output](#excel-output))
-- `--format, -F FORMAT` - Output format: `json`, `jsonl`, `csv`, `xml` (default: `jsonl`)
 - `--schema SCHEMA` - Item shape: `native` (as scraped) or `unified` (a row per variant; see [Unified schema](#unified-schema)). Default: `native`, except CSV and XLSX, which are always `unified`
 - `--config, -c FILE` - Path to YAML config file
 - `--concurrent INT` - Concurrent requests per host (default: 16)
@@ -198,9 +197,11 @@ spy scrape [URL] [OPTIONS]
 - `--ignore-robots, -i` - Ignore robots.txt restrictions
 - `--insecure` - Don't verify TLS certificates
 - `--bail INT` - Abort if no items scraped within N seconds (default: 30, 0 to disable)
-- `--peek` - Print 1 item to stdout as JSONL and exit (no files or directories created)
+- `--peek` - Print 1 item to stdout as JSONL and exit (no files or directories created); with `--schema unified`, its unified rows
 - `--verbose, -v` - Show debug output (logs to both file and terminal)
 - `--quiet, -q` - Show only warnings and errors (no live item counter)
+
+`spy --version` (`-V`) prints the installed version.
 
 ### `init`
 
@@ -227,6 +228,7 @@ scrape:
   products: true      # Scrape product data (Shopify only)
   collections: false  # Scrape collection data (Shopify only)
   images: false       # Download product images
+  # limit: 100        # Stop each store after N items
   bail: 30            # Abort if no items scraped within N seconds (0 = off)
 
 output:
@@ -263,7 +265,7 @@ CLI options override config file settings.
 Results are saved in the output directory (JSONL by default, configurable via `--format`). Two schemas decide what each record holds:
 
 - **`native`** (the default for JSONL, JSON and XML): each item as the store's API returned it, described under [Shopify output](#shopify-output) and [WooCommerce output](#woocommerce-output). It keeps every field.
-- **`unified`** (`--schema unified`, or `output.schema` in the config; CSV is always unified): one record per variant with the same columns on both platforms, described under [Unified schema](#unified-schema). In XML each row is an `<item>`. `--schema native` with CSV is an error.
+- **`unified`** (`--schema unified`, or `output.schema` in the config; CSV and XLSX are always unified): one record per variant with the same columns on both platforms, described under [Unified schema](#unified-schema). In XML each row is an `<item>`. `--schema native` with CSV or XLSX is an error.
 
 The directory looks like this:
 
@@ -412,10 +414,11 @@ The unified schema has one row per variant and a plain value in every cell (no e
 | `grams`, `requires_shipping`, `taxable`, `variant_position`, `variant_image_url` | the variant's | |
 | `url` | the scraped JSON document | |
 | `source` | | `store_api`, or `product_page` for the partial items read from product pages |
+| `image_paths` | with `--images`: the downloaded files | with `--images`: the downloaded files |
 
 Prices are decimal amounts (WooCommerce's minor units are converted). `min_price` and `max_price` are the product's price range on each of its rows. A WooCommerce variation row's `sku`, `price`, `compare_at_price` and `available` are the variation's own; if the store refuses the variation listing, they're the product's. WooCommerce's `type` (`simple`, `variable`, ...) and descriptive attributes are only in the native schema. In JSON, prices are strings and booleans are `true`/`false`.
 
-With `--images`, `image_paths` lists the downloaded files (relative to the images directory). In CSV and unified XML, booleans are `true`/`false` and an empty cell means no value. Appending to a CSV written by 0.3.0 or earlier, which had a column per item field, is refused; start a new file.
+With `--images`, `image_paths` lists the downloaded files (relative to the images directory); without it the column is left out. In CSV and unified XML, booleans are `true`/`false` and an empty cell means no value. Appending to a CSV written by 0.3.0 or earlier, which had a column per item field, is refused; start a new file.
 
 ### Excel output
 
@@ -440,6 +443,23 @@ cat output/data/*.jsonl | jq '.product.title'
 
 # WooCommerce: extract product names and prices
 cat output/data/*.jsonl | jq '{name: .name, price: .prices.price, currency: .prices.currency_code}'
+
+# Unified schema (--schema unified): the same fields on both platforms, a line per variant
+cat output/data/*.jsonl | jq -r '[.platform, .title, .variant_title, .price] | @tsv'
+```
+
+**With DuckDB** (no conversion needed; it reads JSONL and CSV directly). Each run writes a new timestamped file, so a glob over `output/data/` queries every run at once, such as each variant's price over time:
+```bash
+# Native JSONL from Shopify runs
+duckdb -c "select regexp_extract(filename, '(\d{4}-\d\d-\d\d)') as run, v.id, v.price
+           from (select filename, unnest(product.variants) as v
+                 from read_json('output/data/*.jsonl', filename=true))
+           order by v.id, run"
+
+# Unified CSV from any platform
+duckdb -c "select platform, store, count(*) as variants, min(price), max(price)
+           from read_csv('output/data/*.csv', union_by_name=true)
+           group by all"
 ```
 
 **With Python:**
@@ -455,10 +475,17 @@ with open("output/data/shopify_spider_2024-01-15T10-30-00+00-00.jsonl", encoding
 
 **With pandas:**
 ```python
+import glob
 import pandas as pd
 
+# Native JSONL: one item per row
 df = pd.read_json("output/data/shopify_spider_2024-01-15T10-30-00+00-00.jsonl", lines=True)
 products = pd.json_normalize(df["product"])  # Shopify
+
+# Unified CSV: a row per variant, every run in one frame
+runs = sorted(glob.glob("output/data/*.csv"))
+df = pd.concat((pd.read_csv(f).assign(run=f) for f in runs), ignore_index=True)
+df.groupby(["platform", "store"])["price"].agg(["count", "min", "max"])
 ```
 
 **With polars:**
@@ -500,8 +527,8 @@ spy.write_items(spy.scrape(blocked, respect_robots_txt=False), "products.jsonl",
 ```
 
 - **How a run works.** `scrape()` returns a run without fetching anything; stores are scraped while something iterates it, one item at a time. Items aren't kept, so memory stays flat however big the catalog, and a run can be iterated only once (call `scrape()` again for another pass). Iterating it yourself, or passing it to `write_items()`, streams; `run.collect()` and `list(run)` hold every item in memory. `run.result` (per-store results) is available once iteration ends, and `run.stores` gives a snapshot mid-run. Leaving early (`break`, `run.close()`, or the end of a `with spy.scrape(...) as run:` block) stops the run; stores that hadn't finished get the `finish_reason` `closed`.
-- **Failures are never silent.** By default `scrape()` raises `ScrapeFailed` (listing each store's status) when every store failed; `on_failure="warn"` or `"ignore"` relax that, and `strict=True` raises when any store failed. Each `StoreResult` has a `status`, an item count and sometimes a `hint`, such as a likely wrong `platform`. A store that only answered 429s is `rate_limited`, and one that only answered 5xx errors is `unavailable`; both are failures worth retrying later.
-- **Options** match the CLI: `platform`, `products`, `collections`, `images` (with `images_dir`), `max_items_per_store` (per store; use `itertools.islice` for a total), `bail`, `concurrent_requests`, `request_timeout`, `retries`, `user_agent`, `respect_robots_txt`, `verify_tls`, `max_concurrent_stores` and the `throttle_*` settings.
+- **Failures are never silent.** By default `scrape()` raises `ScrapeFailed` (listing each store's status) when every store failed; `on_failure="warn"` or `"ignore"` relax that, and `strict=True` raises when any store failed. Each `StoreResult` has a `status`, an item count and sometimes a `hint`, such as a likely wrong `platform`. A store that only answered 429s, or that 429s held up until `bail` fired, is `rate_limited`, and one that only answered 5xx errors is `unavailable`; both are failures worth retrying later.
+- **Options** match the CLI: `platform`, `products`, `collections`, `images` (with `images_dir`), `max_items_per_store` (per store; use `itertools.islice` for a total), `bail`, `concurrent_requests`, `request_timeout`, `retries`, `user_agent`, `respect_robots_txt`, `verify_tls`, `max_concurrent_stores`, `throttle` and the `throttle_*` settings.
 - **Images:** `images=True, images_dir="images"` saves files under `images/full/`; each item's `scraped_images` records have a `path` relative to `images_dir`, so the file is `Path(images_dir) / record["path"]`.
 - **Schemas:** `write_items(run, "products.jsonl")` writes items as scraped; `schema="unified"` writes the same one-row-per-variant records as the CLI's `--schema unified`, shared by both platforms (see [Unified schema](#unified-schema)), so items from Shopify and WooCommerce runs can go in one file. CSV and Excel are always unified (`schema="native"` raises `ValueError`). `fields=[...]` picks unified columns (a name that isn't one of them is logged and left empty). Other dicts, such as `summarize(item).asdict()`, get a column per key. `"products.xlsx"` writes the unified rows as typed cells (see [Excel output](#excel-output)), keeping rows in a temporary folder next to the file until it closes. A write that fails partway leaves the file ending on the last whole item.
 - **No side effects:** nothing is written unless `images=True`, no config file is read, and nothing is printed (logs go to the `shopify_spy` logger).
@@ -522,7 +549,7 @@ result = await spy.scrape_async(urls, platform="woocommerce")  # RunResult with 
 
 **WooCommerce Store API preferred.** WooCommerce scraping uses the public Store API (`/wp-json/wc/store/v1/products`), built into WooCommerce since version 6.4 (2022). When it's unavailable, products come from the product pages' structured data instead, which has no categories or tags, and variations only for products with up to 30 of them; stores whose pages have no schema.org `Product` data, or that broadly block crawlers, may not be scrapeable. When a scrape returns 0 items, the tool prints a diagnostic message explaining the likely cause (403 Forbidden, 404 Not Found, robots.txt blocking, a 429 rate limit, etc.) and exits with code 1.
 
-**Rate limiting.** Scraping very large stores may result in temporary bans. Auto-throttling is enabled by default: each host is slowed to match its response times, and a 429 or 503 pauses that host for its `Retry-After` time. You can adjust the settings or disable it for faster scraping:
+**Rate limiting.** Stores rate-limit by IP address: past some request rate they answer 429 (Too Many Requests), whatever the user agent. Auto-throttling is enabled by default: each host is slowed to match its response times, and a 429 or 503 pauses that host for its `Retry-After` time. A store that stays rate-limited ends as `rate_limited`; retry it later, with a lower `--concurrent` and throttling on. You can adjust the throttle settings or disable it for faster scraping:
 
 ```bash
 # Disable throttling (faster but riskier)

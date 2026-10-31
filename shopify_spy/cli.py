@@ -134,7 +134,7 @@ def scrape(
         typer.Option(
             "--schema",
             help="Item shape: native (as scraped; default) or unified (a row per variant, "
-            "same columns on both platforms). CSV is always unified.",
+            "same columns on both platforms). CSV and XLSX are always unified.",
         ),
     ] = None,
     config_path: Annotated[

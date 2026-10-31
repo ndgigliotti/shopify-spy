@@ -116,12 +116,13 @@ scrape:
   products: true      # Scrape product data (Shopify only)
   collections: false  # Scrape collection data (Shopify only)
   images: false       # Download product images
-  bail: 30 # Abort if no items scraped within N seconds (0 = off)
+  # limit: 100        # Stop each store after N items
+  bail: 30            # Abort if no items scraped within N seconds (0 = off)
 
 output:
   dir: ./output       # Output directory for results
   format: jsonl       # Output format: json, jsonl, csv, xlsx, xml
-  # schema: unified   # native (as scraped) or unified (row per variant; csv always)
+  # schema: unified   # native (as scraped) or unified (row per variant; csv and xlsx always)
   images_subdir: images  # Subdirectory for downloaded images
 
 network:
