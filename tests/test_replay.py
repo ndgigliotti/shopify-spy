@@ -19,6 +19,7 @@ import pytest
 
 import shopify_spy as spy
 from shopify_spy._fetch import ReplayFetcher, load_corpus
+from shopify_spy._flatten import flatten
 from shopify_spy._utils import canonicalize_url
 from shopify_spy._woocommerce import API_PATH, BY_ID
 
@@ -105,6 +106,26 @@ def run_case(name: str, tmp_path: Path) -> dict[str, Any]:
 def test_replay_matches_snapshot(name, tmp_path):
     expected = json.loads(SNAPSHOTS.read_text())[name]
     assert run_case(name, tmp_path) == expected
+
+
+def test_woocommerce_variations_have_their_own_prices():
+    entries = load_corpus(CORPUS / CASES["woocommerce"][0])
+    fetcher = ReplayFetcher(entries)
+    result = spy.scrape(
+        "https://porterandyork.com",
+        platform="woocommerce",
+        fetcher_factory=lambda: fetcher,
+        _backoff=False,
+        throttle=False,
+    ).collect()
+    rows = [row for item in result.items for row in flatten(item) or []]
+    filet = sorted((r["price"], r["sku"]) for r in rows if r["id"] == 132)
+    assert [str(price) for price, _ in filet] == ["28", "34", "35", "40", "40", "50"]
+    assert len({sku for _, sku in filet}) == 6
+    # One variation listing covers the whole product page
+    assert not fetcher.misses
+    assert sum("type=variation" in key for key in entries) == 1
+    assert result.stores[0].responses_by_status == {200: 2}
 
 
 def test_one_csv_holds_both_platforms(tmp_path):

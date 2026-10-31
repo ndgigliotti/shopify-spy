@@ -5,9 +5,9 @@ so one CSV (or any flat table) can hold a mixed run. Columns only one platform h
 are blank for the other. Shopify products get a row per variant with the product's
 columns repeated (a product without variants still gets one row); collections get
 one row each, sharing the product columns they have. WooCommerce products get a row
-per variation; the Store API lists only a variation's ID and attributes, so the
-price, SKU and stock columns are the product's. JSONL, JSON and XML keep each
-platform's native item shape.
+per variation, with the variation's own price, SKU and stock when the scrape fetched
+its record (otherwise the product's). JSONL, JSON and XML keep each platform's native
+item shape.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from html.parser import HTMLParser
 from typing import Any
 
 from shopify_spy._summary import html_url, summarize, woo_money
+from shopify_spy._utils import dicts
 
 COLUMNS = [
     "platform",
@@ -124,16 +125,16 @@ def _shopify_common(
 
 def _shopify_product(item: dict[str, Any]) -> list[dict[str, Any]]:
     data: dict[str, Any] = item["product"]
-    images = _dicts(data.get("images"))
+    images = dicts(data.get("images"))
     image_srcs = {image.get("id"): image.get("src") for image in images}
-    variants = _dicts(data.get("variants"))
+    variants = dicts(data.get("variants"))
     tags = data.get("tags")
     product = _shopify_common(item, "product", data, images) | {
         "vendor": data.get("vendor"),
         "product_type": data.get("product_type"),
         # products.json has a list of tags, a product's own .json a comma-joined string
         "tags": _join(tags) if isinstance(tags, list) else tags,
-        "options": _join(o.get("name") for o in _dicts(data.get("options"))),
+        "options": _join(o.get("name") for o in dicts(data.get("options"))),
         "created_at": data.get("created_at"),
         "description": _text(data.get("body_html")),
         "image_count": len(images),
@@ -178,23 +179,19 @@ def _shopify_collection(item: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _woocommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
-    prices: dict[str, Any] = item["prices"]
-    money = woo_money(prices)
     summary = summarize(item)
-    images = _dicts(item.get("images"))
-    variations = _dicts(item.get("variations"))
+    images = dicts(item.get("images"))
+    variations = dicts(item.get("variations"))
     # Attributes that define variations play Shopify's options; others only describe
-    options = [a for a in _dicts(item.get("attributes")) if a.get("has_variations", True)]
+    options = [a for a in dicts(item.get("attributes")) if a.get("has_variations", True)]
     option_names = [_unescape(a.get("name")) for a in options if a.get("name")]
     # A variation's value is a term's slug for global attributes; show the term's name
     term_names = {
         (_unescape(a.get("name")), t.get("slug")): t.get("name")
         for a in options
-        for t in _dicts(a.get("terms"))
+        for t in dicts(a.get("terms"))
         if t.get("slug")
     }
-    price = money(prices.get("price"))
-    regular_price = money(prices.get("regular_price"))
     product = {
         "platform": "woocommerce",
         "kind": "product",
@@ -219,16 +216,12 @@ def _woocommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
         "average_rating": item.get("average_rating"),
         "review_count": item.get("review_count"),
         "variant_count": len(variations),
-        "sku": item.get("sku"),
-        "price": price,
-        # Like Shopify's, set only when the item sells below it
-        "compare_at_price": regular_price if _below(price, regular_price) else None,
-        "available": item.get("is_in_stock"),
+        **_woo_offer(item),
     } | _image_paths(item)
     rows = []
     for variation in variations:
         values: dict[Any, Any] = {}
-        for a in _dicts(variation.get("attributes")):
+        for a in dicts(variation.get("attributes")):
             name, value = _unescape(a.get("name")), a.get("value")
             if value not in (None, ""):
                 values[name] = _unescape(term_names.get((name, value), value))
@@ -244,8 +237,25 @@ def _woocommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
                 "variant_title": " / ".join(str(v) for v in title) or None,
             }
             | {f"option{i + 1}": values.get(n) for i, n in enumerate(names[:3])}
+            # Entries the scrape merged the variation's record into have its prices
+            | (_woo_offer(variation) if isinstance(variation.get("prices"), dict) else {})
         )
     return rows or [product]
+
+
+def _woo_offer(item: dict[str, Any]) -> dict[str, Any]:
+    """The price, SKU and stock columns of a WooCommerce product or variation."""
+    prices: dict[str, Any] = item["prices"]
+    money = woo_money(prices)
+    price = money(prices.get("price"))
+    regular_price = money(prices.get("regular_price"))
+    return {
+        "sku": item.get("sku"),
+        "price": price,
+        # Like Shopify's, set only when the item sells below it
+        "compare_at_price": regular_price if _below(price, regular_price) else None,
+        "available": item.get("is_in_stock"),
+    }
 
 
 def _below(price: Decimal | None, regular_price: Decimal | None) -> bool:
@@ -254,16 +264,12 @@ def _below(price: Decimal | None, regular_price: Decimal | None) -> bool:
     return price < regular_price
 
 
-def _dicts(value: Any) -> list[dict[str, Any]]:
-    return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
-
-
 def _join(values: Iterable[Any]) -> str:
     return ", ".join(str(v) for v in values if v not in (None, ""))
 
 
 def _names(value: Any) -> str:
-    return _join(html.unescape(str(d.get("name"))) for d in _dicts(value) if d.get("name"))
+    return _join(html.unescape(str(d.get("name"))) for d in dicts(value) if d.get("name"))
 
 
 def _unescape(value: Any) -> Any:
@@ -274,7 +280,7 @@ def _image_paths(item: dict[str, Any]) -> dict[str, str]:
     """The ``image_paths`` column, only for items that went through image downloads."""
     if "scraped_images" not in item:
         return {}
-    return {"image_paths": _join(i.get("path") for i in _dicts(item["scraped_images"]))}
+    return {"image_paths": _join(i.get("path") for i in dicts(item["scraped_images"]))}
 
 
 # Tags that break text; inline ones (a, b, span, ...) join their neighbors

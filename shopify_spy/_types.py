@@ -33,13 +33,18 @@ class ShopifyCollectionItem(TypedDict):
 class WooCommerceProductItem(TypedDict, total=False):
     """A WooCommerce Store API product: the API's fields plus ``store``, ``platform``
     and ``image_urls`` (and ``scraped_images`` with images enabled). Prices are strings
-    in minor units (see ``prices.currency_minor_unit``). There is no ``url`` key."""
+    in minor units (see ``prices.currency_minor_unit``). There is no ``url`` key.
+
+    Each ``variations`` entry is the variation's own Store API record (``prices``,
+    ``sku``, ``is_in_stock``, ...) with the listing's ``attributes``; only ``id`` and
+    ``attributes`` if the store refused the variation listing."""
 
     id: int
     name: str
     permalink: str
     prices: dict[str, Any]
     images: list[dict[str, Any]]
+    variations: list[dict[str, Any]]
     store: str
     platform: Literal["woocommerce"]
     image_urls: list[str]

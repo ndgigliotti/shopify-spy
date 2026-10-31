@@ -27,6 +27,7 @@ from shopify_spy._fetch import (
 from shopify_spy._policy import (
     RATE_LIMIT_STATUSES,
     ROBOTS_TOKEN,
+    ROTATE_ON_STATUSES,
     HostSlot,
     IdentityPool,
     RetryPolicy,
@@ -54,6 +55,7 @@ class RequestKind:
     check_robots: bool = True  # obey robots.txt for this request
     counted: bool = True  # counts toward the store's diagnosis stats
     dedupe: bool = True  # skip a URL this store already requested
+    rotate: bool = True  # a 403 may swap the store's user agent and retry
 
 
 STORE = RequestKind("store")
@@ -199,6 +201,11 @@ class StoreContext:
     item_limit: int | None = None  # the runner stops the store at this many items
     suggested_platform: str | None = None  # set when the store looks like another platform
 
+    @property
+    def items_left(self) -> int | None:
+        """Items still to emit before the item limit; None without a limit."""
+        return None if self.item_limit is None else self.item_limit - self.items
+
     async def probe_platform(
         self, path: str, looks_right: Callable[[Any], bool], platform: str
     ) -> None:
@@ -293,7 +300,8 @@ class StoreSession:
         logger.info("Forbidden by robots.txt: %s", url)
         return False
 
-    def _retry_cap(self) -> float | None:
+    def bail_time_left(self) -> float | None:
+        """Seconds until --bail ends a store with no items yet; None once it has one."""
         if self.bail_deadline is None:
             return None
         return max(0.0, self.bail_deadline - now())
@@ -338,9 +346,11 @@ class StoreSession:
                 )
                 retry_after = parse_retry_after(response.headers.get("retry-after"))
                 rate_limited = response.status in RATE_LIMIT_STATUSES
-                if not self.retry.should_retry_status(response.status, attempt):
+                # Whatever the transport rotates on, a 403 to such a kind is final
+                refused = not kind.rotate and response.status in ROTATE_ON_STATUSES
+                if refused or not self.retry.should_retry_status(response.status, attempt):
                     if rate_limited:  # no retry left, but the host still has to back off
-                        wait = self.retry.delay(attempt, retry_after, self._retry_cap(), True)
+                        wait = self.retry.delay(attempt, retry_after, self.bail_time_left(), True)
                         slot.pause(wait)
                     return response
                 if response.status in self.retry.rotate_on and self.identity.rotates:
@@ -364,7 +374,7 @@ class StoreSession:
                 retry_after = None
                 rate_limited = False
                 reason = name
-            delay = self.retry.delay(attempt, retry_after, self._retry_cap(), rate_limited)
+            delay = self.retry.delay(attempt, retry_after, self.bail_time_left(), rate_limited)
             if rate_limited:
                 slot.pause(delay)
             attempt += 1
