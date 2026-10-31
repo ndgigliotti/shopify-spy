@@ -162,7 +162,7 @@ See [Use as a library](#use-as-a-library) for the options, failure handling, ima
 | Platform | Mechanism | Notes |
 |---|---|---|
 | Shopify | `/products.json` bulk endpoint, then collection pages past 25,000 products, sitemap fallback; collections from the sitemap | Products and collections |
-| WooCommerce | `/wp-json/wc/store/v1/products` | No authentication required |
+| WooCommerce | `/wp-json/wc/store/v1/products`, then each page's variations (`?type=variation`) | No authentication required |
 
 ## Commands
 
@@ -345,6 +345,8 @@ Each line contains the full product JSON from the WooCommerce Store API, plus th
 }
 ```
 
+Each entry in `variations` is the variation's own Store API record (its `prices`, `sku`, `is_in_stock` and so on), with the product listing's `attributes` for it. If the store refuses the variation listing, the entries keep only `id` and `attributes`, as the product listing gives them.
+
 Note: WooCommerce prices are strings in minor currency units (divide by `10^currency_minor_unit` to get the decimal value).
 
 ### Image Metadata
@@ -401,7 +403,7 @@ The unified schema has one row per variant and a plain value in every cell (no e
 | `grams`, `requires_shipping`, `taxable`, `variant_position`, `variant_image_url` | the variant's | |
 | `url` | the scraped JSON document | |
 
-Prices are decimal amounts (WooCommerce's minor units are converted). The Store API doesn't list prices, SKUs or stock per variation, so a WooCommerce variation row has the product's. WooCommerce's `type` (`simple`, `variable`, ...) and descriptive attributes are only in the native schema. In JSON, prices are strings and booleans are `true`/`false`.
+Prices are decimal amounts (WooCommerce's minor units are converted). A WooCommerce variation row's `sku`, `price`, `compare_at_price` and `available` are the variation's own; if the store refuses the variation listing, they're the product's. WooCommerce's `type` (`simple`, `variable`, ...) and descriptive attributes are only in the native schema. In JSON, prices are strings and booleans are `true`/`false`.
 
 With `--images`, `image_paths` lists the downloaded files (relative to the images directory). In CSV and unified XML, booleans are `true`/`false` and an empty cell means no value. Appending to a CSV written by 0.3.0 or earlier, which had a column per item field, is refused; start a new file.
 

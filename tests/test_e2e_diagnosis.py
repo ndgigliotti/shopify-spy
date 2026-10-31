@@ -92,6 +92,15 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 )
                 return self._send(200, index, {"Content-Type": "application/xml"})
             return self._hang()
+        if s in ("woo_variations_403", "woo_variations_hang"):
+            if path == "/robots.txt":
+                return self._send(404)
+            if "type=variation" in self.path:
+                if s == "woo_variations_hang":
+                    return self._hang()
+                return self._send(403, b"<html>Forbidden</html>")
+            page = [{"id": 1, "permalink": "/p/", "variations": [{"id": 2, "attributes": []}]}]
+            return self._send(200, json.dumps(page if "page=1&" in self.path else []).encode())
         raise AssertionError(f"unknown scenario {s}")
 
 
@@ -164,3 +173,15 @@ def test_woocommerce_single_request_robots_redirect(tmp_path, stores):
     url = stores("robots_redirect_disallow")
     statuses = _run(tmp_path, [url], "--platform", "woocommerce")
     assert statuses[url] == "blocked by robots.txt"
+
+
+@pytest.mark.parametrize("scenario", ["woo_variations_403", "woo_variations_hang"])
+def test_woocommerce_failed_variation_listing(tmp_path, stores, scenario):
+    """A refused or hanging variation listing leaves the store ok, with the listing's
+    entries; a hang gives up before --bail."""
+    url = stores(scenario)
+    statuses = _run(tmp_path, [url], "--platform", "woocommerce")
+    assert statuses[url] == "ok"
+    [output] = tmp_path.rglob("*.jsonl")
+    [item] = [json.loads(line) for line in output.read_text().splitlines()]
+    assert item["variations"] == [{"id": 2, "attributes": []}]

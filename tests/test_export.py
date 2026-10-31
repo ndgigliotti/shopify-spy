@@ -208,6 +208,24 @@ def test_csv_woocommerce_compare_at_price_only_below_regular(tmp_path):
     assert (row["price"], row["compare_at_price"]) == ("24.99", "")
 
 
+def test_csv_woocommerce_variation_records_set_their_rows(tmp_path):
+    path = tmp_path / "out.csv"
+    record = {
+        "type": "variation",
+        "sku": "P1-L",
+        "is_in_stock": False,
+        "prices": {"price": "2999", "regular_price": "3499", "currency_minor_unit": 2},
+    }
+    small, large = WOO_PRODUCT["variations"]
+    # The scrape merged the large variation's record; the small one's listing failed
+    write_items([WOO_PRODUCT | {"variations": [small, record | large]}], path)
+    rows = read_csv(path)
+    offers = [(r["sku"], r["price"], r["compare_at_price"], r["available"]) for r in rows]
+    assert offers == [("P1", "19.99", "24.99", "true"), ("P1-L", "29.99", "34.99", "false")]
+    assert [r["variant_title"] for r in rows] == ["S", "L"]
+    assert {(r["min_price"], r["max_price"]) for r in rows} == {("19.99", "29.99")}
+
+
 def test_csv_woocommerce_options_skip_descriptive_attributes(tmp_path):
     path = tmp_path / "out.csv"
     item = WOO_PRODUCT | {

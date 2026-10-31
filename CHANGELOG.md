@@ -35,6 +35,12 @@
   products still missing are fetched one at a time from the sitemap. A
   65,718-product store now takes about 1,700 requests instead of 41,000
   ([#30](https://github.com/ndgigliotti/shopify-spy/issues/30)).
+- WooCommerce variations have their own prices, SKU and stock. After each page of products,
+  one request (per 100 variations) lists that page's variations, and each entry in a
+  product's `variations` becomes the variation's full Store API record, keeping the
+  listing's `attributes`. Unified rows take `sku`, `price`, `compare_at_price` and
+  `available` from it instead of repeating the product's. If the store refuses the
+  listing, the variations keep their old shape and values, and the store still succeeds.
 
 ## 0.3.0
 

@@ -5,9 +5,9 @@ so one CSV (or any flat table) can hold a mixed run. Columns only one platform h
 are blank for the other. Shopify products get a row per variant with the product's
 columns repeated (a product without variants still gets one row); collections get
 one row each, sharing the product columns they have. WooCommerce products get a row
-per variation; the Store API lists only a variation's ID and attributes, so the
-price, SKU and stock columns are the product's. JSONL, JSON and XML keep each
-platform's native item shape.
+per variation, with the variation's own price, SKU and stock when the scrape fetched
+its record (otherwise the product's). JSONL, JSON and XML keep each platform's native
+item shape.
 """
 
 from __future__ import annotations
@@ -178,8 +178,6 @@ def _shopify_collection(item: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _woocommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
-    prices: dict[str, Any] = item["prices"]
-    money = woo_money(prices)
     summary = summarize(item)
     images = _dicts(item.get("images"))
     variations = _dicts(item.get("variations"))
@@ -193,8 +191,6 @@ def _woocommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
         for t in _dicts(a.get("terms"))
         if t.get("slug")
     }
-    price = money(prices.get("price"))
-    regular_price = money(prices.get("regular_price"))
     product = {
         "platform": "woocommerce",
         "kind": "product",
@@ -219,11 +215,7 @@ def _woocommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
         "average_rating": item.get("average_rating"),
         "review_count": item.get("review_count"),
         "variant_count": len(variations),
-        "sku": item.get("sku"),
-        "price": price,
-        # Like Shopify's, set only when the item sells below it
-        "compare_at_price": regular_price if _below(price, regular_price) else None,
-        "available": item.get("is_in_stock"),
+        **_woo_offer(item),
     } | _image_paths(item)
     rows = []
     for variation in variations:
@@ -244,8 +236,25 @@ def _woocommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
                 "variant_title": " / ".join(str(v) for v in title) or None,
             }
             | {f"option{i + 1}": values.get(n) for i, n in enumerate(names[:3])}
+            # Entries the scrape merged the variation's record into have its prices
+            | (_woo_offer(variation) if isinstance(variation.get("prices"), dict) else {})
         )
     return rows or [product]
+
+
+def _woo_offer(item: dict[str, Any]) -> dict[str, Any]:
+    """The price, SKU and stock columns of a WooCommerce product or variation."""
+    prices: dict[str, Any] = item["prices"]
+    money = woo_money(prices)
+    price = money(prices.get("price"))
+    regular_price = money(prices.get("regular_price"))
+    return {
+        "sku": item.get("sku"),
+        "price": price,
+        # Like Shopify's, set only when the item sells below it
+        "compare_at_price": regular_price if _below(price, regular_price) else None,
+        "available": item.get("is_in_stock"),
+    }
 
 
 def _below(price: Decimal | None, regular_price: Decimal | None) -> bool:
