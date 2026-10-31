@@ -5,6 +5,7 @@ HTTP traffic (robots.txt retries, redirects, fallbacks), not hand-written stats.
 Run with: uv run pytest -m e2e
 """
 
+import csv
 import http.server
 import json
 import socket
@@ -25,6 +26,45 @@ def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+def _woo_prices(price, regular):
+    return {"price": price, "regular_price": regular, "currency_minor_unit": 2}
+
+
+WOO_VARIABLE = {
+    "id": 1,
+    "name": "Steak",
+    "permalink": "/product/steak/",
+    "sku": "STEAK",
+    "is_in_stock": True,
+    "prices": _woo_prices("2800", "2800"),
+    "attributes": [{"name": "Size", "has_variations": True, "terms": []}],
+    "variations": [
+        {"id": 2, "attributes": [{"name": "Size", "value": "8 oz"}]},
+        {"id": 3, "attributes": [{"name": "Size", "value": "12 oz"}]},
+    ],
+}
+WOO_VARIATIONS = [
+    {
+        "id": 2,
+        "parent": 1,
+        "type": "variation",
+        "sku": "STEAK-8",
+        "is_in_stock": True,
+        "prices": _woo_prices("2800", "2800"),
+        "attributes": [],
+    },
+    {
+        "id": 3,
+        "parent": 1,
+        "type": "variation",
+        "sku": "STEAK-12",
+        "is_in_stock": False,
+        "prices": _woo_prices("4000", "5000"),
+        "attributes": [],
+    },
+]
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -101,6 +141,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(403, b"<html>Forbidden</html>")
             page = [{"id": 1, "permalink": "/p/", "variations": [{"id": 2, "attributes": []}]}]
             return self._send(200, json.dumps(page if "page=1&" in self.path else []).encode())
+        if s == "woo_variations_ok":
+            if path == "/robots.txt":
+                return self._send(404)
+            if "type=variation" in self.path:
+                assert "parent=1&" in self.path, self.path
+                return self._send(200, json.dumps(WOO_VARIATIONS).encode())
+            page = [WOO_VARIABLE] if "page=1&" in self.path else []
+            return self._send(200, json.dumps(page).encode())
         raise AssertionError(f"unknown scenario {s}")
 
 
@@ -185,3 +233,26 @@ def test_woocommerce_failed_variation_listing(tmp_path, stores, scenario):
     [output] = tmp_path.rglob("*.jsonl")
     [item] = [json.loads(line) for line in output.read_text().splitlines()]
     assert item["variations"] == [{"id": 2, "attributes": []}]
+
+
+def test_woocommerce_variation_rows_in_csv(tmp_path, stores):
+    """The CLI's CSV gives each variation row its own price, SKU and stock."""
+    url = stores("woo_variations_ok")
+    statuses = _run(tmp_path, [url], "--platform", "woocommerce", "--format", "csv")
+    assert statuses[url] == "ok"
+    [output] = tmp_path.rglob("*.csv")
+    rows = list(csv.DictReader(output.open(newline="", encoding="utf-8")))
+    assert [
+        (
+            r["variant_id"],
+            r["variant_title"],
+            r["sku"],
+            r["price"],
+            r["compare_at_price"],
+            r["available"],
+        )
+        for r in rows
+    ] == [
+        ("2", "8 oz", "STEAK-8", "28.00", "", "true"),
+        ("3", "12 oz", "STEAK-12", "40.00", "50.00", "false"),
+    ]
