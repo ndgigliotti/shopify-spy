@@ -164,7 +164,7 @@ See [Use as a library](#use-as-a-library) for the options, failure handling, ima
 | Platform | Mechanism | Notes |
 |---|---|---|
 | Shopify | `/products.json` bulk endpoint, then collection pages past 25,000 products, sitemap fallback; collections from the sitemap | Products and collections |
-| WooCommerce | `/wp-json/wc/store/v1/products`, then each page's variations (`?type=variation`) | No authentication required |
+| WooCommerce | `/wp-json/wc/store/v1/products`, then each page's variations (`?type=variation`); product pages' structured data as a fallback | No authentication required |
 
 ## Commands
 
@@ -354,6 +354,8 @@ Each entry in `variations` is the variation's own Store API record (its `prices`
 
 Note: WooCommerce prices are strings in minor currency units (divide by `10^currency_minor_unit` to get the decimal value).
 
+When a store's Store API is unavailable (an error other than a 429 rate limit, an answer that isn't a product list, or robots.txt disallows it), Shopify Spy reads its product pages instead. It finds them through the WordPress REST API's product list (`/wp-json/wp/v2/product`), or the product sitemaps (WordPress core's `/wp-sitemap.xml`, Yoast's or Rank Math's `/sitemap_index.xml`), and turns each page's schema.org `Product` data into a partial item in the same shape. These items have `"source": "product_page"`, carry only `id`, `name`, `slug`, `permalink`, `sku`, `description`, `images`, `prices`, `on_sale` and `is_in_stock` (plus the added `store`, `platform` and `image_urls`), and keep the page's original structured data in `json_ld`. Names lose the site name an SEO plugin may append (`Hat - My Shop`), and a SKU that's really the product ID (WooCommerce's placeholder for a missing SKU) is left out. A variable product also gets `attributes` and `variations` from the page's variation form, each variation with its own `prices`, `sku` and `is_in_stock`, so the unified schema has a row per variation; WooCommerce embeds that form's data only for products with up to 30 variations (by default), so larger ones keep just the price range. Pages without that data are skipped, as are deleted (404 or 410) pages; other pages that fail to load mark the store `partial`. In XML output, keys that aren't valid element names (such as JSON-LD's `@type`) have their invalid characters replaced with `_`.
+
 ### Image Metadata
 
 When using `--images`, each item includes a `scraped_images` field with download info:
@@ -407,6 +409,7 @@ The unified schema has one row per variant and a plain value in every cell (no e
 | `available` | the variant's `available` | `is_in_stock` |
 | `grams`, `requires_shipping`, `taxable`, `variant_position`, `variant_image_url` | the variant's | |
 | `url` | the scraped JSON document | |
+| `source` | | `store_api`, or `product_page` for the partial items read from product pages |
 
 Prices are decimal amounts (WooCommerce's minor units are converted). A WooCommerce variation row's `sku`, `price`, `compare_at_price` and `available` are the variation's own; if the store refuses the variation listing, they're the product's. WooCommerce's `type` (`simple`, `variable`, ...) and descriptive attributes are only in the native schema. In JSON, prices are strings and booleans are `true`/`false`.
 
@@ -515,7 +518,7 @@ result = await spy.scrape_async(urls, platform="woocommerce")  # RunResult with 
 
 **Large Shopify catalogs take more requests past 25,000 products.** Shopify's `products.json` stops paging at 25,000 items (100 pages of 250). Past that, the scraper reads the sitemap's product list to see what's missing (not with `--limit`, which may need only a sliver of a huge catalog), then pages `/collections/all` and the store's collections, largest first, each with its own 25,000 limit. Collections are paged only while they can save requests: they're skipped when fewer products are missing than they have pages, and stop once every listed product is found or they find less than one new product per request. Whatever is still missing, including products in no collection, is fetched through the sitemap one product per request. On a 65,718-product store, collections found 99.7% of the catalog and the whole scrape took about 1,700 requests, against about 41,000 through the sitemap alone ([#30](https://github.com/ndgigliotti/shopify-spy/issues/30)). Catalogs whose collections are far larger than 25,000 products (some print-on-demand stores list over a million) stay mostly out of reach; use `--limit` to sample them.
 
-**WooCommerce Store API required.** WooCommerce scraping uses the public Store API (`/wp-json/wc/store/v1/products`), built into WooCommerce since version 6.4 (2022). Stores that have disabled the REST API via security plugins or broadly block crawlers may not be scrapeable. When a scrape returns 0 items, the tool prints a diagnostic message explaining the likely cause (403 Forbidden, 404 Not Found, robots.txt blocking, etc.) and exits with code 1.
+**WooCommerce Store API preferred.** WooCommerce scraping uses the public Store API (`/wp-json/wc/store/v1/products`), built into WooCommerce since version 6.4 (2022). When it's unavailable, products come from the product pages' structured data instead, which has no categories or tags, and variations only for products with up to 30 of them; stores whose pages have no schema.org `Product` data, or that broadly block crawlers, may not be scrapeable. When a scrape returns 0 items, the tool prints a diagnostic message explaining the likely cause (403 Forbidden, 404 Not Found, robots.txt blocking, etc.) and exits with code 1.
 
 **Rate limiting.** Scraping very large stores may result in temporary bans. Auto-throttling is enabled by default: each host is slowed to match its response times, and a 429 or 503 pauses that host for its `Retry-After` time. You can adjust the settings or disable it for faster scraping:
 

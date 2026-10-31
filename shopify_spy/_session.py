@@ -62,6 +62,9 @@ STORE = RequestKind("store")
 ROBOTS = RequestKind("robots", check_robots=False, counted=False, dedupe=False)
 IMAGE = RequestKind("image", counted=False, dedupe=False)
 PROBE = RequestKind("probe", counted=False, dedupe=False)  # e.g. a wrong-platform check
+# A fallback source, e.g. WooCommerce product pages: if it finds nothing, the store's
+# diagnosis still explains why the primary source failed
+FALLBACK = RequestKind("fallback", counted=False)
 
 
 class RequestFailed(Exception):

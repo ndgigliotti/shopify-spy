@@ -14,6 +14,7 @@ import csv
 import io
 import json
 import logging
+import re
 from collections.abc import Iterable
 from decimal import Decimal
 from pathlib import Path
@@ -36,6 +37,9 @@ EXTENSIONS: dict[str, str] = {v: k for k, v in FORMATS.items()}
 SCHEMAS = ("native", "unified")
 # Formats that hold one fixed table and so only take unified rows
 UNIFIED_ONLY_FORMATS = {"csv", "xlsx"}
+# An XML element name: a letter or _, then letters, digits, _, - or .
+_XML_NAME = re.compile(r"[^\W\d][\w.-]*")
+_XML_INVALID = re.compile(r"[^\w.-]")
 
 
 def format_for(path: str | Path, format: str | None = None) -> str:
@@ -348,7 +352,20 @@ def _xlsx_value(value: Any) -> Any:
     return _csv_value(value) if isinstance(value, (dict, list, tuple)) else value
 
 
+def _xml_name(name: str) -> str:
+    """An XML element name for a key; valid names are kept as they are.
+
+    Keys such as JSON-LD's ``@type`` aren't valid names; their invalid characters
+    become ``_``.
+    """
+    if _XML_NAME.fullmatch(name):
+        return name
+    name = _XML_INVALID.sub("_", name)
+    return name if _XML_NAME.fullmatch(name) else f"_{name}"
+
+
 def _xml_field(xml: XMLGenerator, name: str, value: Any) -> None:
+    name = _xml_name(name)
     xml.startElement(name, {})
     if isinstance(value, dict):
         for sub, v in value.items():

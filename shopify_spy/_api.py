@@ -408,7 +408,9 @@ _SCRAPE_DOC = """
     Args:
         urls: A store URL or an iterable of them. Only the host matters; paths are
             ignored. One platform per call.
-        platform: "shopify" (default) or "woocommerce".
+        platform: "shopify" (default) or "woocommerce". When a WooCommerce store's
+            Store API is unavailable, its product pages are read instead: partial
+            items in the Store API's shape with ``source="product_page"``.
         products: Scrape products (Shopify only; WooCommerce always does).
         collections: Also scrape collections (Shopify only).
         images: Download product images into ``images_dir/full/``. Requires

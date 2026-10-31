@@ -21,6 +21,16 @@
   with U+FFFD in its place; JSONL, JSON and CSV output used to fail on it. A failed write now stops the run, keeps the items already written and
   still writes the status file; it used to end the command with a traceback and no
   status file.
+- WooCommerce stores whose Store API is unavailable (an error status other than a
+  429 rate limit, no product list, a failed request or robots.txt) are scraped
+  from their product pages instead. Pages are found through the WordPress REST API's
+  product list or the product sitemaps, and each page's schema.org Product data
+  becomes a partial item in the Store API's shape, marked `"source": "product_page"`;
+  a variable product's variations, with their own prices, SKUs and stock, come from
+  the page's variation form (WooCommerce embeds it for up to 30 variations).
+  Unified rows (CSV, XLSX) gain a `source` column: `store_api` or `product_page` for
+  WooCommerce, blank for Shopify. XML output replaces characters that aren't valid in
+  element names (`@type` becomes `_type`); valid keys are unchanged.
 
 ### Changed
 
