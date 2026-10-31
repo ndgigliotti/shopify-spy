@@ -177,6 +177,7 @@ class StoreStats:
     responses: int = 0  # every hop
     successes: int = 0  # 2xx responses
     by_status: Counter[int] = field(default_factory=Counter)
+    rate_limits: int = 0  # 429s to any request kind, robots.txt included
     robots_disallowed: int = 0
     duplicates: int = 0
     transport_errors: Counter[str] = field(default_factory=Counter)
@@ -339,6 +340,8 @@ class StoreSession:
                     self.stats.responses += 1
                     self.stats.by_status[response.status] += 1
                     self.stats.successes += response.ok
+                # A 429 to robots.txt pauses the host as much as one to the store
+                self.stats.rate_limits += response.status == 429
                 logger.debug(
                     "GET %s -> %d in %.2fs (attempt %d, %s)",
                     url,

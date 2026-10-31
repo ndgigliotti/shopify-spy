@@ -108,6 +108,16 @@ def test_on_failure_raise_when_all_failed():
     assert run.result.failed == exc_info.value.result.failed
 
 
+def test_rate_limited_store_fails():
+    run = spy.scrape(STORE, fetcher_factory=fake({bulk_url(1): (429, "")}), **FAST)
+    with pytest.raises(spy.ScrapeFailed, match="shop.test: rate_limited"):
+        run.collect().raise_for_status()
+    [store] = run.result.stores
+    assert store.status == spy.StoreStatus.rate_limited
+    assert store.failed
+    assert store.responses_by_status == {429: 3, 404: 1}  # then the sitemap fallback
+
+
 def test_on_failure_raise_not_when_some_succeed():
     run = spy.scrape([STORE, OTHER], fetcher_factory=fake(ok_routes()), throttle=False)
     assert len(list(run)) == 2

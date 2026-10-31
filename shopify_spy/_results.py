@@ -20,6 +20,8 @@ class StoreStatus(StrEnum):
     forbidden = "forbidden"  # HTTP 403 after retries
     not_found = "not_found"  # HTTP 404 on the platform endpoint and fallback
     robots_blocked = "robots_blocked"  # robots.txt disallowed the needed URLs
+    rate_limited = "rate_limited"  # HTTP 429 after retries
+    unavailable = "unavailable"  # HTTP 5xx after retries (outage, maintenance)
     tls_error = "tls_error"  # certificate verification failed
     no_response = "no_response"  # DNS or connection failures only
     error = "error"  # unexpected exception while scraping this store
@@ -54,6 +56,8 @@ _LABELS = {
     StoreStatus.forbidden: "403 Forbidden",
     StoreStatus.not_found: "404 Not Found",
     StoreStatus.robots_blocked: "blocked by robots.txt",
+    StoreStatus.rate_limited: "rate limited (429)",
+    StoreStatus.unavailable: "unavailable (5xx)",
     StoreStatus.tls_error: "TLS error",
     StoreStatus.no_response: "no response",
     StoreStatus.error: "failed",
@@ -161,7 +165,11 @@ def diagnose(
 
     Blocking causes only count if the store never got a 2xx: a 403 recovered by a UA
     swap, or the products.json 404 that triggers the sitemap fallback, isn't why a
-    store that also got a 2xx came up empty.
+    store that also got a 2xx came up empty. A refusal (robots.txt, 403) wins over a
+    429, and a 429 over a 404, which may only be a fallback's (a rate-limited
+    products.json falls back to the sitemap). 5xx errors count last. A store that
+    ran out of time with no items after any 429 (robots.txt's included: its pause
+    holds the store's requests) is rate limited, not timed out.
     """
     if errored:
         return StoreStatus.error
@@ -172,10 +180,15 @@ def diagnose(
             return StoreStatus.robots_blocked
         if stats.by_status[403] > 0:
             return StoreStatus.forbidden
+        if stats.by_status[429] > 0:
+            return StoreStatus.rate_limited
         if stats.by_status[404] > 0:
             return StoreStatus.not_found
+        if any(code >= 500 for code in stats.by_status):
+            return StoreStatus.unavailable
     if finish_reason == "bail":
-        return StoreStatus.timed_out
+        # Retries and host pauses after a 429 use up --bail, even with some 2xx
+        return StoreStatus.rate_limited if stats.rate_limits > 0 else StoreStatus.timed_out
     if finish_reason in ("closed", "shutdown"):
         # Stopped by the caller (break, close(), Ctrl-C), possibly before it started
         return StoreStatus.stopped

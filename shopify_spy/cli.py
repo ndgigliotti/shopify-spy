@@ -699,6 +699,26 @@ def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
         hints.append(
             "Likely blocked by robots.txt. Retry with [bold]--ignore-robots[/bold] (-i) to bypass."
         )
+    if StoreStatus.rate_limited in present:
+        # Zero when only robots.txt got the 429 (it isn't counted per status)
+        n = total(StoreStatus.rate_limited, 429)
+        hints.append(
+            f"Received {n or 'an'} HTTP 429 (Too Many Requests) response(s). "
+            "The store is rate limiting requests; retry later, with a lower "
+            "[bold]--concurrent[/bold] and AutoThrottle on."
+        )
+    if StoreStatus.unavailable in present:
+        n = sum(
+            count
+            for s in stores
+            if s.status == StoreStatus.unavailable
+            for code, count in s.responses_by_status.items()
+            if code >= 500
+        )
+        hints.append(
+            f"Received {n} HTTP 5xx (server error) response(s). "
+            "The store may be down or under maintenance; retry later."
+        )
     if StoreStatus.timed_out in present:
         hints.append(
             f"Timed out after {config.scrape.bail}s with no items. "

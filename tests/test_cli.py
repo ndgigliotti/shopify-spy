@@ -980,6 +980,99 @@ def test_diagnose_zero_items(cli):
     assert "The store may be empty" in run.stdout
 
 
+def test_diagnose_429(cli):
+    """A store that only answered 429 failed; it isn't empty."""
+    routes = {products_url("store.com"): (429, ""), sitemap_url("store.com"): (429, "")}
+    run = cli(routes, "store.com")
+
+    assert run.exit_code == 1
+    assert run.status()["urls"][0]["code"] == "rate_limited"
+    assert _single_status(run) == "rate limited (429)"
+    # products.json and the sitemap, each tried 1 + 2 retries
+    assert "Received 6 HTTP 429 (Too Many Requests) response(s)" in run.stdout
+    assert "--concurrent" in run.stdout
+    assert "The store may be empty" not in run.stdout
+
+
+@pytest.mark.parametrize("status", [500, 502, 503])
+def test_diagnose_5xx(cli, status):
+    routes = {products_url("store.com"): (status, ""), sitemap_url("store.com"): (status, "")}
+    run = cli(routes, "store.com")
+
+    assert run.exit_code == 1
+    assert run.status()["urls"][0]["code"] == "unavailable"
+    assert _single_status(run) == "unavailable (5xx)"
+    assert "HTTP 5xx (server error)" in run.stdout
+
+
+def test_diagnose_403_before_429(cli):
+    """A store that refused (403) and also rate limited is reported as forbidden."""
+    run = cli({products_url("store.com"): Seq([(403, ""), (429, "")])}, "store.com")
+
+    assert _single_status(run) == "403 Forbidden"
+    assert "HTTP 429" not in run.stdout
+
+
+@pytest.mark.parametrize("rate_limited", ["products", "sitemap"])
+def test_diagnose_429_before_404(cli, rate_limited):
+    """A 429 wins over the other request's 404: retrying later may get past both."""
+    url = products_url("store.com") if rate_limited == "products" else sitemap_url("store.com")
+    run = cli({url: (429, "")}, "store.com")  # the other one 404s
+
+    assert _single_status(run) == "rate limited (429)"
+    assert "HTTP 404" not in run.stdout
+
+
+def test_diagnose_429_before_5xx(cli):
+    run = cli({products_url("store.com"): Seq([(503, ""), (429, "")])}, "store.com")
+
+    assert _single_status(run) == "rate limited (429)"
+
+
+def test_diagnose_recovered_429_is_not_blocking(cli):
+    """A 429 that a retry got past (a later 2xx) doesn't hide the empty store."""
+    routes = {
+        products_url("store.com"): Seq([(429, ""), {"products": []}]),
+        sitemap_url("store.com"): urlset(),
+    }
+    run = cli(routes, "store.com")
+
+    assert _single_status(run) == "0 items"
+
+
+def test_diagnose_429_then_timeout_is_rate_limited(cli):
+    """Some 2xx, but 429s until --bail fired: rate limited, not timed out."""
+    routes = {
+        products_url("store.com"): (429, ""),
+        sitemap_url("store.com"): urlset("https://store.com/products/hat"),
+        "https://store.com/products/hat.json": Seq([(429, ""), (429, ""), hang]),
+    }
+    run = cli(routes, "--bail", "1", "store.com")
+
+    assert _single_status(run) == "rate limited (429)"
+    assert "Timed out after" not in run.stdout
+
+
+def test_diagnose_robots_429_then_timeout_is_rate_limited(cli):
+    """robots.txt's 429 isn't counted per status, but its pause still ran out --bail."""
+    routes = {
+        "https://store.com/robots.txt": (429, ""),
+        products_url("store.com"): hang,
+        sitemap_url("store.com"): hang,
+    }
+    run = cli(routes, "--bail", "1", "store.com")
+
+    assert run.status()["urls"][0]["code"] == "rate_limited"
+    assert "Received an HTTP 429" in run.stdout
+
+
+def test_diagnose_robots_429_then_ok(cli):
+    routes = merge({"https://store.com/robots.txt": (429, "")}, shop("store.com", 2))
+    run = cli(routes, "store.com")
+
+    assert _single_status(run) == "ok"
+
+
 def test_diagnose_recovered_403_is_not_blocking(cli):
     """A 403 the UA swap recovered from (a later 2xx) doesn't hide the timeout."""
     routes = {
