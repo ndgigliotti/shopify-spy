@@ -31,8 +31,10 @@ PER_PAGE = 100
 # The default order (newest first) can shift between pages when a plugin overrides the
 # ID tiebreak, repeating some products and skipping others; IDs are unique and fixed
 BY_ID = {"orderby": "id", "order": "asc"}
-# Not counted toward the store's diagnosis: products came back, so the store works
-VARIATIONS = RequestKind("variations", counted=False)
+# Optional: not counted toward the store's diagnosis (products came back, so the store
+# works), and a 403 mustn't swap the user agent the product pages use. Not deduped: a
+# page in the default order can repeat the last page's variable products
+VARIATIONS = RequestKind("variations", counted=False, dedupe=False, rotate=False)
 
 
 def get_api_url(store_url: str, page: int = 1, by_id: bool = True) -> str:
@@ -61,7 +63,8 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
     """Emit every product from the store's Store API; return whether it got to the end.
 
     Any failure ends the store; WooCommerce has no fallback. A failed variation listing
-    doesn't: the variations keep only their ID and attributes, and later pages skip it.
+    doesn't: the variations keep only their ID and attributes, and if the store refused
+    it (4xx, robots.txt, not JSON, filter ignored) later pages skip it.
     """
     by_id = True
     variations = True  # until a variation listing fails
@@ -104,74 +107,83 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
         seen_ids |= ids
         if variations:
             # Products past the item limit won't be emitted, so skip their variations
-            variations = await _add_variations(ctx, products[: ctx.items_left], by_id)
+            variations = await _add_variations(ctx, response.url, products[: ctx.items_left], by_id)
         for product in products:
             await emit(_item(product, store, ctx.images))
         url = next_page_url(response.url)
         first = False
 
 
-async def _add_variations(ctx: StoreContext, products: list[dict[str, Any]], by_id: bool) -> bool:
+async def _add_variations(
+    ctx: StoreContext, page_url: str, products: list[dict[str, Any]], by_id: bool
+) -> bool:
     """Replace each product's variation entries with the variations' own records,
-    keeping the entry's attributes; return False if the listing failed."""
+    keeping the entry's attributes; return False if later pages shouldn't try again.
+
+    The listing goes to the products page's host, past any redirect.
+    """
     wanted: set[Any] = set()
     parents = []
     for product in products:
-        ids = {v.get("id") for v in dicts(product.get("variations"))} - {None}
-        if ids and product.get("id") is not None:
+        ids = {_id(v) for v in dicts(product.get("variations"))} - {None}
+        if ids and _id(product) is not None:
             wanted |= ids
             parents.append(product["id"])
     if not wanted:
         return True
-    url = get_variations_url(ctx.url, parents, by_id=by_id)
+    url = get_variations_url(page_url, parents, by_id=by_id)
     records: dict[Any, dict[str, Any]] = {}
     # Before the first item, a slow listing must not use up --bail: give it half the
-    # time left, then emit the products without it
+    # time left, then emit the products without it (later pages try again)
     left = ctx.session.bail_time_left()
     try:
         async with asyncio.timeout(None if left is None else left / 2):
-            reason = await _fetch_variations(ctx, url, wanted, records)
+            reason, refused = await _fetch_variations(ctx, url, wanted, records)
     except TimeoutError:
-        reason = "too slow before the first item"
-    logger.info("WooCommerce: %d of %d variations from %s", len(records), len(wanted), ctx.url)
+        reason, refused = "too slow before the first item", False
+    logger.info("WooCommerce: %d of %d variations from %s", len(records), len(wanted), url)
     if reason is not None:
         logger.warning(
-            "Variation listing failed for %s (%s); variations keep the product's prices",
+            "Variation listing failed for %s (%s); variations keep the product's prices%s",
             url,
             reason,
+            ", and later pages skip the listing" if refused else "",
         )
     for product in products:
         if isinstance(product.get("variations"), list):
             product["variations"] = [
-                records.get(v.get("id"), {}) | v if isinstance(v, dict) else v
+                records.get(_id(v), {}) | v if isinstance(v, dict) else v
                 for v in product["variations"]
             ]
-    return reason is None
+    return not refused
 
 
 async def _fetch_variations(
     ctx: StoreContext, url: str, wanted: set[Any], records: dict[Any, dict[str, Any]]
-) -> str | None:
-    """Page the variation listing into ``records``; return why it failed, if it did."""
+) -> tuple[str | None, bool]:
+    """Page the variation listing into ``records``; return why it failed, if it did,
+    and whether the store refused it (so later pages shouldn't ask)."""
     while True:
         try:
             response = await ctx.session.get(url, kind=VARIATIONS)
         except RequestFailed as exc:
-            return str(exc)
+            return str(exc), False
         except ShutdownRequested:  # still emit the page already fetched
-            return "shutting down"
+            return "shutting down", False
         if response is None:
-            return "skipped: robots.txt or already requested"
+            return "blocked by robots.txt", True
         batch = _variation_batch(response)
         if isinstance(batch, str):
-            return batch
+            return batch, response.status < 500
         missing = wanted - records.keys()
-        new = {v["id"]: v for v in dicts(batch) if v.get("id") in missing}
+        new = {v["id"]: v for v in dicts(batch) if _id(v) in missing}
+        if batch and not new and not records:
+            # Not one of them on the first page: the store ignores type or parent
+            return "the store ignored the variation filter", True
         records |= new
-        # A short page is the last; a page with nothing new means the filter or the
-        # paging was ignored, so stop rather than page through the whole catalog
-        if len(batch) < PER_PAGE or not new or records.keys() >= wanted:
-            return None
+        # Page until nothing new, like the product pages: a store may cap per_page
+        if not new or records.keys() >= wanted:
+            return None, False
         url = next_page_url(response.url)
 
 
@@ -181,6 +193,12 @@ def _variation_batch(response: Response) -> list[Any] | str:
         return f"status {response.status}"
     data = response.json_or_none()
     return data if isinstance(data, list) else "not a JSON list"
+
+
+def _id(record: dict[str, Any]) -> int | str | None:
+    """A record's ID if it's usable as a key (a plugin can return anything)."""
+    value = record.get("id")
+    return value if isinstance(value, (int, str)) else None
 
 
 def _item(product: dict[str, Any], store: str, images: bool) -> dict[str, Any]:

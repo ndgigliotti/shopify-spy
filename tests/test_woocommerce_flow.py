@@ -7,7 +7,7 @@ import pytest
 
 from shopify_spy._fetch import FetchConnectionError
 from shopify_spy._woocommerce import get_variations_url
-from tests.flow_support import STORE, requested, scrape, woo_url
+from tests.flow_support import STORE, redirect, requested, scrape, woo_url
 
 
 def woo_product(i, images=1):
@@ -210,19 +210,28 @@ def test_variation_listing_ignoring_the_filter_stops():
         woo_url(1): [variable(1, 10)],
         variations_url(1): page(100, 500),
         variations_url(1, page=2): page(100, 600),
-        woo_url(2): [],
+        woo_url(2): [variable(2, 20)],
+        variations_url(2): page(100, 500),
+        woo_url(3): [],
     }
     items, _, fetcher = scrape_woo(routes)
     assert items[0]["variations"] == variable(1, 10)["variations"]
     assert fetcher.count(variations_url(1, page=2)) == 0
+    assert fetcher.count(variations_url(2)) == 0  # and later pages don't ask again
 
 
 @pytest.mark.parametrize(
-    "failure",
-    [(403, "<html>Forbidden</html>"), (200, "<html>"), (200, "{}"), FetchConnectionError("x")],
-    ids=["forbidden", "non_json", "not_a_list", "transport"],
+    ("failure", "refused"),
+    [
+        ((403, "<html>Forbidden</html>"), True),
+        ((200, "<html>"), True),
+        ((200, "{}"), True),
+        ((500, ""), False),
+        (FetchConnectionError("x"), False),
+    ],
+    ids=["forbidden", "non_json", "not_a_list", "server_error", "transport"],
 )
-def test_variation_listing_failure_keeps_the_entries(failure):
+def test_variation_listing_failure_keeps_the_entries(failure, refused):
     routes = {
         woo_url(1): [variable(1, 10), woo_product(2)],
         variations_url(1): failure,
@@ -233,13 +242,79 @@ def test_variation_listing_failure_keeps_the_entries(failure):
     items, result, fetcher = scrape_woo(routes)
     assert len(items) == 3
     assert items[0]["variations"] == variable(1, 10)["variations"]
-    # One failure is enough: later pages don't try again
-    assert fetcher.count(variations_url(3)) == 0
-    assert items[2]["variations"] == variable(3, 30)["variations"]
+    # A refusal holds for the store; a transient failure leaves later pages to try
+    assert fetcher.count(variations_url(3)) == (0 if refused else 1)
+    assert ("prices" in items[2]["variations"][0]) is not refused
     store = result.stores[0]
     assert store.status == "ok"
     assert store.complete
     assert store.responses_by_status == {200: 3}  # variation listings aren't counted
+
+
+def test_refused_variation_listing_is_not_retried_and_keeps_the_user_agent():
+    routes = {
+        woo_url(1): [variable(1, 10)],
+        variations_url(1): (403, "<html>Forbidden</html>"),
+        woo_url(2): [],
+    }
+    _, _, fetcher = scrape_woo(routes)
+    assert fetcher.count(variations_url(1)) == 1
+    assert len({r.identity.user_agent for r in fetcher.requests}) == 1
+
+
+def test_variation_listing_pages_past_a_capped_per_page():
+    # A store that caps per_page below 100: short pages aren't the last
+    routes = {
+        woo_url(1): [variable(1, 10, 11, 12)],
+        variations_url(1): [variation(10, 1), variation(11, 1)],
+        variations_url(1, page=2): [variation(12, 1)],
+        woo_url(2): [],
+    }
+    items, _, fetcher = scrape_woo(routes)
+    assert [v["sku"] for v in items[0]["variations"]] == ["SKU-10", "SKU-11", "SKU-12"]
+    assert fetcher.count(variations_url(1, page=3)) == 0
+
+
+def test_repeated_variation_listing_is_fetched_again():
+    # Pages in the default order can repeat the last page's variable products
+    default = f"{STORE}/wp-json/wc/store/v1/products?per_page=100&page="
+    unsorted = get_variations_url(STORE, [1], by_id=False)
+    routes = {
+        woo_url(1): (400, '{"code": "rest_invalid_param"}'),
+        f"{default}1": [variable(1, 10)],
+        f"{default}2": [variable(1, 10), woo_product(2)],
+        f"{default}3": [],
+        unsorted: [variation(10, 1)],
+    }
+    items, _, fetcher = scrape_woo(routes)
+    assert fetcher.count(unsorted) == 2
+    assert all("prices" in i["variations"][0] for i in items if i["id"] == 1)
+
+
+def test_variation_listing_follows_the_product_pages_host():
+    other = "https://www.shop.test"
+    routes = {
+        woo_url(1): redirect(woo_url(1, other)),
+        woo_url(1, other): [variable(1, 10)],
+        get_variations_url(other, [1]): [variation(10, 1)],
+        woo_url(2, other): [],
+    }
+    items, _, fetcher = scrape_woo(routes)
+    assert "prices" in items[0]["variations"][0]
+    assert fetcher.count(variations_url(1)) == 0
+
+
+def test_odd_variation_ids_do_not_fail_the_store():
+    product = variable(1, 10) | {"variations": [{"id": [9]}, {"id": 10, "attributes": []}]}
+    routes = {
+        woo_url(1): [product],
+        variations_url(1): [variation({"x": 1}, 1), variation(10, 1)],
+        woo_url(2): [],
+    }
+    items, result, _ = scrape_woo(routes)
+    assert result.stores[0].status == "ok"
+    assert items[0]["variations"][0] == {"id": [9]}
+    assert items[0]["variations"][1]["sku"] == "SKU-10"
 
 
 def test_variation_listing_blocked_by_robots():
@@ -272,10 +347,18 @@ def test_slow_variation_listing_does_not_use_up_bail():
     async def hang(request):
         await asyncio.sleep(30)
 
-    routes = {woo_url(1): [variable(1, 10)], variations_url(1): hang, woo_url(2): []}
+    routes = {
+        woo_url(1): [variable(1, 10)],
+        variations_url(1): hang,
+        woo_url(2): [variable(2, 20)],
+        variations_url(2): [variation(20, 2)],
+        woo_url(3): [],
+    }
     started = time.monotonic()
     items, result, _ = scrape_woo(routes, bail=1)
     assert time.monotonic() - started < 5
     assert items[0]["variations"] == variable(1, 10)["variations"]
+    # Bail no longer applies once an item is out, so the next page tries again
+    assert "prices" in items[1]["variations"][0]
     assert result.stores[0].status == "ok"
     assert result.stores[0].complete
