@@ -33,7 +33,7 @@ Design history and remaining roadmap: `.context/httpx-library-rewrite.md`.
 uv run pytest -m integration
 ```
 
-Tests marked `e2e` (`tests/test_e2e_diagnosis.py`) run the CLI against local HTTP servers that each play one store scenario (robots.txt blocks, redirects, retried 403s, hangs) and check the per-store status. They are also deselected by default. Run them after changing the diagnosis or the session layer:
+Tests marked `e2e` (`tests/test_e2e_*.py`) run the CLI against local HTTP servers that each play one store scenario (robots.txt blocks, redirects, retried 403s, hangs, a store past the 25,000-product bulk limit) and check the per-store status and output. They are also deselected by default. Run them after changing the diagnosis, the session layer or an adapter:
 
 ```bash
 uv run pytest -m e2e

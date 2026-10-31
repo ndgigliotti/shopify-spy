@@ -18,6 +18,10 @@ def bulk_url(page: int, store: str = STORE) -> str:
     return f"{store}/products.json?limit=250&page={page}"
 
 
+def collection_url(handle: str, page: int, store: str = STORE) -> str:
+    return f"{store}/collections/{handle}/products.json?limit=250&page={page}"
+
+
 def woo_url(page: int, store: str = STORE) -> str:
     return f"{store}{WOO_API}?per_page=100&page={page}&orderby=id&order=asc"
 

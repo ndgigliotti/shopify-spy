@@ -143,7 +143,7 @@ See [Use as a library](#use-as-a-library) for the options, failure handling, ima
 
 | Platform | Mechanism | Notes |
 |---|---|---|
-| Shopify | `/products.json` bulk endpoint, sitemap fallback; collections from the sitemap | Products and collections |
+| Shopify | `/products.json` bulk endpoint, then collection pages past 25,000 products, sitemap fallback; collections from the sitemap | Products and collections |
 | WooCommerce | `/wp-json/wc/store/v1/products` | No authentication required |
 
 ## Commands
@@ -474,7 +474,7 @@ result = await spy.scrape_async(urls, platform="woocommerce")  # RunResult with 
 
 ## Limitations
 
-**Large Shopify catalogs are slow past 25,000 products.** Shopify's `products.json` stops paging at 25,000 items (100 pages of 250). The rest are fetched through the sitemap one product per request, so a 65,000-product store takes about 41,000 requests instead of 260 ([#30](https://github.com/ndgigliotti/shopify-spy/issues/30)).
+**Large Shopify catalogs take more requests past 25,000 products.** Shopify's `products.json` stops paging at 25,000 items (100 pages of 250). Past that, the scraper reads the sitemap's product list to see what's missing (not with `--limit`, which may need only a sliver of a huge catalog), then pages `/collections/all` and the store's collections, largest first, each with its own 25,000 limit. Collections are paged only while they can save requests: they're skipped when fewer products are missing than they have pages, and stop once every listed product is found or they find less than one new product per request. Whatever is still missing, including products in no collection, is fetched through the sitemap one product per request. On a 65,718-product store, collections found 99.7% of the catalog and the whole scrape took about 1,700 requests, against about 41,000 through the sitemap alone ([#30](https://github.com/ndgigliotti/shopify-spy/issues/30)). Catalogs whose collections are far larger than 25,000 products (some print-on-demand stores list over a million) stay mostly out of reach; use `--limit` to sample them.
 
 **WooCommerce Store API required.** WooCommerce scraping uses the public Store API (`/wp-json/wc/store/v1/products`), built into WooCommerce since version 6.4 (2022). Stores that have disabled the REST API via security plugins or broadly block crawlers may not be scrapeable. When a scrape returns 0 items, the tool prints a diagnostic message explaining the likely cause (403 Forbidden, 404 Not Found, robots.txt blocking, etc.) and exits with code 1.
 

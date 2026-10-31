@@ -196,6 +196,7 @@ class StoreContext:
     collections: bool = False
     images: bool = False
     items: int = 0  # items emitted so far (maintained by the runner)
+    item_limit: int | None = None  # the runner stops the store at this many items
     suggested_platform: str | None = None  # set when the store looks like another platform
 
     async def probe_platform(

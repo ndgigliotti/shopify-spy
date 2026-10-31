@@ -242,6 +242,7 @@ class Runner:
             products=config.products,
             collections=config.collections,
             images=config.images,
+            item_limit=config.max_items_per_store,
         )
         downloader = (
             ImageDownloader(session, config.images_dir)
