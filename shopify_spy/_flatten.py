@@ -20,6 +20,7 @@ from html.parser import HTMLParser
 from typing import Any
 
 from shopify_spy._summary import html_url, summarize, woo_money
+from shopify_spy._utils import dicts
 
 COLUMNS = [
     "platform",
@@ -124,16 +125,16 @@ def _shopify_common(
 
 def _shopify_product(item: dict[str, Any]) -> list[dict[str, Any]]:
     data: dict[str, Any] = item["product"]
-    images = _dicts(data.get("images"))
+    images = dicts(data.get("images"))
     image_srcs = {image.get("id"): image.get("src") for image in images}
-    variants = _dicts(data.get("variants"))
+    variants = dicts(data.get("variants"))
     tags = data.get("tags")
     product = _shopify_common(item, "product", data, images) | {
         "vendor": data.get("vendor"),
         "product_type": data.get("product_type"),
         # products.json has a list of tags, a product's own .json a comma-joined string
         "tags": _join(tags) if isinstance(tags, list) else tags,
-        "options": _join(o.get("name") for o in _dicts(data.get("options"))),
+        "options": _join(o.get("name") for o in dicts(data.get("options"))),
         "created_at": data.get("created_at"),
         "description": _text(data.get("body_html")),
         "image_count": len(images),
@@ -179,16 +180,16 @@ def _shopify_collection(item: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _woocommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
     summary = summarize(item)
-    images = _dicts(item.get("images"))
-    variations = _dicts(item.get("variations"))
+    images = dicts(item.get("images"))
+    variations = dicts(item.get("variations"))
     # Attributes that define variations play Shopify's options; others only describe
-    options = [a for a in _dicts(item.get("attributes")) if a.get("has_variations", True)]
+    options = [a for a in dicts(item.get("attributes")) if a.get("has_variations", True)]
     option_names = [_unescape(a.get("name")) for a in options if a.get("name")]
     # A variation's value is a term's slug for global attributes; show the term's name
     term_names = {
         (_unescape(a.get("name")), t.get("slug")): t.get("name")
         for a in options
-        for t in _dicts(a.get("terms"))
+        for t in dicts(a.get("terms"))
         if t.get("slug")
     }
     product = {
@@ -220,7 +221,7 @@ def _woocommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
     rows = []
     for variation in variations:
         values: dict[Any, Any] = {}
-        for a in _dicts(variation.get("attributes")):
+        for a in dicts(variation.get("attributes")):
             name, value = _unescape(a.get("name")), a.get("value")
             if value not in (None, ""):
                 values[name] = _unescape(term_names.get((name, value), value))
@@ -263,16 +264,12 @@ def _below(price: Decimal | None, regular_price: Decimal | None) -> bool:
     return price < regular_price
 
 
-def _dicts(value: Any) -> list[dict[str, Any]]:
-    return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
-
-
 def _join(values: Iterable[Any]) -> str:
     return ", ".join(str(v) for v in values if v not in (None, ""))
 
 
 def _names(value: Any) -> str:
-    return _join(html.unescape(str(d.get("name"))) for d in _dicts(value) if d.get("name"))
+    return _join(html.unescape(str(d.get("name"))) for d in dicts(value) if d.get("name"))
 
 
 def _unescape(value: Any) -> Any:
@@ -283,7 +280,7 @@ def _image_paths(item: dict[str, Any]) -> dict[str, str]:
     """The ``image_paths`` column, only for items that went through image downloads."""
     if "scraped_images" not in item:
         return {}
-    return {"image_paths": _join(i.get("path") for i in _dicts(item["scraped_images"]))}
+    return {"image_paths": _join(i.get("path") for i in dicts(item["scraped_images"]))}
 
 
 # Tags that break text; inline ones (a, b, span, ...) join their neighbors

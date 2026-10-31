@@ -132,23 +132,18 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 )
                 return self._send(200, index, {"Content-Type": "application/xml"})
             return self._hang()
-        if s in ("woo_variations_403", "woo_variations_hang"):
+        if s.startswith("woo_variations_"):
             if path == "/robots.txt":
                 return self._send(404)
-            if "type=variation" in self.path:
-                if s == "woo_variations_hang":
-                    return self._hang()
+            if "type=variation" not in self.path:
+                page = [WOO_VARIABLE] if "page=1&" in self.path else []
+                return self._send(200, json.dumps(page).encode())
+            if s == "woo_variations_hang":
+                return self._hang()
+            if s == "woo_variations_403":
                 return self._send(403, b"<html>Forbidden</html>")
-            page = [{"id": 1, "permalink": "/p/", "variations": [{"id": 2, "attributes": []}]}]
-            return self._send(200, json.dumps(page if "page=1&" in self.path else []).encode())
-        if s == "woo_variations_ok":
-            if path == "/robots.txt":
-                return self._send(404)
-            if "type=variation" in self.path:
-                assert "parent=1&" in self.path, self.path
-                return self._send(200, json.dumps(WOO_VARIATIONS).encode())
-            page = [WOO_VARIABLE] if "page=1&" in self.path else []
-            return self._send(200, json.dumps(page).encode())
+            assert "parent=1&" in self.path, self.path
+            return self._send(200, json.dumps(WOO_VARIATIONS).encode())
         raise AssertionError(f"unknown scenario {s}")
 
 
@@ -232,7 +227,7 @@ def test_woocommerce_failed_variation_listing(tmp_path, stores, scenario):
     assert statuses[url] == "ok"
     [output] = tmp_path.rglob("*.jsonl")
     [item] = [json.loads(line) for line in output.read_text().splitlines()]
-    assert item["variations"] == [{"id": 2, "attributes": []}]
+    assert item["variations"] == WOO_VARIABLE["variations"]
 
 
 def test_woocommerce_variation_rows_in_csv(tmp_path, stores):

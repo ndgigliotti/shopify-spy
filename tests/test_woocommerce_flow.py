@@ -163,7 +163,7 @@ def variation(v, parent, price="100"):
 
 
 def variations_url(*parents, page=1):
-    return get_variations_url(STORE, list(parents)).replace("&page=1&", f"&page={page}&")
+    return get_variations_url(STORE, list(parents), page)
 
 
 def test_variations_replace_their_entries():

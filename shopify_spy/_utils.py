@@ -11,6 +11,11 @@ from typing import Any
 _SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:(?!\d|$)")
 
 
+def dicts(value: Any) -> list[dict[str, Any]]:
+    """The dicts in a list, or [] for anything else (API fields can be null or odd)."""
+    return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
+
+
 def normalize_url(url: str) -> urllib.parse.ParseResult:
     """Parse a URL, assuming https if no scheme is provided."""
     # Don't rely on urlparse's scheme: it reads "store.com:8080" as scheme "store.com"

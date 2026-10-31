@@ -10,11 +10,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import urllib.parse
-from collections.abc import KeysView
 from typing import Any
 
 from shopify_spy._fetch import Response
-from shopify_spy._policy import now
 from shopify_spy._session import (
     Emit,
     RequestFailed,
@@ -22,7 +20,7 @@ from shopify_spy._session import (
     ShutdownRequested,
     StoreContext,
 )
-from shopify_spy._utils import next_page_url, normalize_url
+from shopify_spy._utils import dicts, next_page_url, normalize_url
 
 __all__ = ["get_api_url", "get_variations_url", "next_page_url", "run"]
 
@@ -42,10 +40,13 @@ def get_api_url(store_url: str, page: int = 1, by_id: bool = True) -> str:
     return _api_url(store_url, {"per_page": PER_PAGE, "page": page}, by_id)
 
 
-def get_variations_url(store_url: str, parents: list[Any], by_id: bool = True) -> str:
-    """Build the Store API URL for the first page of the given products' variations."""
-    params = {"type": "variation", "parent": ",".join(map(str, parents)), "per_page": PER_PAGE}
-    return _api_url(store_url, params | {"page": 1}, by_id)
+def get_variations_url(
+    store_url: str, parents: list[Any], page: int = 1, by_id: bool = True
+) -> str:
+    """Build the Store API URL for a page of the given products' variations."""
+    parent = ",".join(map(str, parents))
+    params = {"type": "variation", "parent": parent, "per_page": PER_PAGE, "page": page}
+    return _api_url(store_url, params, by_id)
 
 
 def _api_url(store_url: str, params: dict[str, Any], by_id: bool) -> str:
@@ -103,8 +104,7 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
         seen_ids |= ids
         if variations:
             # Products past the item limit won't be emitted, so skip their variations
-            remaining = None if ctx.item_limit is None else ctx.item_limit - ctx.items
-            variations = await _add_variations(ctx, products[:remaining], by_id)
+            variations = await _add_variations(ctx, products[: ctx.items_left], by_id)
         for product in products:
             await emit(_item(product, store, ctx.images))
         url = next_page_url(response.url)
@@ -114,23 +114,26 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
 async def _add_variations(ctx: StoreContext, products: list[dict[str, Any]], by_id: bool) -> bool:
     """Replace each product's variation entries with the variations' own records,
     keeping the entry's attributes; return False if the listing failed."""
-    entries = {
-        v["id"]: v for p in products for v in _dicts(p.get("variations")) if v.get("id") is not None
-    }
-    if not entries:
+    wanted: set[Any] = set()
+    parents = []
+    for product in products:
+        ids = {v.get("id") for v in dicts(product.get("variations"))} - {None}
+        if ids and product.get("id") is not None:
+            wanted |= ids
+            parents.append(product["id"])
+    if not wanted:
         return True
-    parents = [p["id"] for p in products if _dicts(p.get("variations")) and p.get("id") is not None]
-    url = get_variations_url(ctx.url, parents, by_id)
+    url = get_variations_url(ctx.url, parents, by_id=by_id)
     records: dict[Any, dict[str, Any]] = {}
     # Before the first item, a slow listing must not use up --bail: give it half the
     # time left, then emit the products without it
-    deadline = ctx.session.bail_deadline
+    left = ctx.session.bail_time_left()
     try:
-        async with asyncio.timeout_at(None if deadline is None else (now() + deadline) / 2):
-            reason = await _fetch_variations(ctx, url, entries.keys(), records)
+        async with asyncio.timeout(None if left is None else left / 2):
+            reason = await _fetch_variations(ctx, url, wanted, records)
     except TimeoutError:
         reason = "too slow before the first item"
-    logger.info("WooCommerce: %d of %d variations from %s", len(records), len(entries), ctx.url)
+    logger.info("WooCommerce: %d of %d variations from %s", len(records), len(wanted), ctx.url)
     if reason is not None:
         logger.warning(
             "Variation listing failed for %s (%s); variations keep the product's prices",
@@ -140,14 +143,14 @@ async def _add_variations(ctx: StoreContext, products: list[dict[str, Any]], by_
     for product in products:
         if isinstance(product.get("variations"), list):
             product["variations"] = [
-                records[v["id"]] | v if isinstance(v, dict) and v.get("id") in records else v
+                records.get(v.get("id"), {}) | v if isinstance(v, dict) else v
                 for v in product["variations"]
             ]
     return reason is None
 
 
 async def _fetch_variations(
-    ctx: StoreContext, url: str, wanted: KeysView[Any], records: dict[Any, dict[str, Any]]
+    ctx: StoreContext, url: str, wanted: set[Any], records: dict[Any, dict[str, Any]]
 ) -> str | None:
     """Page the variation listing into ``records``; return why it failed, if it did."""
     while True:
@@ -157,11 +160,13 @@ async def _fetch_variations(
             return str(exc)
         except ShutdownRequested:  # still emit the page already fetched
             return "shutting down"
-        if (reason := _failure(response)) is not None:
-            return reason
-        assert response is not None
-        batch = _dicts(response.json_or_none())
-        new = {v["id"]: v for v in batch if v.get("id") in wanted and v["id"] not in records}
+        if response is None:
+            return "skipped: robots.txt or already requested"
+        batch = _variation_batch(response)
+        if isinstance(batch, str):
+            return batch
+        missing = wanted - records.keys()
+        new = {v["id"]: v for v in dicts(batch) if v.get("id") in missing}
         records |= new
         # A short page is the last; a page with nothing new means the filter or the
         # paging was ignored, so stop rather than page through the whole catalog
@@ -170,19 +175,12 @@ async def _fetch_variations(
         url = next_page_url(response.url)
 
 
-def _failure(response: Response | None) -> str | None:
-    """Why a variation listing response is unusable, or None if it's a JSON list."""
-    if response is None:
-        return "skipped: robots.txt or already requested"
+def _variation_batch(response: Response) -> list[Any] | str:
+    """A variation listing page's records, or why the response is unusable."""
     if not response.ok:
         return f"status {response.status}"
-    if not isinstance(response.json_or_none(), list):
-        return "not a JSON list"
-    return None
-
-
-def _dicts(value: Any) -> list[dict[str, Any]]:
-    return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
+    data = response.json_or_none()
+    return data if isinstance(data, list) else "not a JSON list"
 
 
 def _item(product: dict[str, Any], store: str, images: bool) -> dict[str, Any]:
