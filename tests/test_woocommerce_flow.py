@@ -43,7 +43,9 @@ def test_short_page_does_not_stop_pagination():
 
 def test_item_shape_without_images():
     items, _, _ = scrape_woo({woo_url(1): [woo_product(0)], woo_url(2): []})
-    assert items == [{**woo_product(0), "store": "shop.test", "image_urls": []}]
+    assert items == [
+        {**woo_product(0), "store": "shop.test", "platform": "woocommerce", "image_urls": []}
+    ]
     assert "url" not in items[0]
 
 

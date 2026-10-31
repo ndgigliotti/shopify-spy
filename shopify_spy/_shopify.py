@@ -127,6 +127,7 @@ async def _bulk(ctx: StoreContext, emit: Emit, seen: set[str]) -> tuple[bool, bo
                     "product": product,
                     "url": f"{base_url}{handle}.json",
                     "store": store,
+                    "platform": "shopify",
                     "image_urls": image_urls(product, ctx.images),
                 }
             )
@@ -161,6 +162,7 @@ async def _sitemap(ctx: StoreContext, emit: Emit, seen: set[str], skip_products:
             return
         data["url"] = response.url
         data["store"] = urllib.parse.urlsplit(response.url).netloc
+        data["platform"] = "shopify"
         data["image_urls"] = image_urls(data, ctx.images)
         await emit(data)
 

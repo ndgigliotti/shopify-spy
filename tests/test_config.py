@@ -120,6 +120,15 @@ def test_load_config_with_format(tmp_path):
     assert config.output.format == "csv"
 
 
+def test_load_config_with_schema(tmp_path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("output:\n  schema: unified\n")
+    assert load_config_from_file(config_file).output.schema_ == "unified"
+    assert OutputConfig().schema_ is None
+    with pytest.raises(Exception):
+        OutputConfig(schema="nested")
+
+
 def test_load_config_without_format(tmp_path):
     """Missing format in YAML defaults to jsonl."""
     config_file = tmp_path / "config.yaml"

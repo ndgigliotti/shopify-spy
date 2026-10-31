@@ -1,11 +1,13 @@
-"""CSV rows for scraped items: one row per variant, every cell a scalar.
+"""Flat rows for scraped items: one row per variant, every cell a scalar.
 
-A CSV has one header, so each platform gets a fixed column set. Shopify products
-get a row per variant with the product's columns repeated (a product without
-variants still gets one row); collections get one row each, sharing the product
-columns they have. WooCommerce products get a row per variation; the Store API
-lists only a variation's ID and attributes, so the price columns are the
-product's. JSONL stays the full-fidelity format.
+Both platforms share one fixed column list, ``COLUMNS``, with a ``platform`` column,
+so one CSV (or any flat table) can hold a mixed run. Columns only one platform has
+are blank for the other. Shopify products get a row per variant with the product's
+columns repeated (a product without variants still gets one row); collections get
+one row each, sharing the product columns they have. WooCommerce products get a row
+per variation; the Store API lists only a variation's ID and attributes, so the
+price, SKU and stock columns are the product's. JSONL, JSON and XML keep each
+platform's native item shape.
 """
 
 from __future__ import annotations
@@ -13,12 +15,14 @@ from __future__ import annotations
 import html
 import re
 from collections.abc import Callable, Iterable
+from decimal import Decimal
 from html.parser import HTMLParser
 from typing import Any
 
 from shopify_spy._summary import html_url, summarize, woo_money
 
-SHOPIFY_COLUMNS = [
+COLUMNS = [
+    "platform",
     "kind",
     "store",
     "id",
@@ -26,16 +30,25 @@ SHOPIFY_COLUMNS = [
     "title",
     "vendor",
     "product_type",
+    "categories",
     "tags",
     "options",
     "created_at",
     "updated_at",
     "published_at",
     "description",
+    "short_description",
     "html_url",
     "image_url",
     "image_count",
     "products_count",
+    "currency",
+    "min_price",
+    "max_price",
+    "on_sale",
+    "is_purchasable",
+    "average_rating",
+    "review_count",
     "variant_count",
     "variant_id",
     "variant_title",
@@ -54,38 +67,6 @@ SHOPIFY_COLUMNS = [
     "url",
     "image_paths",
 ]
-WOOCOMMERCE_COLUMNS = [
-    "store",
-    "id",
-    "sku",
-    "name",
-    "slug",
-    "type",
-    "categories",
-    "tags",
-    "brands",
-    "attributes",
-    "short_description",
-    "description",
-    "permalink",
-    "image_url",
-    "image_count",
-    "currency",
-    "price",
-    "regular_price",
-    "sale_price",
-    "min_price",
-    "max_price",
-    "on_sale",
-    "is_in_stock",
-    "is_purchasable",
-    "average_rating",
-    "review_count",
-    "variation_count",
-    "variation_id",
-    "variation_attributes",
-    "image_paths",
-]
 
 
 def _builder(item: dict[str, Any]) -> Callable[[dict[str, Any]], list[dict[str, Any]]] | None:
@@ -100,25 +81,24 @@ def _builder(item: dict[str, Any]) -> Callable[[dict[str, Any]], list[dict[str, 
     return None
 
 
-def platform_columns(item: dict[str, Any]) -> list[str] | None:
-    """Every column of the item's platform; None when it isn't a scraped item."""
+def item_platform(item: dict[str, Any]) -> str | None:
+    """``"shopify"`` or ``"woocommerce"``; None when it isn't a scraped item."""
     builder = _builder(item)
     if builder is None:
         return None
-    # Shopify columns cover both kinds, either of which may come first in a file
-    return WOOCOMMERCE_COLUMNS if builder is _woocommerce else SHOPIFY_COLUMNS
+    return "woocommerce" if builder is _woocommerce else "shopify"
 
 
 def default_columns(item: dict[str, Any]) -> list[str] | None:
-    """Columns for a CSV whose first item is ``item``; None when it isn't a scraped item."""
-    columns = platform_columns(item)
-    if columns is None:
+    """Columns for a file whose first item is ``item``: ``COLUMNS``, without
+    ``image_paths`` unless images were downloaded; None when it isn't a scraped item."""
+    if _builder(item) is None:
         return None
-    return [c for c in columns if c != "image_paths" or "scraped_images" in item]
+    return [c for c in COLUMNS if c != "image_paths" or "scraped_images" in item]
 
 
 def flatten(item: dict[str, Any]) -> list[dict[str, Any]] | None:
-    """The CSV rows for a scraped item, or None when it isn't one."""
+    """The rows for a scraped item, keyed by ``COLUMNS``, or None when it isn't one."""
     builder = _builder(item)
     return builder(item) if builder else None
 
@@ -128,6 +108,7 @@ def _shopify_common(
 ) -> dict[str, Any]:
     image = data.get("image") if isinstance(data.get("image"), dict) else None
     return {
+        "platform": "shopify",
         "kind": kind,
         "store": item.get("store"),
         "id": data.get("id"),
@@ -202,55 +183,75 @@ def _woocommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
     summary = summarize(item)
     images = _dicts(item.get("images"))
     variations = _dicts(item.get("variations"))
-    attributes = _dicts(item.get("attributes"))
+    # Attributes that define variations play Shopify's options; others only describe
+    options = [a for a in _dicts(item.get("attributes")) if a.get("has_variations", True)]
+    option_names = [_unescape(a.get("name")) for a in options if a.get("name")]
     # A variation's value is a term's slug for global attributes; show the term's name
     term_names = {
-        t.get("slug"): t.get("name")
-        for a in attributes
+        (_unescape(a.get("name")), t.get("slug")): t.get("name")
+        for a in options
         for t in _dicts(a.get("terms"))
         if t.get("slug")
     }
+    price = money(prices.get("price"))
+    regular_price = money(prices.get("regular_price"))
     product = {
+        "platform": "woocommerce",
+        "kind": "product",
         "store": item.get("store"),
         "id": item.get("id"),
-        "sku": item.get("sku"),
-        "name": summary.title,
-        "slug": item.get("slug"),
-        "type": item.get("type"),
+        "handle": item.get("slug"),
+        "title": summary.title,
+        "vendor": _names(item.get("brands")),
         "categories": _names(item.get("categories")),
         "tags": _names(item.get("tags")),
-        "brands": _names(item.get("brands")),
-        "attributes": _pairs((a.get("name"), _names(a.get("terms"))) for a in attributes),
-        "short_description": _text(item.get("short_description")),
+        "options": _join(option_names),
         "description": _text(item.get("description")),
-        "permalink": item.get("permalink"),
+        "short_description": _text(item.get("short_description")),
+        "html_url": item.get("permalink"),
         "image_url": images[0].get("src") if images else None,
         "image_count": len(images),
         "currency": summary.currency,
-        "price": money(prices.get("price")),
-        "regular_price": money(prices.get("regular_price")),
-        "sale_price": money(prices.get("sale_price")),
         "min_price": summary.min_price,
         "max_price": summary.max_price,
         "on_sale": item.get("on_sale"),
-        "is_in_stock": item.get("is_in_stock"),
         "is_purchasable": item.get("is_purchasable"),
         "average_rating": item.get("average_rating"),
         "review_count": item.get("review_count"),
-        "variation_count": len(variations),
+        "variant_count": len(variations),
+        "sku": item.get("sku"),
+        "price": price,
+        # Like Shopify's, set only when the item sells below it
+        "compare_at_price": regular_price if _below(price, regular_price) else None,
+        "available": item.get("is_in_stock"),
     } | _image_paths(item)
-    rows = [
-        product
-        | {
-            "variation_id": v.get("id"),
-            "variation_attributes": _pairs(
-                (a.get("name"), _unescape(term_names.get(a.get("value"), a.get("value"))))
-                for a in _dicts(v.get("attributes"))
-            ),
-        }
-        for v in variations
-    ]
+    rows = []
+    for variation in variations:
+        values: dict[Any, Any] = {}
+        for a in _dicts(variation.get("attributes")):
+            name, value = _unescape(a.get("name")), a.get("value")
+            if value not in (None, ""):
+                values[name] = _unescape(term_names.get((name, value), value))
+        # option1-3 line up with the options column, so an "any" value stays empty;
+        # without attribute names the variation's own order stands in
+        names = option_names or list(values)
+        title = [values[n] for n in names if n in values]
+        title += [v for n, v in values.items() if n not in names]
+        rows.append(
+            product
+            | {
+                "variant_id": variation.get("id"),
+                "variant_title": " / ".join(str(v) for v in title) or None,
+            }
+            | {f"option{i + 1}": values.get(n) for i, n in enumerate(names[:3])}
+        )
     return rows or [product]
+
+
+def _below(price: Decimal | None, regular_price: Decimal | None) -> bool:
+    if price is None or regular_price is None or price.is_nan() or regular_price.is_nan():
+        return False
+    return price < regular_price
 
 
 def _dicts(value: Any) -> list[dict[str, Any]]:
@@ -263,15 +264,6 @@ def _join(values: Iterable[Any]) -> str:
 
 def _names(value: Any) -> str:
     return _join(html.unescape(str(d.get("name"))) for d in _dicts(value) if d.get("name"))
-
-
-def _pairs(pairs: Iterable[tuple[Any, Any]]) -> str:
-    """``Size: S, L; Color: Red`` from (HTML name, plain value) pairs, skipping empty ones."""
-    return "; ".join(
-        f"{html.unescape(str(name))}: {value}"
-        for name, value in pairs
-        if name not in (None, "") and value not in (None, "")
-    )
 
 
 def _unescape(value: Any) -> Any:

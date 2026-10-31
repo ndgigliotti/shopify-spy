@@ -8,9 +8,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 OutputFormat = Literal["json", "jsonl", "csv", "xml"]
+OutputSchema = Literal["native", "unified"]
 
 
 class Platform(StrEnum):
@@ -32,8 +33,12 @@ class ScrapeConfig(BaseModel):
 class OutputConfig(BaseModel):
     """Configuration for output paths."""
 
+    # "schema" would shadow a BaseModel attribute; the YAML key is still "schema"
+    model_config = ConfigDict(populate_by_name=True)
+
     dir: Path = Field(default=Path("./output"))
     format: OutputFormat = "jsonl"
+    schema_: OutputSchema | None = Field(default=None, alias="schema")  # None = format's
     images_subdir: str = "images"
 
     @property
@@ -116,6 +121,7 @@ scrape:
 output:
   dir: ./output       # Output directory for results
   format: jsonl       # Output format: json, jsonl, csv, xml
+  # schema: unified   # native (as scraped) or unified (row per variant; csv always)
   images_subdir: images  # Subdirectory for downloaded images
 
 network:

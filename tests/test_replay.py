@@ -8,8 +8,10 @@ intentional change:
     uv run python tests/test_replay.py --update
 """
 
+import csv
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -70,12 +72,12 @@ def _sorted_by_id_aliases(entries: dict[str, Any]) -> dict[str, Any]:
     return {**entries, **aliases}
 
 
-def run_case(name: str, tmp_path: Path) -> dict[str, Any]:
+def scrape_case(name: str, tmp_path: Path) -> spy.RunResult:
     corpus, urls, options = CASES[name]
     entries = _sorted_by_id_aliases(load_corpus(CORPUS / corpus))
     if options.get("images"):
         options = {**options, "images_dir": tmp_path / "images"}
-    result = spy.scrape(
+    return spy.scrape(
         urls,
         fetcher_factory=lambda: ReplayFetcher(entries),
         on_failure="ignore",
@@ -83,12 +85,16 @@ def run_case(name: str, tmp_path: Path) -> dict[str, Any]:
         throttle=False,
         **options,
     ).collect()
+
+
+def run_case(name: str, tmp_path: Path) -> dict[str, Any]:
+    result = scrape_case(name, tmp_path)
     snapshot: dict[str, Any] = {
         "items": sorted(_identity(i) for i in result.items),
         "stores": [[s.input_url, s.status.value, s.items] for s in result.stores],
         "finish_reason": result.finish_reason,
     }
-    if options.get("images"):
+    if CASES[name][2].get("images"):
         snapshot["images"] = sorted(
             (rec["url"], rec["checksum"]) for i in result.items for rec in i["scraped_images"]
         )
@@ -99,6 +105,24 @@ def run_case(name: str, tmp_path: Path) -> dict[str, Any]:
 def test_replay_matches_snapshot(name, tmp_path):
     expected = json.loads(SNAPSHOTS.read_text())[name]
     assert run_case(name, tmp_path) == expected
+
+
+def test_one_csv_holds_both_platforms(tmp_path):
+    items = scrape_case("collections", tmp_path).items + scrape_case("woocommerce", tmp_path).items
+    path = tmp_path / "mixed.csv"
+    spy.write_items(items, path)
+    rows = list(csv.DictReader(path.open(newline="", encoding="utf-8")))
+    counts = Counter((r["platform"], r["kind"]) for r in rows)
+    assert set(counts) == {
+        ("shopify", "product"),
+        ("shopify", "collection"),
+        ("woocommerce", "product"),
+    }
+
+    def variants(item: dict[str, Any]) -> list[Any]:
+        return (item.get("product") or {}).get("variants") or item.get("variations") or []
+
+    assert len(rows) == sum(max(len(variants(i)), 1) for i in items)
 
 
 if __name__ == "__main__" and sys.argv[1:] == ["--update"]:

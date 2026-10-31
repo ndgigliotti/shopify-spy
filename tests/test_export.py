@@ -13,6 +13,7 @@ from shopify_spy._export import (
     write_items,
     write_status,
 )
+from shopify_spy._flatten import COLUMNS
 from shopify_spy._results import StoreResult, StoreStatus
 
 FIXTURES = Path(__file__).parent / "fixtures" / "exporters"
@@ -87,7 +88,7 @@ def test_csv_writes_a_row_per_variant(tmp_path):
     first, second = rows
     # Product columns repeat on every variant row
     for row in rows:
-        assert row["kind"] == "product"
+        assert (row["platform"], row["kind"]) == ("shopify", "product")
         assert row["id"] == "7"
         assert row["title"] == "Hat"
         assert row["tags"] == "wool, winter"
@@ -181,22 +182,70 @@ def test_csv_woocommerce_rows(tmp_path):
     path = tmp_path / "out.csv"
     write_items([WOO_PRODUCT], path)
     rows = read_csv(path)
-    assert [r["variation_id"] for r in rows] == ["51", "52"]
-    assert [r["variation_attributes"] for r in rows] == ["Size: S", "Size: L"]
+    assert [r["variant_id"] for r in rows] == ["51", "52"]
+    assert [(r["variant_title"], r["option1"]) for r in rows] == [("S", "S"), ("L", "L")]
     row = rows[0]
-    assert row["name"] == "17″ Pan"
-    assert (row["price"], row["regular_price"], row["min_price"], row["max_price"]) == (
-        "19.99",
-        "24.99",
-        "19.99",
-        "29.99",
-    )
+    assert (row["platform"], row["kind"], row["handle"]) == ("woocommerce", "product", "pan")
+    assert row["title"] == "17″ Pan"
+    assert row["html_url"] == "https://w.com/product/pan/"
+    assert (row["price"], row["compare_at_price"]) == ("19.99", "24.99")
+    assert "sale_price" not in row
+    assert (row["min_price"], row["max_price"]) == ("19.99", "29.99")
     assert row["currency"] == "USD"
     assert row["categories"] == "Kitchen & Home, Pans"
-    assert row["attributes"] == "Size: S, L"
+    assert (row["options"], row["product_type"], row["url"]) == ("Size", "", "")
     assert (row["short_description"], row["description"]) == ("Short", "Long")
-    assert (row["on_sale"], row["is_in_stock"], row["image_count"]) == ("true", "true", "1")
+    assert (row["on_sale"], row["available"], row["image_count"]) == ("true", "true", "1")
+    assert row["variant_count"] == "2"
     assert "prices" not in row
+
+
+def test_csv_woocommerce_compare_at_price_only_below_regular(tmp_path):
+    path = tmp_path / "out.csv"
+    prices = {"price": "2499", "regular_price": "2499", "currency_minor_unit": 2}
+    write_items([WOO_PRODUCT | {"prices": prices, "variations": []}], path)
+    (row,) = read_csv(path)
+    assert (row["price"], row["compare_at_price"]) == ("24.99", "")
+
+
+def test_csv_woocommerce_options_skip_descriptive_attributes(tmp_path):
+    path = tmp_path / "out.csv"
+    item = WOO_PRODUCT | {
+        "attributes": [
+            {"name": "Material", "has_variations": False, "terms": [{"name": "Steel"}]},
+            {"name": "Color", "has_variations": True, "terms": [{"name": "Red"}]},
+            {"name": "Size", "has_variations": True, "terms": [{"name": "S"}]},
+        ],
+        # Values follow the product's attribute order, not the variation's
+        "variations": [
+            {
+                "id": 1,
+                "attributes": [{"name": "Size", "value": "S"}, {"name": "Color", "value": "Red"}],
+            }
+        ],
+    }
+    write_items([item], path)
+    (row,) = read_csv(path)
+    assert row["options"] == "Color, Size"
+    assert (row["option1"], row["option2"], row["option3"]) == ("Red", "S", "")
+    assert row["variant_title"] == "Red / S"
+
+
+def test_csv_holds_both_platforms(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([WOO_PRODUCT, SHOPIFY_PRODUCT], path)
+    rows = read_csv(path)
+    assert [r["platform"] for r in rows] == ["woocommerce"] * 2 + ["shopify"] * 2
+    assert [r["variant_id"] for r in rows] == ["51", "52", "71", "72"]
+    assert [r["title"] for r in rows] == ["17″ Pan"] * 2 + ["Hat"] * 2
+
+
+def test_csv_append_other_platform(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([SHOPIFY_PRODUCT], path)
+    write_items([WOO_PRODUCT], path, append=True)
+    rows = read_csv(path)
+    assert [r["platform"] for r in rows] == ["shopify"] * 2 + ["woocommerce"] * 2
 
 
 def test_csv_image_paths_with_scraped_images(tmp_path):
@@ -228,8 +277,8 @@ def test_append_keeps_single_csv_header(tmp_path):
     write_items(ITEMS[:1], path)
     write_items(ITEMS[:1], path, append=True)
     lines = path.read_text(encoding="utf-8").splitlines()
-    assert lines[0].startswith("kind,")
-    assert sum(line.startswith("kind,") for line in lines) == 1
+    assert lines[0].startswith("platform,")
+    assert sum(line.startswith("platform,") for line in lines) == 1
     assert len(read_csv(path)) == 2
 
 
@@ -307,10 +356,10 @@ def test_csv_woocommerce_prices_keep_currency_decimals(tmp_path):
     prices = {"price": "1990", "regular_price": "500", "currency_minor_unit": 2}
     write_items([WOO_PRODUCT | {"prices": prices, "variations": []}], path)
     (row,) = read_csv(path)
-    assert (row["price"], row["regular_price"], row["min_price"]) == ("19.90", "5.00", "19.90")
+    assert (row["price"], row["compare_at_price"], row["min_price"]) == ("19.90", "", "19.90")
 
 
-def test_csv_woocommerce_attributes_skip_missing_and_unescape(tmp_path):
+def test_csv_woocommerce_options_skip_missing_and_unescape(tmp_path):
     path = tmp_path / "out.csv"
     item = WOO_PRODUCT | {
         "attributes": [
@@ -324,8 +373,9 @@ def test_csv_woocommerce_attributes_skip_missing_and_unescape(tmp_path):
     }
     write_items([item], path)
     rows = read_csv(path)
-    assert rows[0]["attributes"] == "Size & Fit: S"
-    assert [r["variation_attributes"] for r in rows] == ["Size & Fit: S", ""]
+    assert rows[0]["options"] == "Size & Fit"
+    assert [r["option1"] for r in rows] == ["S", ""]
+    assert [r["variant_title"] for r in rows] == ["S", ""]
 
 
 def test_csv_picked_fields_dont_warn_about_the_rest(tmp_path, caplog):
@@ -365,7 +415,7 @@ def test_csv_variation_attributes_show_term_names(tmp_path):
     }
     write_items([item], path)
     (row,) = read_csv(path)
-    assert row["variation_attributes"] == "Color: Light Blue"
+    assert (row["option1"], row["variant_title"]) == ("Light Blue", "Light Blue")
 
 
 def test_csv_append_refuses_old_format_file_with_fields(tmp_path):
@@ -373,3 +423,122 @@ def test_csv_append_refuses_old_format_file_with_fields(tmp_path):
     path.write_text("product,url,store,image_urls\n", encoding="utf-8")
     with pytest.raises(ValueError, match="0.3 or earlier"):
         write_items([SHOPIFY_PRODUCT], path, append=True, fields=["id", "title"])
+
+
+@pytest.mark.parametrize("fmt", ["jsonl", "json", "xml"])
+def test_native_is_the_default_and_explicit_native_matches(tmp_path, fmt):
+    path = tmp_path / f"out.{fmt}"
+    write_items(ITEMS, path, schema="native")
+    assert path.read_bytes() == (FIXTURES / f"scrapy.{fmt}").read_bytes()
+
+
+def test_csv_is_always_unified(tmp_path):
+    with pytest.raises(ValueError, match="CSV is always unified"):
+        write_items([SHOPIFY_PRODUCT], tmp_path / "out.csv", schema="native")
+    write_items(ITEMS, tmp_path / "out.csv", schema="unified")
+    assert (tmp_path / "out.csv").read_bytes() == (FIXTURES / "expected.csv").read_bytes()
+
+
+def test_unknown_schema(tmp_path):
+    with pytest.raises(ValueError, match="unknown schema"):
+        write_items([SHOPIFY_PRODUCT], tmp_path / "out.jsonl", schema="nested")
+
+
+def test_unified_jsonl_writes_a_record_per_row(tmp_path):
+    path = tmp_path / "out.jsonl"
+    assert write_items([SHOPIFY_PRODUCT, WOO_PRODUCT], path, schema="unified") == 2
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert [(r["platform"], r["variant_id"]) for r in rows] == [
+        ("shopify", 71),
+        ("shopify", 72),
+        ("woocommerce", 51),
+        ("woocommerce", 52),
+    ]
+    # Fixed keys in COLUMNS order, without image_paths when no images were downloaded
+    assert list(rows[0]) == list(rows[2]) == [c for c in COLUMNS if c != "image_paths"]
+    assert (rows[0]["available"], rows[0]["compare_at_price"]) == (True, None)
+    # Decimal prices become strings, like Shopify's
+    assert (rows[2]["price"], rows[2]["compare_at_price"]) == ("19.99", "24.99")
+
+
+def test_unified_json_and_fields(tmp_path):
+    path = tmp_path / "out.json"
+    write_items([SHOPIFY_PRODUCT], path, schema="unified", fields=["title", "price"])
+    assert json.loads(path.read_text(encoding="utf-8")) == [
+        {"title": "Hat", "price": "10.00"},
+        {"title": "Hat", "price": "12.50"},
+    ]
+
+
+def test_unified_xml_has_an_item_per_row(tmp_path):
+    path = tmp_path / "out.xml"
+    write_items([SHOPIFY_PRODUCT], path, schema="unified", fields=["platform", "available", "sku"])
+    assert path.read_text(encoding="utf-8") == (
+        '<?xml version="1.0" encoding="utf8"?>\n<items>\n'
+        "<item><platform>shopify</platform><available>true</available><sku></sku></item>\n"
+        "<item><platform>shopify</platform><available>false</available><sku></sku></item>\n"
+        "</items>"
+    )
+
+
+def test_unified_jsonl_append(tmp_path):
+    path = tmp_path / "out.jsonl"
+    write_items([SHOPIFY_PRODUCT], path, schema="unified")
+    write_items([WOO_PRODUCT], path, schema="unified", append=True)
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert [r["platform"] for r in rows] == ["shopify"] * 2 + ["woocommerce"] * 2
+
+
+def test_csv_woocommerce_any_value_keeps_option_columns_aligned(tmp_path):
+    path = tmp_path / "out.csv"
+    item = WOO_PRODUCT | {
+        "attributes": [
+            {"name": "Color", "has_variations": True, "terms": [{"name": "Red"}]},
+            {"name": "Size", "has_variations": True, "terms": [{"name": "Small", "slug": "s"}]},
+        ],
+        "variations": [
+            {
+                "id": 1,
+                "attributes": [{"name": "Color", "value": ""}, {"name": "Size", "value": "s"}],
+            }
+        ],
+    }
+    write_items([item], path)
+    (row,) = read_csv(path)
+    assert (row["options"], row["option1"], row["option2"]) == ("Color, Size", "", "Small")
+    assert row["variant_title"] == "Small"
+
+
+def test_csv_woocommerce_nan_price_doesnt_crash(tmp_path):
+    path = tmp_path / "out.csv"
+    prices = {"price": "NaN", "regular_price": "2499", "currency_minor_unit": 2}
+    write_items([WOO_PRODUCT | {"prices": prices, "variations": []}], path)
+    (row,) = read_csv(path)
+    assert (row["price"], row["compare_at_price"]) == ("NaN", "")
+
+
+def test_csv_repeated_fields_stay_aligned(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([SHOPIFY_PRODUCT], path, fields=["id", "id", "title"])
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert lines[:2] == ["id,id,title", "7,7,Hat"]
+
+
+def test_non_json_values_still_raise(tmp_path):
+    with pytest.raises(TypeError):
+        write_items([{"a": {1, 2}}], tmp_path / "out.jsonl")
+
+
+def test_fields_with_native_schema_warn(tmp_path, caplog):
+    write_items([SHOPIFY_PRODUCT], tmp_path / "out.jsonl", fields=["title"])
+    assert "only applies to the unified schema" in caplog.text
+
+
+@pytest.mark.parametrize(("first", "then"), [("native", "unified"), ("unified", "native")])
+def test_jsonl_append_refuses_the_other_schema(tmp_path, first, then):
+    path = tmp_path / "out.jsonl"
+    write_items([SHOPIFY_PRODUCT], path, schema=first)
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match=f"holds {first} items"):
+        write_items([WOO_PRODUCT], path, schema=then, append=True)
+    assert path.read_bytes() == before
