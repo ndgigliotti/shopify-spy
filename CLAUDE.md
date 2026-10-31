@@ -23,6 +23,8 @@ Layers, top to bottom; lower layers never import higher ones, and only the CLI i
 - **Session** (`_session.py`, `_policy.py`): per-store `StoreSession` (dedupe, robots.txt, retries with UA rotation on 403, hop-by-hop redirects, stats) over a run-wide `HostRegistry` (robots cache, concurrency and AutoThrottle slots keyed by origin).
 - **Transport** (`_fetch.py`): `Fetcher` protocol; `HttpxFetcher`, plus `FakeFetcher`/`ReplayFetcher` for tests.
 
+A new runtime dependency also goes in `nix/package.nix` (checked by `nix flake check`).
+
 Design history and remaining roadmap: `.context/httpx-library-rewrite.md`.
 
 ## Testing

@@ -12,7 +12,6 @@ import sys
 import threading
 import urllib.parse
 from collections import Counter
-from pathlib import Path
 
 import pytest
 
@@ -104,9 +103,18 @@ def store():
 
 def test_capped_store_is_scraped_through_collections_then_the_sitemap(tmp_path, store):
     url, hits = store
-    spy = Path(sys.executable).with_name("spy")
     result = subprocess.run(
-        [str(spy), "scrape", url, "--output", str(tmp_path), "--no-throttle", "--quiet"],
+        [
+            sys.executable,
+            "-m",
+            "shopify_spy.cli",
+            "scrape",
+            url,
+            "--output",
+            str(tmp_path),
+            "--no-throttle",
+            "--quiet",
+        ],
         capture_output=True,
         text=True,
         timeout=300,

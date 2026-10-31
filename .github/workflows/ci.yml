@@ -56,6 +56,18 @@ jobs:
       - name: Test
         run: uv run pytest -v
 
+  nix:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Build and test the flake
+        run: nix flake check -L
+
   integration:
     runs-on: ubuntu-latest
     # Only run on push to master, not on every PR
