@@ -112,6 +112,7 @@ class StoreState:
             suggested_platform=self.ctx.suggested_platform if self.ctx else None,
             responses_by_status=dict(stats.by_status),
             robots_disallowed=stats.robots_disallowed,
+            rate_limited_requests=stats.rate_limits,
             images_failed=stats.images_failed,
             errors=list(self.errors),
             duration=duration,

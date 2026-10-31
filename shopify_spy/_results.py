@@ -20,6 +20,8 @@ class StoreStatus(StrEnum):
     forbidden = "forbidden"  # HTTP 403 after retries
     not_found = "not_found"  # HTTP 404 on the platform endpoint and fallback
     robots_blocked = "robots_blocked"  # robots.txt disallowed the needed URLs
+    rate_limited = "rate_limited"  # HTTP 429 after retries
+    unavailable = "unavailable"  # HTTP 5xx after retries (outage, maintenance)
     tls_error = "tls_error"  # certificate verification failed
     no_response = "no_response"  # DNS or connection failures only
     error = "error"  # unexpected exception while scraping this store
@@ -54,6 +56,8 @@ _LABELS = {
     StoreStatus.forbidden: "403 Forbidden",
     StoreStatus.not_found: "404 Not Found",
     StoreStatus.robots_blocked: "blocked by robots.txt",
+    StoreStatus.rate_limited: "rate limited (429)",
+    StoreStatus.unavailable: "unavailable (5xx)",
     StoreStatus.tls_error: "TLS error",
     StoreStatus.no_response: "no response",
     StoreStatus.error: "failed",
@@ -80,6 +84,8 @@ class StoreResult:
     suggested_platform: str | None = None  # set when the store looks like another platform
     responses_by_status: dict[int, int] = field(default_factory=dict)
     robots_disallowed: int = 0
+    # Requests that ended on a 429, of any kind but images (robots.txt's too)
+    rate_limited_requests: int = 0
     images_failed: int = 0
     errors: list[str] = field(default_factory=list)
     duration: float = 0.0
@@ -161,22 +167,34 @@ def diagnose(
 
     Blocking causes only count if the store never got a 2xx: a 403 recovered by a UA
     swap, or the products.json 404 that triggers the sitemap fallback, isn't why a
-    store that also got a 2xx came up empty.
+    store that also got a 2xx came up empty. A refusal (robots.txt, 403) wins over a
+    429, and a 429 over a 404, which may only be a fallback's (a rate-limited
+    products.json falls back to the sitemap). 5xx errors count last. A 429 counts
+    only if retries didn't get past it (``stats.rate_limits``, which includes
+    robots.txt, probe and fallback requests): then a store that ran out of time with no
+    items is rate limited too.
     """
     if errored:
         return StoreStatus.error
     if items > 0:
         return StoreStatus.partial if truncated else StoreStatus.ok
+    # Stopped by the caller, maybe mid-retry: a 429 or 5xx then isn't the store's last word
+    stopped = finish_reason in ("closed", "shutdown")
     if stats.successes == 0:
         if stats.robots_disallowed > 0:
             return StoreStatus.robots_blocked
         if stats.by_status[403] > 0:
             return StoreStatus.forbidden
+        if stats.rate_limits > 0 and not stopped:
+            return StoreStatus.rate_limited
         if stats.by_status[404] > 0:
             return StoreStatus.not_found
+        if any(code >= 500 for code in stats.by_status) and not stopped:
+            return StoreStatus.unavailable
     if finish_reason == "bail":
-        return StoreStatus.timed_out
-    if finish_reason in ("closed", "shutdown"):
+        # Retries and host pauses after a 429 use up --bail, even with some 2xx
+        return StoreStatus.rate_limited if stats.rate_limits > 0 else StoreStatus.timed_out
+    if stopped:
         # Stopped by the caller (break, close(), Ctrl-C), possibly before it started
         return StoreStatus.stopped
     if stats.responses == 0:

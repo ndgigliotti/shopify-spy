@@ -11,7 +11,7 @@ import pytest
 
 import shopify_spy as spy
 from shopify_spy._fetch import FakeFetcher, FetchConnectionError, FetchTLSError
-from tests.flow_support import FAST, STORE, bulk_url, products, scrape, urlset
+from tests.flow_support import FAST, STORE, bulk_url, products, scrape, urlset, woo_url
 
 OTHER = "https://other.test"
 
@@ -106,6 +106,33 @@ def test_on_failure_raise_when_all_failed():
     assert "b.test: not_found" in message
     assert len(exc_info.value.result.stores) == 2
     assert run.result.failed == exc_info.value.result.failed
+
+
+def test_rate_limited_store_fails():
+    run = spy.scrape(STORE, fetcher_factory=fake({bulk_url(1): (429, "")}), **FAST)
+    with pytest.raises(spy.ScrapeFailed, match="shop.test: rate_limited"):
+        run.collect().raise_for_status()
+    [store] = run.result.stores
+    assert store.status == spy.StoreStatus.rate_limited
+    assert store.failed
+    assert store.responses_by_status == {429: 3, 404: 1}  # then the sitemap fallback
+    assert store.rate_limited_requests == 1
+
+
+def test_rate_limited_woocommerce_fallback_fails():
+    """Store API gone (404), and the product-page fallback answers 429."""
+    # The wrong-platform probe 404s too, so only fallback requests get the 429s
+    routes = {
+        f"{STORE}/robots.txt": (404, ""),
+        woo_url(1): (404, ""),
+        f"{STORE}/products.json": (404, ""),
+    }
+    fetcher = FakeFetcher(routes, default_status=429)
+    run = spy.scrape(STORE, platform="woocommerce", fetcher_factory=lambda: fetcher, **FAST)
+    run.collect()
+    [store] = run.result.stores
+    assert store.status == spy.StoreStatus.rate_limited
+    assert store.responses_by_status == {404: 1}  # fallback requests aren't counted
 
 
 def test_on_failure_raise_not_when_some_succeed():

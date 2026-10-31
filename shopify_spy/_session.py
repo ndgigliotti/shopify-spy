@@ -56,11 +56,14 @@ class RequestKind:
     counted: bool = True  # counts toward the store's diagnosis stats
     dedupe: bool = True  # skip a URL this store already requested
     rotate: bool = True  # a 403 may swap the store's user agent and retry
+    # A 429 counts toward StoreStats.rate_limits: its pause holds up the store's data
+    # (images come after the data they belong to)
+    rate_limits: bool = True
 
 
 STORE = RequestKind("store")
 ROBOTS = RequestKind("robots", check_robots=False, counted=False, dedupe=False)
-IMAGE = RequestKind("image", counted=False, dedupe=False)
+IMAGE = RequestKind("image", counted=False, dedupe=False, rate_limits=False)
 PROBE = RequestKind("probe", counted=False, dedupe=False)  # e.g. a wrong-platform check
 # A fallback source, e.g. WooCommerce product pages: if it finds nothing, the store's
 # diagnosis still explains why the primary source failed
@@ -177,6 +180,8 @@ class StoreStats:
     responses: int = 0  # every hop
     successes: int = 0  # 2xx responses
     by_status: Counter[int] = field(default_factory=Counter)
+    # Requests that ended on a 429, of any kind but images
+    rate_limits: int = 0
     robots_disallowed: int = 0
     duplicates: int = 0
     transport_errors: Counter[str] = field(default_factory=Counter)
@@ -313,74 +318,86 @@ class StoreSession:
         if not await self._allowed(url, kind):
             return None
         slot = self.registry.slot(url)
-        attempt = 0
-        while True:
-            if self.registry.shutdown.is_set():
-                raise ShutdownRequested
-            response: Response | None = None
-            error: FetchError | None = None
-            async with self._store_slots, slot.semaphore:
-                sent_at = await slot.wait_turn()
-                self.stats.requests += 1
-                try:
-                    response = await self.fetcher.fetch(
-                        Request(
-                            method="GET",
-                            url=url,
-                            identity=self.identity.current,
-                            timeout=self.request_timeout,
+        # Whether a 429 is this request's last word: retries used up, or --bail or a
+        # shutdown cut its wait short
+        limited = False
+        try:
+            attempt = 0
+            while True:
+                if self.registry.shutdown.is_set():
+                    raise ShutdownRequested
+                response: Response | None = None
+                error: FetchError | None = None
+                async with self._store_slots, slot.semaphore:
+                    sent_at = await slot.wait_turn()
+                    self.stats.requests += 1
+                    try:
+                        response = await self.fetcher.fetch(
+                            Request(
+                                method="GET",
+                                url=url,
+                                identity=self.identity.current,
+                                timeout=self.request_timeout,
+                            )
                         )
-                    )
-                except FetchError as exc:
-                    error = exc
-            if response is not None:
-                slot.adjust(response.latency, response.status, sent_at)
-                if kind.counted:
-                    self.stats.responses += 1
-                    self.stats.by_status[response.status] += 1
-                    self.stats.successes += response.ok
-                logger.debug(
-                    "GET %s -> %d in %.2fs (attempt %d, %s)",
-                    url,
-                    response.status,
-                    response.latency,
-                    attempt + 1,
-                    kind.name,
-                )
-                retry_after = parse_retry_after(response.headers.get("retry-after"))
-                rate_limited = response.status in RATE_LIMIT_STATUSES
-                # Whatever the transport rotates on, a 403 to such a kind is final
-                refused = not kind.rotate and response.status in ROTATE_ON_STATUSES
-                if refused or not self.retry.should_retry_status(response.status, attempt):
-                    if rate_limited:  # no retry left, but the host still has to back off
-                        wait = self.retry.delay(attempt, retry_after, self.bail_time_left(), True)
-                        slot.pause(wait)
-                    return response
-                if response.status in self.retry.rotate_on and self.identity.rotates:
-                    self.identity.rotate()
+                    except FetchError as exc:
+                        error = exc
+                if response is not None:
+                    slot.adjust(response.latency, response.status, sent_at)
+                    if kind.counted:
+                        self.stats.responses += 1
+                        self.stats.by_status[response.status] += 1
+                        self.stats.successes += response.ok
+                    limited = response.status == 429
                     logger.debug(
-                        "Swapped user agent after %d: %s",
+                        "GET %s -> %d in %.2fs (attempt %d, %s)",
+                        url,
                         response.status,
-                        self.identity.current.user_agent,
+                        response.latency,
+                        attempt + 1,
+                        kind.name,
                     )
-                reason = str(response.status)
-            else:
-                assert error is not None
-                name = type(error).__name__
-                if kind.counted:
-                    self.stats.transport_errors[name] += 1
-                    self.stats.tls_errors += isinstance(error, FetchTLSError)
-                logger.debug("Error fetching %s: %s", url, error)
-                retryable = not isinstance(error, (FetchTLSError, FetchTooLarge, FetchInvalidURL))
-                if not (retryable and attempt < self.retry.retries):
-                    raise RequestFailed(url, error) from error
-                retry_after = None
-                rate_limited = False
-                reason = name
-            delay = self.retry.delay(attempt, retry_after, self.bail_time_left(), rate_limited)
-            if rate_limited:
-                slot.pause(delay)
-            attempt += 1
-            logger.info("Retrying %s (attempt %d, %s) in %.1fs", url, attempt, reason, delay)
-            if delay:
-                await asyncio.sleep(delay)
+                    retry_after = parse_retry_after(response.headers.get("retry-after"))
+                    rate_limited = response.status in RATE_LIMIT_STATUSES
+                    # Whatever the transport rotates on, a 403 to such a kind is final
+                    refused = not kind.rotate and response.status in ROTATE_ON_STATUSES
+                    if refused or not self.retry.should_retry_status(response.status, attempt):
+                        if rate_limited:  # no retry left, but the host still has to back off
+                            wait = self.retry.delay(
+                                attempt, retry_after, self.bail_time_left(), True
+                            )
+                            slot.pause(wait)
+                        return response
+                    if response.status in self.retry.rotate_on and self.identity.rotates:
+                        self.identity.rotate()
+                        logger.debug(
+                            "Swapped user agent after %d: %s",
+                            response.status,
+                            self.identity.current.user_agent,
+                        )
+                    reason = str(response.status)
+                else:
+                    assert error is not None
+                    limited = False
+                    name = type(error).__name__
+                    if kind.counted:
+                        self.stats.transport_errors[name] += 1
+                        self.stats.tls_errors += isinstance(error, FetchTLSError)
+                    logger.debug("Error fetching %s: %s", url, error)
+                    retryable = not isinstance(
+                        error, (FetchTLSError, FetchTooLarge, FetchInvalidURL)
+                    )
+                    if not (retryable and attempt < self.retry.retries):
+                        raise RequestFailed(url, error) from error
+                    retry_after = None
+                    rate_limited = False
+                    reason = name
+                delay = self.retry.delay(attempt, retry_after, self.bail_time_left(), rate_limited)
+                if rate_limited:
+                    slot.pause(delay)
+                attempt += 1
+                logger.info("Retrying %s (attempt %d, %s) in %.1fs", url, attempt, reason, delay)
+                if delay:
+                    await asyncio.sleep(delay)
+        finally:
+            self.stats.rate_limits += limited and kind.rate_limits

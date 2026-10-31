@@ -120,8 +120,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             if path == "/products.json":
                 return self._send(403) if count == 1 else self._send(200, b'{"products": []}')
             return self._hang()
-        if s == "products_404_sitemap_hang":
-            if path in ("/robots.txt", "/products.json"):
+        if s in ("products_404_sitemap_hang", "products_429_sitemap_hang"):
+            if path == "/robots.txt":
+                return self._send(404)
+            if path == "/products.json":
+                if s == "products_429_sitemap_hang":
+                    return self._send(429, headers={"Retry-After": "0"})
                 return self._send(404)
             if path == "/sitemap.xml":
                 index = (
@@ -132,6 +136,27 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 )
                 return self._send(200, index, {"Content-Type": "application/xml"})
             return self._hang()
+        if s in ("rate_limited", "unavailable", "woo_rate_limited", "woo_unavailable"):
+            if path == "/robots.txt":
+                return self._send(404)
+            status = 429 if "rate_limited" in s else 503
+            return self._send(status, headers={"Retry-After": "0"})
+        if s == "woo_fallback_rate_limited":
+            if path == "/robots.txt" or path.startswith("/wp-json/wc/store/"):
+                return self._send(404)
+            return self._send(429, headers={"Retry-After": "0"})
+        if s == "robots_rate_limited":
+            # Shopify per IP: robots.txt 429s with Retry-After: 60, past --bail
+            if path == "/robots.txt":
+                return self._send(429, headers={"Retry-After": "60"})
+            return self._send(200, b'{"products": []}')
+        if s == "rate_limited_no_retry_after":
+            # Stupell (#30): 429s without Retry-After; retries wait until --bail
+            return self._send(404) if path == "/robots.txt" else self._send(429)
+        if s == "forbidden_then_rate_limited":
+            if path == "/robots.txt":
+                return self._send(404)
+            return self._send(403) if count == 1 else self._send(429, headers={"Retry-After": "0"})
         if s in ("woo_variations_ok", "woo_variations_403", "woo_variations_hang"):
             if path == "/robots.txt":
                 return self._send(404)
@@ -201,6 +226,12 @@ EXPECTED_SHOPIFY = {
     "store_403": "403 Forbidden",
     "transient_403_then_hang": "timed out",
     "products_404_sitemap_hang": "timed out",
+    "products_429_sitemap_hang": "rate limited (429)",  # a 2xx, then --bail
+    "rate_limited": "rate limited (429)",
+    "rate_limited_no_retry_after": "rate limited (429)",
+    "robots_rate_limited": "rate limited (429)",
+    "unavailable": "unavailable (5xx)",
+    "forbidden_then_rate_limited": "403 Forbidden",
 }
 
 
@@ -216,6 +247,23 @@ def test_woocommerce_single_request_robots_redirect(tmp_path, stores):
     url = stores("robots_redirect_disallow")
     statuses = _run(tmp_path, [url], "--platform", "woocommerce")
     assert statuses[url] == "blocked by robots.txt"
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected"),
+    [
+        ("woo_rate_limited", "rate limited (429)"),
+        ("woo_unavailable", "unavailable (5xx)"),
+        # Store API gone, and the product-page fallback is rate limited
+        ("woo_fallback_rate_limited", "rate limited (429)"),
+    ],
+)
+def test_woocommerce_rate_limited_or_unavailable(tmp_path, stores, scenario, expected):
+    """A Store API 429 ends the store; a 503 falls back to product pages, which 503 too.
+    Either way the store fails instead of coming up empty."""
+    url = stores(scenario)
+    statuses = _run(tmp_path, [url], "--platform", "woocommerce")
+    assert statuses[url] == expected
 
 
 @pytest.mark.parametrize("scenario", ["woo_variations_403", "woo_variations_hang"])
