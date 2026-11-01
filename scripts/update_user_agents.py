@@ -32,7 +32,7 @@ import urllib.request
 from pathlib import Path
 
 # major.minor (sometimes .patch), as Safari always sends it; a bare major is a fake tell
-SAFARI_VERSION = "27.0"
+SAFARI_VERSION = "27.2"
 
 OUTPUT = Path(__file__).resolve().parent.parent / "shopify_spy" / "user_agents.json"
 # Releases currently served on the stable channel, with the fraction of users each gets
