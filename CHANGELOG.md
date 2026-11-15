@@ -13,6 +13,13 @@
   Shopify answers every request from a plain `X11; Linux x86_64` browser user agent
   with 429, so the pool drops Chrome on Linux and keeps Ubuntu's Firefox for Linux.
 
+### Known issues
+
+- `--collections` gets no collection items on Shopify stores, which end as
+  `rate_limited`: Shopify now refuses `/collections/<handle>.json` for every request.
+  0.4.0 is affected too. Products are unaffected. See
+  [#64](https://github.com/ndgigliotti/shopify-spy/issues/64).
+
 ## 0.4.0
 
 ### Added
