@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+### Changed
+
+- Browser user agents are updated to current versions (Chrome 156/157, Firefox
+  153/160, Safari 27.2, Edge 157).
+
 ## 0.4.0
 
 ### Added
