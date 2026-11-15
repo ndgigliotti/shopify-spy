@@ -13,9 +13,11 @@ be undone.
 ## 1. Check master
 
 - `git fetch origin`, then work on an up-to-date, clean `master` checkout.
-- The latest CI run on master passed, including the `integration` job (live
-  stores), which only runs on pushes to master:
-  `gh run list --branch master --limit 1`.
+- The latest CI run on master passed: `gh run list --branch master --limit 1`.
+- The live-store tests pass from this machine: `uv run pytest -m integration`.
+  CI doesn't run them, because Shopify rate-limits GitHub's runner IPs (429 on
+  every run from 2026-11-14), whatever the code does. A `rate_limited` failure
+  here means wait a few minutes and retry, not a bad build.
 - The version X.Y.Z is the same in `pyproject.toml` and in the project's
   `version =` line in `uv.lock` (under `name = "shopify-spy"`).
 - `CHANGELOG.md` starts with a `## X.Y.Z` section describing what's on master.
