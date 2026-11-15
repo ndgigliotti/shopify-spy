@@ -52,6 +52,10 @@ def test_shipped_list_matches_real_browser_shapes():
     assert gen.shape_errors(USER_AGENTS) == []
 
 
+def test_shipped_list_avoids_rate_limited_plain_linux():
+    assert [ua for ua in USER_AGENTS if f"({gen.PLAIN_LINUX}" in ua] == []
+
+
 def test_shipped_versions_are_recent():
     age = age_days(SHIPPED["generated"])
     assert age <= MAX_AGE_DAYS, f"versions are {age} days old; run scripts/update_user_agents.py"

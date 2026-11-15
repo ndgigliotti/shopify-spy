@@ -7,6 +7,12 @@
 - Browser user agents are updated to current versions (Chrome 156/157, Firefox
   153/160, Safari 27.2, Edge 157).
 
+### Fixed
+
+- Shopify stores no longer fail as `rate_limited` when a run picks a Linux user agent.
+  Shopify answers every request from a plain `X11; Linux x86_64` browser user agent
+  with 429, so the pool drops Chrome on Linux and keeps Ubuntu's Firefox for Linux.
+
 ## 0.4.0
 
 ### Added
