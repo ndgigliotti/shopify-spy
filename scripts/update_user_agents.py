@@ -45,16 +45,20 @@ FIREFOX_API = "https://product-details.mozilla.org/1.0/firefox_versions.json"
 EDGE_API = "https://edgeupdates.microsoft.com/api/products"
 ROLLOUT_DAYS = 14  # a new Chrome major reaches most stable users within about this
 
-# Frozen platform tokens, as each browser sends them whatever the real OS version
+# Frozen platform tokens, as each browser sends them whatever the real OS version.
+# No plain "X11; Linux x86_64": Shopify's edge answers it with 429 local_rate_limited
+# on every store (headless Chrome on servers sends it), while Windows, macOS and
+# Ubuntu's Firefox get 200 (tested 2026-11-14). Chrome sends only the plain token on
+# Linux, so Chrome has no Linux entry.
+PLAIN_LINUX = "X11; Linux x86_64"
 CHROME = {  # name -> (Version History platform id, token)
     "Windows": ("win", "Windows NT 10.0; Win64; x64"),
     "macOS": ("mac", "Macintosh; Intel Mac OS X 10_15_7"),
-    "Linux": ("linux", "X11; Linux x86_64"),
 }
 FIREFOX = {
     "Windows": ["Windows NT 10.0; Win64; x64"],
     "macOS": ["Macintosh; Intel Mac OS X 10.15"],
-    "Linux": ["X11; Linux x86_64", "X11; Ubuntu; Linux x86_64"],
+    "Linux": ["X11; Ubuntu; Linux x86_64"],
 }
 
 # Exact shapes of real browser UAs, on the platforms each browser reports; every
