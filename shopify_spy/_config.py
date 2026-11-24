@@ -55,7 +55,7 @@ class NetworkConfig(BaseModel):
     concurrent_requests: int = Field(default=16, ge=1)
     timeout: int = Field(default=180, ge=1)
     retries: int = Field(default=2, ge=0)
-    user_agent: str | None = None  # None = random browser UA, swapped after a 403
+    user_agent: str | None = None  # None = random browser UA, swapped after a 403 or 429
     respect_robots_txt: bool = True
     verify_tls: bool = True
     max_concurrent_stores: int | None = Field(default=16, ge=1)  # None = no limit

@@ -183,7 +183,10 @@ def scrape(
         int | None,
         typer.Option(
             "--bail",
-            help="Abort if no items scraped within N seconds (0 = off).",
+            help=(
+                "Abort a store with no items within N seconds, not counting Retry-After "
+                "waits, so a rate-limited store can take minutes (0 = off)."
+            ),
         ),
     ] = None,
     ignore_robots: Annotated[
@@ -737,7 +740,8 @@ def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
         )
     if StoreStatus.timed_out in present:
         hints.append(
-            f"Timed out after {config.scrape.bail}s with no items. "
+            f"Timed out after {config.scrape.bail}s with no items "
+            "(not counting Retry-After waits). "
             "Use [bold]--bail 0[/bold] to disable."
         )
     if StoreStatus.tls_error in present:

@@ -140,7 +140,7 @@ See [Use as a library](#use-as-a-library) for the options, failure handling, ima
 
 ## Features
 
-- **Automatic user-agent rotation.** Requests use a random browser user-agent. If a server responds with 403, the tool swaps to a different UA and retries.
+- **Automatic user-agent rotation.** Requests use a random browser user-agent. If a server responds with 403 or 429, the tool swaps to a different UA and retries.
 
 <div align="center"><img src="https://raw.githubusercontent.com/ndgigliotti/shopify-spy/master/assets/ua-rotation-neon.png" width="700"></div>
 
@@ -148,7 +148,7 @@ See [Use as a library](#use-as-a-library) for the options, failure handling, ima
 - **Python library.** `import shopify_spy` gives the same scraping engine as the CLI; see [Use as a library](#use-as-a-library).
 - **Log files.** Detailed logs go to a log file, keeping the terminal clean. Use `--verbose` to also print to the terminal.
 - **Status JSON.** Each run writes a machine-readable status file with each URL's item count and status code, and the run's timing.
-- **Bail timeout.** Automatically aborts if no items are scraped within `--bail` seconds (default: 30).
+- **Bail timeout.** Automatically aborts if no items are scraped within `--bail` seconds (default: 30), not counting time spent waiting out a server's `Retry-After`.
 - **Coding-agent friendly.** Designed for use by AI coding agents (Claude Code, Cursor, etc.):
   - Suggested workflow, with nothing to install: `uvx shopify-spy scrape --peek URL` to see an item's shape, then a script run with `uv run --with 'shopify-spy>=0.4' python script.py` that filters and saves only what the task needs. Use the CLI for whole-catalog dumps and image downloads.
   - Agents can write Python scripts against the library instead of driving the CLI: items are plain dicts with typed definitions (`ShopifyProductItem`, `ShopifyCollectionItem`, `WooCommerceProductItem`), `summarize()` gives the same fields on both platforms, and every option is documented in `help(spy.scrape)`
@@ -197,7 +197,7 @@ spy scrape [URL] [OPTIONS]
 - `--ignore-robots, -i` - Ignore robots.txt restrictions
 - `--insecure` - Don't verify TLS certificates
 - `--proxy URL` - Send every request through this proxy (`http://`, `https://` or `socks5://`); overrides `HTTPS_PROXY`/`HTTP_PROXY`, see [Limitations](#limitations)
-- `--bail INT` - Abort if no items scraped within N seconds (default: 30, 0 to disable)
+- `--bail INT` - Abort if no items scraped within N seconds (default: 30, 0 to disable). Time spent waiting out a server's `Retry-After` doesn't count, for each request, so a rate-limited store can take several minutes to fail
 - `--peek` - Print 1 item to stdout as JSONL and exit (no files or directories created); with `--schema unified`, its unified rows
 - `--verbose, -v` - Show debug output (logs to both file and terminal)
 - `--quiet, -q` - Show only warnings and errors (no live item counter)
@@ -305,7 +305,7 @@ File names start with the platform and a UTC timestamp. A status JSON file is wr
 | `ok` | `ok` | Items were scraped |
 | `ok` | `partial` | Items were scraped, but part of the catalog couldn't be reached |
 | `0 items` | `empty` | The store answered but had no products |
-| `timed out` | `timed_out` | No items within `--bail` seconds |
+| `timed out` | `timed_out` | No items within `--bail` seconds, not counting `Retry-After` waits |
 | `403 Forbidden` | `forbidden` | The store returned 403s and no successful response |
 | `404 Not Found` | `not_found` | The store returned 404s and no successful response; check the URL and `--platform` |
 | `blocked by robots.txt` | `robots_blocked` | robots.txt forbade the store's requests; try `--ignore-robots` |
@@ -552,7 +552,7 @@ result = await spy.scrape_async(urls, platform="woocommerce")  # RunResult with 
 
 **WooCommerce Store API preferred.** WooCommerce scraping uses the public Store API (`/wp-json/wc/store/v1/products`), built into WooCommerce since version 6.4 (2022). When it's unavailable, products come from the product pages' structured data instead, which has no categories or tags, and variations only for products with up to 30 of them; stores whose pages have no schema.org `Product` data, or that broadly block crawlers, may not be scrapeable. When a scrape returns 0 items, the tool prints a diagnostic message explaining the likely cause (403 Forbidden, 404 Not Found, robots.txt blocking, a 429 rate limit, etc.) and exits with code 1.
 
-**Rate limiting.** Stores rate-limit by IP address: past some request rate they answer 429 (Too Many Requests). Shopify also answers 429 to every request from a plain Linux browser user agent (`X11; Linux x86_64`, as Chrome on Linux and headless Chrome send), so the built-in pool leaves those out; avoid that token in a custom `--user-agent`. Auto-throttling is enabled by default: each host is slowed to match its response times, and a 429 or 503 pauses that host for its `Retry-After` time (at most 60 seconds, and never past `--bail`), even with `--no-throttle`. A store that stays rate-limited ends as `rate_limited`; retry it later, with a lower `--concurrent` and throttling on. You can adjust the throttle settings or disable it for faster scraping:
+**Rate limiting.** Stores usually rate-limit by IP address: past some request rate they answer 429 (Too Many Requests). Some rate-limit by user agent instead: Shopify answers 429 to every request from a plain Linux browser user agent (`X11; Linux x86_64`, as Chrome on Linux and headless Chrome send), so the built-in pool leaves those out; avoid that token in a custom `--user-agent`. A 429 therefore also swaps the store's user agent before its retry. Auto-throttling is enabled by default: each host is slowed to match its response times, and a 429 or 503 pauses that host for its `Retry-After` time (at most 60 seconds), even with `--no-throttle`. That wait doesn't count against `--bail`. Waits are excused for each request, so a store limited by IP can wait (retries + 1) × up to 60 seconds for every request it makes before its first item, about 9 minutes for a Shopify store at the defaults. A store that stays rate-limited ends as `rate_limited`; retry it later, with a lower `--concurrent` and throttling on. You can adjust the throttle settings or disable it for faster scraping:
 
 ```bash
 # Disable throttling (faster but riskier)
