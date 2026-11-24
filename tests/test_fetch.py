@@ -33,6 +33,7 @@ from shopify_spy._fetch import (
     _is_cert_error,
     check_proxy_support,
     decompress,
+    encode_proxy_userinfo,
     load_corpus,
     redact_url,
     uses_proxy,
@@ -294,6 +295,31 @@ def test_validate_proxy_rejects(url):
 )
 def test_validate_proxy_accepts(url):
     assert validate_proxy(url) == url
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("http://tok?en@gw:8080", "http://tok%3Fen@gw:8080"),
+        ("http://u:p/s#s@gw:8080", "http://u:p%2Fs%23s@gw:8080"),
+        ("http://u:p@ss@gw:8080", "http://u:p@ss@gw:8080"),
+        ("http://gw:8080", "http://gw:8080"),
+    ],
+)
+def test_encode_proxy_userinfo(url, expected):
+    assert encode_proxy_userinfo(url) == expected
+    assert validate_proxy(url) == url
+
+
+def test_fetcher_encodes_proxy_credentials():
+    assert HttpxFetcher(proxy="http://tok?en@gw:8080")._proxy == "http://tok%3Fen@gw:8080"
+
+
+def test_unencoded_environment_credentials_are_rejected(clean_proxy_env):
+    clean_proxy_env.setenv("HTTPS_PROXY", "http://u:sec?ret@gw:8080")
+    with pytest.raises(ValueError, match="percent-encode") as info:
+        check_proxy_support(None)
+    assert "sec" not in str(info.value)
 
 
 def test_validate_proxy_error_is_redacted():

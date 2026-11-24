@@ -559,7 +559,7 @@ result = await spy.scrape_async(urls, platform="woocommerce")  # RunResult with 
 spy scrape https://example.com --no-throttle
 ```
 
-**Proxies.** Requests honor the `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` environment variables. To set one fixed proxy instead, use `--proxy URL`, `network.proxy` in the config file, or `proxy=` in the library; it overrides those variables, `NO_PROXY` included. `http://`, `https://` and `socks5://` proxies all work out of the box. Credentials in the URL are masked in logs and errors (`http://USER:***@gateway:PORT`). A proxy is for a fixed egress, such as a company network or another region; it is not a way around a store's rate limits, which in practice key on user agent or endpoint as much as on IP.
+**Proxies.** Requests honor the `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` environment variables. To set one fixed proxy instead, use `--proxy URL`, `network.proxy` in the config file, or `proxy=` in the library; it overrides those variables, `NO_PROXY` included. `http://`, `https://` and `socks5://` proxies all work out of the box. Credentials in the URL are masked in logs and errors (`http://USER:***@gateway:PORT`). `--proxy` takes them as typed, but in the environment variables a `/`, `?` or `#` in them must be percent-encoded (`%2F`, `%3F`, `%23`). To keep a password out of shell history and process lists, or out of a coding agent's transcript, set it in the environment before starting the shell or agent rather than passing it to `--proxy`. A proxy is for a fixed egress, such as a company network or another region; it is not a way around a store's rate limits, which in practice key on user agent or endpoint as much as on IP.
 
 ## Feedback
 

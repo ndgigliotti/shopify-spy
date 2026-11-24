@@ -220,10 +220,30 @@ def redact_url(url: str) -> str:
     return urllib.parse.urlunsplit(parts._replace(netloc=f"{masked}@{hostport}"))
 
 
+_USERINFO_ESCAPES = str.maketrans({"/": "%2F", "?": "%3F", "#": "%23"})
+
+
+def encode_proxy_userinfo(url: str) -> str:
+    """``url`` with any ``/``, ``?`` or ``#`` in its credentials percent-encoded.
+
+    Unencoded, they end the host part, so ``http://tok?en@gw:8080`` would go to host
+    ``tok``. A proxy URL has no use for a path or query, so everything between
+    ``//`` and the last ``@`` is taken as the credentials.
+    """
+    scheme, sep, rest = url.partition("://")
+    userinfo, at, hostport = rest.rpartition("@")
+    if not (sep and at):
+        return url
+    return f"{scheme}://{userinfo.translate(_USERINFO_ESCAPES)}@{hostport}"
+
+
 def validate_proxy(url: str) -> str:
-    """Return ``url`` if it is a usable proxy URL, else raise ValueError (redacted)."""
+    """Return ``url`` if it is a usable proxy URL, else raise ValueError (redacted).
+
+    Credentials may be typed unencoded (see encode_proxy_userinfo).
+    """
     try:
-        parts = urllib.parse.urlsplit(url)
+        parts = urllib.parse.urlsplit(encode_proxy_userinfo(url))
         valid = parts.scheme in PROXY_SCHEMES and bool(parts.hostname)
         parts.port  # raises ValueError for a non-numeric or out-of-range port
     except ValueError:
@@ -265,7 +285,8 @@ def check_proxy_support(proxy: str | None) -> None:
 
     An explicit ``proxy`` gets the full validate_proxy check. Environment proxies
     get only the checks httpx applies itself, so setups that work today keep
-    working (httpx accepts a hostless ``HTTP_PROXY=http://``, for instance).
+    working (httpx accepts a hostless ``HTTP_PROXY=http://``, for instance). The
+    exception is unencoded credentials, which httpx would send to the wrong host.
     """
     if proxy is not None:
         validate_proxy(proxy)
@@ -273,6 +294,13 @@ def check_proxy_support(proxy: str | None) -> None:
     import httpx
 
     for value in _env_proxies():
+        # httpx parses these itself, so they aren't encoded for it (see
+        # encode_proxy_userinfo); stricter than httpx, which would misroute them
+        if encode_proxy_userinfo(value) != value:
+            raise ValueError(
+                f"{_ENV_PROXY_PREFIX}percent-encode any /, ? or # in the credentials "
+                f"(%2F, %3F, %23), got {redact_url(value)!r}"
+            )
         try:
             scheme = httpx.URL(value).scheme
         except httpx.InvalidURL as exc:
@@ -294,7 +322,7 @@ class HttpxFetcher:
     ) -> None:
         self._verify = verify
         self._trust_env = trust_env
-        self._proxy = proxy
+        self._proxy = None if proxy is None else encode_proxy_userinfo(proxy)
         self._client: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> Self:
