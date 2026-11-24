@@ -209,7 +209,11 @@ def redact_url(url: str) -> str:
         # everything up to the last "@"
         return "***" + url[url.rindex("@") :]
     if "@" not in parts.netloc:
-        return url  # the "@" is in the path, query or fragment
+        # An unencoded "/", "?" or "#" in a password moves the "@" past the
+        # netloc, where it can't be told apart from a path or query "@": mask
+        # everything between "//" and the last "@"
+        start = url.index("//") + 2
+        return url[:start] + "***" + url[url.rindex("@") :]
     userinfo, _, hostport = parts.netloc.rpartition("@")
     user, sep, _ = userinfo.partition(":")
     masked = f"{user}:***" if sep else "***"
