@@ -305,17 +305,12 @@ def no_socksio(monkeypatch):
 
 def test_explicit_socks_without_socksio_names_the_extra(no_socksio):
     with pytest.raises(ValueError, match=r"shopify-spy\[socks\]"):
-        check_proxy_support("socks5://h:1080", use_env=True)
+        check_proxy_support("socks5://h:1080")
 
 
 def test_explicit_proxy_skips_the_environment(clean_proxy_env, no_socksio):
     clean_proxy_env.setenv("HTTPS_PROXY", "socks5://h:1080")
-    check_proxy_support("http://h:1", use_env=True)
-
-
-def test_environment_ignored_without_use_env(clean_proxy_env, no_socksio):
-    clean_proxy_env.setenv("HTTPS_PROXY", "socks5://h:1080")
-    check_proxy_support(None, use_env=False)
+    check_proxy_support("http://h:1")
 
 
 ENV_CASES = [
@@ -341,7 +336,7 @@ async def test_environment_check_matches_httpx(clean_proxy_env, no_socksio, env)
     for name, value in env.items():
         clean_proxy_env.setenv(name, value)
     try:
-        check_proxy_support(None, use_env=True)
+        check_proxy_support(None)
         check_raised = False
     except ValueError:
         check_raised = True

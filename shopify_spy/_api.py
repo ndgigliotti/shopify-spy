@@ -80,7 +80,8 @@ def _prepare(
         opts = ScrapeOptions(**options)
     except ValidationError as exc:
         raise ValueError(str(exc)) from None
-    check_proxy_support(opts.proxy, use_env=opts.fetcher_factory is None)
+    if opts.fetcher_factory is None:  # a custom transport ignores the proxy settings
+        check_proxy_support(opts.proxy)
     if opts.images and opts.images_dir is None:
         raise ValueError(
             "images=True needs images_dir, e.g. scrape(url, images=True, images_dir='images')"

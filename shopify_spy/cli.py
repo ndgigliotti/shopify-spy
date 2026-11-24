@@ -313,7 +313,8 @@ def _check_options(config: Config, peek: bool) -> None:
     schema_for(config.output.format, config.output.schema_)
     if config.output.format == "xlsx" and not peek:
         require_xlsxwriter()
-    check_proxy_support(config.network.proxy, use_env=FETCHER_FACTORY is None)
+    if FETCHER_FACTORY is None:
+        check_proxy_support(config.network.proxy)
 
 
 @app.command()

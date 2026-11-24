@@ -253,7 +253,7 @@ def _require_socksio(scheme: str) -> None:
             raise ValueError(SOCKS_HINT) from None
 
 
-def check_proxy_support(proxy: str | None, *, use_env: bool) -> None:
+def check_proxy_support(proxy: str | None) -> None:
     """Raise ValueError now for a proxy httpx would reject when building its client.
 
     An explicit ``proxy`` gets the full validate_proxy check. Environment proxies
@@ -263,8 +263,6 @@ def check_proxy_support(proxy: str | None, *, use_env: bool) -> None:
     if proxy is not None:
         validate_proxy(proxy)
         _require_socksio(urllib.parse.urlsplit(proxy).scheme)
-        return
-    if not use_env:
         return
     import httpx
 

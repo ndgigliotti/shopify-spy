@@ -532,6 +532,11 @@ def test_custom_fetcher_skips_environment_check(clean_proxy_env, no_socksio):
     assert len(items) == 2
 
 
+def test_custom_fetcher_ignores_explicit_socks_proxy(no_socksio):
+    items, _, _ = scrape(ok_routes(), "shop.test", proxy="socks5://h:1080")
+    assert len(items) == 2
+
+
 def test_proxy_407_fails_store_without_leaking_credentials(
     clean_proxy_env, recording_proxy, caplog
 ):
