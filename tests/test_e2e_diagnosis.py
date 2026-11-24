@@ -90,12 +90,25 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def _hang(self):
         time.sleep(BAIL * 4)
 
-    def do_GET(self):  # noqa: C901 - one branch per scenario
-        path = self.path.split("?")[0]
-        count = self.hits[path] = self.hits.get(path, 0) + 1
+    def _record_agent(self):
         agent = self.headers.get("User-Agent", "")
         if agent not in self.agents:
             self.agents.append(agent)
+
+    def _user_agent_rate_limited(self, path):
+        # Shopify on 2026-11-14 (#62): one user agent is refused for longer than
+        # --bail, any other is served
+        if path == "/robots.txt":
+            return self._send(404)
+        if self.headers.get("User-Agent", "") == self.agents[0]:
+            return self._send(429, headers={"Retry-After": str(BAIL + 1)})
+        page = [{"id": 1, "handle": "p1", "title": "P1"}] if "page=1" in self.path else []
+        return self._send(200, json.dumps({"products": page}).encode())
+
+    def do_GET(self):  # noqa: C901 - one branch per scenario
+        path = self.path.split("?")[0]
+        count = self.hits[path] = self.hits.get(path, 0) + 1
+        self._record_agent()
         host = self.headers.get("Host", "")
         s = self.scenario
 
@@ -158,14 +171,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             # outlast --bail but don't count against it, so the retries run out first
             return self._send(429, headers={"Retry-After": "2"})
         if s == "user_agent_rate_limited":
-            # Shopify on 2026-11-14 (#62): one user agent is refused for longer than
-            # --bail, any other is served
-            if path == "/robots.txt":
-                return self._send(404)
-            if agent == self.agents[0]:
-                return self._send(429, headers={"Retry-After": str(BAIL + 1)})
-            page = [{"id": 1, "handle": "p1", "title": "P1"}] if "page=1" in self.path else []
-            return self._send(200, json.dumps({"products": page}).encode())
+            return self._user_agent_rate_limited(path)
         if s == "rate_limited_no_retry_after":
             # Stupell (#30): 429s without Retry-After; retries wait until --bail
             return self._send(404) if path == "/robots.txt" else self._send(429)
