@@ -22,6 +22,8 @@ from shopify_spy._session import (
     SingleFlight,
     StoreSession,
 )
+from shopify_spy._session import STORE as STORE_KIND
+from shopify_spy._woocommerce import VARIATIONS
 
 STORE = "https://shop.test"
 DISALLOW_PRIVATE = (200, "User-agent: *\nDisallow: /private\n")
@@ -294,6 +296,85 @@ async def test_503_does_not_rotate_user_agent():
     await get(session, f"{STORE}/p")
     first, second = [r.identity.user_agent for r in fetcher.requests]
     assert first == second
+
+
+@pytest.mark.parametrize("kind", [STORE_KIND, PROBE])
+async def test_429_rotates_user_agent(kind):
+    session, fetcher = make_session(
+        {f"{STORE}/p": Seq([(429, ""), (200, "ok")])},
+        robots=False,
+        identity=IdentityPool(agents=["ua-1", "ua-2"]),
+    )
+    assert (await get(session, f"{STORE}/p", kind=kind)).status == 200
+    first, second = [r.identity.user_agent for r in fetcher.requests]
+    assert first != second
+
+
+async def test_robots_429_rotates_user_agent():
+    session, fetcher = make_session(
+        {f"{STORE}/robots.txt": Seq([(429, ""), (200, "")]), f"{STORE}/p": (200, "ok")},
+        identity=IdentityPool(agents=["ua-1", "ua-2"]),
+    )
+    assert (await get(session, f"{STORE}/p")).status == 200
+    first, second = [r.identity.user_agent for r in fetcher.requests if "robots" in r.url]
+    assert first != second
+
+
+async def test_429_on_non_rotating_kind_retries_with_same_user_agent():
+    session, fetcher = make_session(
+        {f"{STORE}/p": Seq([(429, ""), (200, "ok")])},
+        robots=False,
+        identity=IdentityPool(agents=["ua-1", "ua-2"]),
+    )
+    assert (await get(session, f"{STORE}/p", kind=VARIATIONS)).status == 200
+    first, second = [r.identity.user_agent for r in fetcher.requests]
+    assert first == second
+
+
+async def test_403_on_non_rotating_kind_is_final():
+    session, fetcher = make_session(
+        {f"{STORE}/p": Seq([(403, ""), (200, "ok")])},
+        robots=False,
+        identity=IdentityPool(agents=["ua-1", "ua-2"]),
+    )
+    assert (await get(session, f"{STORE}/p", kind=VARIATIONS)).status == 403
+    assert fetcher.count(f"{STORE}/p") == 1
+
+
+async def test_429_with_fixed_user_agent_keeps_it():
+    session, fetcher = make_session(
+        {f"{STORE}/p": Seq([(429, ""), (200, "ok")])},
+        robots=False,
+        identity=IdentityPool(user_agent="fixed/1.0"),
+    )
+    await get(session, f"{STORE}/p")
+    assert [r.identity.user_agent for r in fetcher.requests] == ["fixed/1.0", "fixed/1.0"]
+
+
+@pytest.mark.parametrize("status", [403, 429])
+async def test_concurrent_refusals_of_one_user_agent_rotate_once(status):
+    both_arrived = asyncio.Event()
+    calls: dict[str, int] = {}
+
+    async def refuse_first_together(request):
+        calls[request.url] = calls.get(request.url, 0) + 1
+        if calls[request.url] > 1:
+            return (200, "ok")
+        if len(calls) == 2:
+            both_arrived.set()
+        await both_arrived.wait()
+        return (status, "")
+
+    session, fetcher = make_session(
+        {f"{STORE}/a": refuse_first_together, f"{STORE}/b": refuse_first_together},
+        robots=False,
+        identity=IdentityPool(agents=["ua-1", "ua-2"]),
+    )
+    responses = await asyncio.gather(get(session, f"{STORE}/a"), get(session, f"{STORE}/b"))
+    assert [r.status for r in responses] == [200, 200]
+    agents = [r.identity.user_agent for r in fetcher.requests]
+    assert agents[0] == agents[1]
+    assert set(agents[2:]) == {"ua-1", "ua-2"} - {agents[0]}
 
 
 async def test_transport_error_retried_then_succeeds():

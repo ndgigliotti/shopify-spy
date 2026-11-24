@@ -27,7 +27,6 @@ from shopify_spy._fetch import (
 from shopify_spy._policy import (
     RATE_LIMIT_STATUSES,
     ROBOTS_TOKEN,
-    ROTATE_ON_STATUSES,
     HostSlot,
     IdentityPool,
     RetryPolicy,
@@ -55,7 +54,7 @@ class RequestKind:
     check_robots: bool = True  # obey robots.txt for this request
     counted: bool = True  # counts toward the store's diagnosis stats
     dedupe: bool = True  # skip a URL this store already requested
-    rotate: bool = True  # a 403 may swap the store's user agent and retry
+    rotate: bool = True  # a 403 or 429 may swap the store's user agent; without it a 403 is final
     # A 429 counts toward StoreStats.rate_limits: its pause holds up the store's data
     # (images come after the data they belong to)
     rate_limits: bool = True
@@ -331,12 +330,13 @@ class StoreSession:
                 async with self._store_slots, slot.semaphore:
                     sent_at = await slot.wait_turn()
                     self.stats.requests += 1
+                    sent = self.identity.current
                     try:
                         response = await self.fetcher.fetch(
                             Request(
                                 method="GET",
                                 url=url,
-                                identity=self.identity.current,
+                                identity=sent,
                                 timeout=self.request_timeout,
                             )
                         )
@@ -360,7 +360,7 @@ class StoreSession:
                     retry_after = parse_retry_after(response.headers.get("retry-after"))
                     rate_limited = response.status in RATE_LIMIT_STATUSES
                     # Whatever the transport rotates on, a 403 to such a kind is final
-                    refused = not kind.rotate and response.status in ROTATE_ON_STATUSES
+                    refused = not kind.rotate and response.status == 403
                     if refused or not self.retry.should_retry_status(response.status, attempt):
                         if rate_limited:  # no retry left, but the host still has to back off
                             wait = self.retry.delay(
@@ -368,7 +368,13 @@ class StoreSession:
                             )
                             slot.pause(wait)
                         return response
-                    if response.status in self.retry.rotate_on and self.identity.rotates:
+                    # A concurrent refusal of the same agent may have swapped it already
+                    if (
+                        kind.rotate
+                        and response.status in self.retry.rotate_on
+                        and self.identity.rotates
+                        and self.identity.current.user_agent == sent.user_agent
+                    ):
                         self.identity.rotate()
                         logger.debug(
                             "Swapped user agent after %d: %s",
