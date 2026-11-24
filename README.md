@@ -197,7 +197,7 @@ spy scrape [URL] [OPTIONS]
 - `--ignore-robots, -i` - Ignore robots.txt restrictions
 - `--insecure` - Don't verify TLS certificates
 - `--proxy URL` - Send every request through this proxy (`http://`, `https://` or `socks5://`); overrides `HTTPS_PROXY`/`HTTP_PROXY`, see [Limitations](#limitations)
-- `--bail INT` - Abort if no items scraped within N seconds (default: 30, 0 to disable). Time spent waiting out a server's `Retry-After` doesn't count, for each request, so a rate-limited store can take several minutes to fail
+- `--bail INT` - Abort if no items scraped within N seconds (default: 30, 0 to disable). Time spent waiting out a server's `Retry-After` doesn't count, so a rate-limited store can wait (retries + 1) × up to 60 seconds for each request before its first item, several minutes before it fails
 - `--peek` - Print 1 item to stdout as JSONL and exit (no files or directories created); with `--schema unified`, its unified rows
 - `--verbose, -v` - Show debug output (logs to both file and terminal)
 - `--quiet, -q` - Show only warnings and errors (no live item counter)
