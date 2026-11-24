@@ -429,8 +429,8 @@ _SCRAPE_DOC = """
             ``itertools.islice`` for a total cap.
         bail: Give up on a store that yields no item within this many seconds
             (None or 0 disables). Waits a server asks for with Retry-After don't
-            count, for each request, so a rate-limited store can take minutes to
-            fail.
+            count, for each request, so a rate-limited store can take minutes or
+            hours to fail.
         concurrent_requests: Max concurrent requests per host across the run.
         request_timeout: Seconds allowed for one request (not the whole run).
         retries: Retries for 403/429/5xx responses and network errors. A 429 also
