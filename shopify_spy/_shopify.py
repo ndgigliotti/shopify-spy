@@ -1,7 +1,4 @@
-"""Shopify: bulk /products.json first, then collections past the 25,000 limit, then the sitemap.
-
-Collection items come from /collections.json.
-"""
+"""Shopify: bulk /products.json first, then collections past the 25,000 limit, then the sitemap."""
 
 from __future__ import annotations
 
@@ -371,11 +368,8 @@ def _collection_handles(collections: list[ListedCollection]) -> list[tuple[str, 
 async def _emit_collections(
     ctx: StoreContext, emit: Emit, collections: list[ListedCollection]
 ) -> None:
-    """Emit each listed collection as the item /collections/<handle>.json used to give.
-
-    That endpoint answers 429 for every request (issue #64), but the list's entries
-    have the same fields, so the item and its url stay as they were.
-    """
+    """Emit each listed collection; /collections/<handle>.json answers 429 (issue #64),
+    so the list entry is used instead."""
     for collection, handle, page_url in collections:
         parts = urllib.parse.urlsplit(page_url)
         handle = urllib.parse.quote(handle)
