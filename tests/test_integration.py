@@ -18,7 +18,11 @@ def test_shopify_collections_live():
     result = spy.scrape(
         "https://www.snowdevil.ca", products=False, collections=True, max_items_per_store=1
     ).collect()
-    assert result.items and "collection" in result.items[0]
+    (item,) = result.items
+    handle = item["collection"]["handle"]
+    assert item["url"] == f"https://www.snowdevil.ca/collections/{handle}.json"
+    assert item["store"] == "www.snowdevil.ca"
+    assert result.stores[0].status == "ok"
 
 
 def test_woocommerce_store_live():

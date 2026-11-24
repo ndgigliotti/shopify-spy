@@ -2,7 +2,9 @@
 
 The store has 26,200 products. /products.json serves the first 25,000 in 100 full
 pages (page 101 answers 400, like Shopify), collections hold 950 more, and the last
-250 are only in the sitemap. Run with: uv run pytest -m e2e
+250 are only in the sitemap. With --collections, the collection items come from
+/collections.json, as /collections/<handle>.json answers 429 (issue #64).
+Run with: uv run pytest -m e2e
 """
 
 import http.server
@@ -82,12 +84,19 @@ class _Store(http.server.BaseHTTPRequestHandler):
             return self._json({"collections": COLLECTIONS if page == 1 else []})
         if path == "/sitemap.xml":
             children = [f"{base}/sitemap_products_{n}.xml" for n in (1, 2)]
+            children.append(f"{base}/sitemap_collections_1.xml")
             return self._xml("sitemapindex", "sitemap", children)
+        if path.startswith("/sitemap_collections_"):
+            return self._xml(
+                "urlset", "url", [f"{base}/collections/{c['handle']}" for c in COLLECTIONS]
+            )
         if path.startswith("/sitemap_products_"):
             half = range(13_100) if "_1." in path else range(13_100, CATALOG)
             return self._xml("urlset", "url", [f"{base}/products/p{i}" for i in half])
         if path.startswith("/products/") and path.endswith(".json"):
             return self._json({"product": product(int(path[len("/products/p") : -5]))})
+        if path.startswith("/collections/") and path.endswith(".json"):
+            return self._send(429, b"local_rate_limited")
         return self._send(404)
 
 
@@ -114,6 +123,7 @@ def test_capped_store_is_scraped_through_collections_then_the_sitemap(tmp_path, 
             str(tmp_path),
             "--no-throttle",
             "--quiet",
+            "--collections",
         ],
         capture_output=True,
         text=True,
@@ -123,15 +133,21 @@ def test_capped_store_is_scraped_through_collections_then_the_sitemap(tmp_path, 
     assert result.returncode == 0, result.stdout + result.stderr
 
     status = json.loads(next(tmp_path.glob("status/*_status.json")).read_text())
+    total = CATALOG + len(COLLECTIONS)
     assert status["urls"] == [
-        {"url": url, "items": CATALOG, "status": status["urls"][0]["status"], "code": "ok"}
+        {"url": url, "items": total, "status": status["urls"][0]["status"], "code": "ok"}
     ]
     items = [
         json.loads(line)
         for path in tmp_path.glob("data/*.jsonl")
         for line in path.read_text().splitlines()
     ]
-    handles = [item["product"]["handle"] for item in items]
+    assert len(items) == total
+    # The collections come last, as a block, with the url they always had
+    assert [(item["collection"]["handle"], item["url"]) for item in items[CATALOG:]] == [
+        (c["handle"], f"{url}/collections/{c['handle']}.json") for c in COLLECTIONS
+    ]
+    handles = [item["product"]["handle"] for item in items[:CATALOG]]
     assert len(handles) == CATALOG
     assert set(handles) == {f"p{i}" for i in range(CATALOG)}  # every product, once
 
@@ -142,6 +158,10 @@ def test_capped_store_is_scraped_through_collections_then_the_sitemap(tmp_path, 
     assert [hits[f"/collections/big/products.json?page={n}"] for n in (1, 2, 3)] == [1, 1, 1]
     assert hits["/collections/small/products.json?page=1"] == 1
     assert hits["/collections/empty/products.json?page=1"] == 0
+    # Neither /collections/<handle>.json nor the collections sitemap is requested
+    per_handle = [p for p in hits if p.startswith("/collections/") and "/products." not in p]
+    assert per_handle == []
+    assert hits["/sitemap_collections_1.xml?page=1"] == 0
     # Only the products no list had are fetched one by one
     fetched = {path for path in hits if path.startswith("/products/")}
     assert fetched == {f"/products/p{i}.json" for i in SITEMAP_ONLY}
