@@ -245,6 +245,7 @@ class StoreSession:
         self.request_timeout = request_timeout
         self.stats = StoreStats()
         self.bail_deadline: float | None = None  # set by the runner until the first item
+        self._bail_excused_until = float("-inf")
         self._seen: set[str] = set()
         self._store_slots = asyncio.Semaphore(STORE_CONCURRENCY)
 
@@ -313,12 +314,33 @@ class StoreSession:
             return None
         return max(0.0, self.bail_deadline - now())
 
+    def _excuse_from_bail(self, seconds: float) -> None:
+        """Move the bail deadline past a wait the server asked for with Retry-After.
+
+        Overlapping waits of concurrent requests count once, by their union.
+        """
+        if self.bail_deadline is None:
+            return
+        start = now()
+        end = start + seconds
+        self.bail_deadline += max(0.0, end - max(start, self._bail_excused_until))
+        self._bail_excused_until = max(self._bail_excused_until, end)
+
+    def _retry_delay(self, attempt: int, retry_after: float | None, rate_limited: bool) -> float:
+        """The wait before a retry; a server's Retry-After isn't cut short by --bail."""
+        excused = rate_limited and retry_after is not None
+        cap = None if excused else self.bail_time_left()
+        delay = self.retry.delay(attempt, retry_after, cap, rate_limited)
+        if excused:
+            self._excuse_from_bail(delay)
+        return delay
+
     async def _fetch_with_retries(self, url: str, kind: RequestKind) -> Response | None:
         if not await self._allowed(url, kind):
             return None
         slot = self.registry.slot(url)
-        # Whether a 429 is this request's last word: retries used up, or --bail or a
-        # shutdown cut its wait short
+        # Whether a 429 is this request's last word: retries used up, or a shutdown (or
+        # --bail, for a wait without Retry-After) cut its wait short
         limited = False
         try:
             attempt = 0
@@ -363,10 +385,7 @@ class StoreSession:
                     refused = not kind.rotate and response.status == 403
                     if refused or not self.retry.should_retry_status(response.status, attempt):
                         if rate_limited:  # no retry left, but the host still has to back off
-                            wait = self.retry.delay(
-                                attempt, retry_after, self.bail_time_left(), True
-                            )
-                            slot.pause(wait)
+                            slot.pause(self._retry_delay(attempt, retry_after, True))
                         return response
                     # A concurrent refusal of the same agent may have swapped it already
                     if (
@@ -398,7 +417,7 @@ class StoreSession:
                     retry_after = None
                     rate_limited = False
                     reason = name
-                delay = self.retry.delay(attempt, retry_after, self.bail_time_left(), rate_limited)
+                delay = self._retry_delay(attempt, retry_after, rate_limited)
                 if rate_limited:
                     slot.pause(delay)
                 attempt += 1

@@ -343,12 +343,19 @@ class Runner:
     ) -> bool:
         """Wait until the store's first item (or its end); False if bail ran out first.
 
+        The session moves its deadline past Retry-After waits, so the wait re-reads it.
         On a bail the adapter task is cancelled and awaited.
         """
         session.bail_deadline = asyncio.get_running_loop().time() + bail
         waiter = asyncio.ensure_future(first_item.wait())
         try:
-            await asyncio.wait({adapter_task, waiter}, timeout=bail, return_when="FIRST_COMPLETED")
+            while not (adapter_task.done() or first_item.is_set()):
+                left = session.bail_time_left()
+                if left == 0:
+                    break
+                await asyncio.wait(
+                    {adapter_task, waiter}, timeout=left, return_when="FIRST_COMPLETED"
+                )
         finally:
             waiter.cancel()
         if adapter_task.done() or first_item.is_set():
