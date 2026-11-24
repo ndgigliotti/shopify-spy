@@ -84,6 +84,7 @@ class Paging(enum.Enum):
 
 class ListedCollection(NamedTuple):
     collection: dict[str, Any]  # an entry of /collections.json
+    handle: str
     page_url: str  # the list page it came from, after redirects
 
 
@@ -327,7 +328,7 @@ async def _collection_list(ctx: StoreContext, base: str) -> list[ListedCollectio
         for collection in page:
             if isinstance(collection, dict) and collection.get("handle"):
                 handle = str(collection["handle"])
-                collections.setdefault(handle, ListedCollection(collection, page_url))
+                collections.setdefault(handle, ListedCollection(collection, handle, page_url))
         if len(page) < BULK_PAGE_SIZE:
             break
         url = next_page_url(page_url)
@@ -357,8 +358,8 @@ def _collection_handles(collections: list[ListedCollection]) -> list[tuple[str, 
     Empty collections and "all" are left out; a missing count is -1.
     """
     handles = []
-    for collection, _ in collections:
-        handle, count = str(collection["handle"]), collection.get("products_count")
+    for collection, handle, _ in collections:
+        count = collection.get("products_count")
         # A missing count sorts last but is still paged
         count = count if isinstance(count, int) else -1
         if count != 0 and handle.lower() != "all":
@@ -374,9 +375,9 @@ async def _emit_collections(
     That endpoint answers 429 for every request (issue #64), but the list's entries
     have the same fields, so the item and its url stay as they were.
     """
-    for collection, page_url in collections:
+    for collection, handle, page_url in collections:
         parts = urllib.parse.urlsplit(page_url)
-        handle = urllib.parse.quote(str(collection["handle"]))
+        handle = urllib.parse.quote(handle)
         await emit(
             {
                 "collection": collection,
