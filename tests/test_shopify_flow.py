@@ -161,28 +161,35 @@ def test_non_2xx_product_json_dropped_silently():
     assert result.stores[0].errors == []
 
 
-def test_products_false_goes_straight_to_sitemap():
-    routes = {
-        SITEMAP: urlset(f"{STORE}/products/a", f"{STORE}/collections/c"),
-        f"{STORE}/products/a.json": {"product": {"handle": "a"}},
-        f"{STORE}/collections/c.json": {"collection": {"handle": "c"}},
-    }
-    items, _, fetcher = scrape(routes, products=False, collections=True)
-    assert fetcher.count(bulk_url(1)) == 0
-    assert fetcher.count(f"{STORE}/products/a.json") == 0
-    assert [i["collection"]["handle"] for i in items] == ["c"]
-
-
 # --- Collections ---
+
+
+def collection_list(*counts: tuple[str, int | None]) -> dict:
+    return {"collections": [{"handle": h, "products_count": n} for h, n in counts]}
+
+
+COLLECTIONS = f"{STORE}/collections.json?limit=250&page=1"
+
+
+def per_handle_requests(fetcher) -> list[str]:
+    """Requests for /collections/<handle>.json, which Shopify answers 429 (issue #64)."""
+    return [u for u in requested(fetcher) if "/collections/" in u and "/products" not in u]
+
+
+def test_products_false_reads_only_the_collection_list():
+    routes = {COLLECTIONS: {"collections": [{"id": 3, "handle": "c"}]}}
+    items, _, fetcher = scrape(routes, products=False, collections=True)
+    assert requested(fetcher) == [COLLECTIONS]
+    assert [i["collection"]["handle"] for i in items] == ["c"]
 
 
 def _collections_routes():
     return {
         bulk_url(1): products(2),
+        COLLECTIONS: {"collections": [{"id": 3, "handle": "c"}]},
         SITEMAP: urlset(
             f"{STORE}/products/p0", f"{STORE}/products/extra", f"{STORE}/collections/c"
         ),
-        f"{STORE}/products/extra.json": {"product": {"handle": "extra"}},
         f"{STORE}/collections/c.json": {"collection": {"id": 3, "handle": "c"}},
     }
 
@@ -191,15 +198,14 @@ def test_collections_off_by_default_no_sitemap_after_complete_bulk():
     items, _, fetcher = scrape(_collections_routes())
     assert len(items) == 2
     assert fetcher.count(SITEMAP) == 0
+    assert fetcher.count(COLLECTIONS) == 0
 
 
-def test_collections_fetched_after_complete_bulk_and_products_skipped():
+def test_collections_come_from_the_list_after_complete_bulk():
     items, _, fetcher = scrape(_collections_routes(), collections=True)
-    assert fetcher.count(SITEMAP) == 1
-    assert fetcher.count(f"{STORE}/products/extra.json") == 0
-    assert fetcher.count(f"{STORE}/products/p0.json") == 0
-    collections = [i for i in items if "collection" in i]
-    assert collections == [
+    assert fetcher.count(SITEMAP) == 0
+    assert per_handle_requests(fetcher) == []
+    assert items[2:] == [
         {
             "collection": {"id": 3, "handle": "c"},
             "url": f"{STORE}/collections/c.json",
@@ -209,6 +215,47 @@ def test_collections_fetched_after_complete_bulk_and_products_skipped():
         }
     ]
     assert len(items) == 3
+
+
+def test_collection_items_use_the_lists_post_redirect_host():
+    www = "https://www.shop.test"
+    routes = {
+        COLLECTIONS: redirect(f"{www}/collections.json?limit=250&page=1"),
+        f"{www}/collections.json?limit=250&page=1": collection_list(("a b", 1)),
+    }
+    items, _, _ = scrape(routes, products=False, collections=True)
+    assert [(i["url"], i["store"]) for i in items] == [
+        (f"{www}/collections/a%20b.json", "www.shop.test")
+    ]
+
+
+def test_collection_items_from_every_page_once_each():
+    first = collection_list(*((f"c{i}", 1) for i in range(250)))
+    routes = {
+        COLLECTIONS: first,
+        # A handle repeated on a later page is emitted once; an entry without one is skipped
+        COLLECTIONS[:-1] + "2": {"collections": [{"handle": "c0"}, {"id": 9}, {"handle": "z"}]},
+    }
+    items, _, fetcher = scrape(routes, products=False, collections=True)
+    assert [i["collection"]["handle"] for i in items] == [f"c{i}" for i in range(250)] + ["z"]
+    assert fetcher.count(COLLECTIONS[:-1] + "3") == 0
+
+
+def test_collection_image_urls_when_images_enabled(tmp_path):
+    entry = {"handle": "c", "image": {"src": "https://cdn.test/c.jpg"}}
+    routes = {COLLECTIONS: {"collections": [entry]}}
+    items, _, _ = scrape(routes, products=False, collections=True, images=True, images_dir=tmp_path)
+    assert items[0]["image_urls"] == ["https://cdn.test/c.jpg"]
+
+
+@pytest.mark.parametrize("failure", [(500, "boom"), (404, ""), (200, "<html>")])
+def test_collection_list_failure_gives_no_collection_items(failure):
+    routes = {**_collections_routes(), COLLECTIONS: failure}
+    items, result, fetcher = scrape(routes, collections=True)
+    assert [i for i in items if "collection" in i] == []
+    assert len(items) == 2
+    assert per_handle_requests(fetcher) == []  # no per-handle fallback
+    assert fetcher.count(SITEMAP) == 0
 
 
 # --- Partial bulk run (§3.10 fix) ---
@@ -236,13 +283,6 @@ def test_partial_bulk_fetches_only_unseen_handles():
 
 
 # --- Past the bulk limit: collections ---
-
-
-def collection_list(*counts: tuple[str, int | None]) -> dict:
-    return {"collections": [{"handle": h, "products_count": n} for h, n in counts]}
-
-
-COLLECTIONS = f"{STORE}/collections.json?limit=250&page=1"
 
 
 @pytest.fixture
@@ -534,3 +574,36 @@ def test_max_items_per_store_sitemap_stops_exactly():
     items, result, _ = scrape(routes, max_items_per_store=2)
     assert len(items) == 2
     assert result.stores[0].finish_reason == "item_limit"
+
+
+def test_capped_store_with_collections_reads_the_list_once(capped):
+    routes = {
+        **capped,
+        COLLECTIONS: collection_list(("small", 3), ("empty", 0)),
+        collection_url("small", 1): products(3, 750),
+        SITEMAP: urlset(
+            *(f"{STORE}/products/p{i}" for i in range(755)), f"{STORE}/collections/small"
+        ),
+        **{f"{STORE}/products/p{i}.json": {"product": {"handle": f"p{i}"}} for i in (753, 754)},
+    }
+    items, result, fetcher = scrape(routes, collections=True)
+    assert fetcher.count(COLLECTIONS) == 1
+    assert per_handle_requests(fetcher) == []
+    # Products first, then the collections as a block, empty ones included
+    assert [i["collection"]["handle"] for i in items[755:]] == ["small", "empty"]
+    assert len(items) == 757
+    assert result.stores[0].complete
+
+
+def test_capped_store_reads_the_list_for_items_when_paging_skipped_it(capped):
+    # Few products missing, so collections aren't paged and the list isn't read for them
+    routes = {
+        **capped,
+        COLLECTIONS: collection_list(("c", 5)),
+        SITEMAP: urlset(*(f"{STORE}/products/p{i}" for i in range(751))),
+        f"{STORE}/products/p750.json": {"product": {"handle": "p750"}},
+    }
+    items, _, fetcher = scrape(routes, collections=True)
+    assert fetcher.count(collection_url("all", 1)) == 0
+    assert fetcher.count(COLLECTIONS) == 1
+    assert [i["collection"]["handle"] for i in items if "collection" in i] == ["c"]

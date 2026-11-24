@@ -56,22 +56,27 @@ def test_sitemap_fallback_does_not_fetch_image_urls():
     assert not any("cdn.test" in r.url for r in fetcher.requests)
 
 
-def test_child_sitemaps_without_wanted_entries_are_not_fetched():
+def test_child_sitemaps_without_products_are_not_fetched():
     routes = {
-        bulk_url(1): products(3),
+        bulk_url(1): (500, "boom"),
         f"{STORE}/sitemap.xml": sitemapindex(
             f"{STORE}/sitemap_products_1.xml",
             f"{STORE}/sitemap_pages_1.xml",
             f"{STORE}/sitemap_collections_1.xml",
         ),
+        f"{STORE}/sitemap_products_1.xml": urlset(f"{STORE}/products/a"),
+        f"{STORE}/products/a.json": {"product": {"id": 1, "handle": "a"}},
         f"{STORE}/sitemap_collections_1.xml": urlset(f"{STORE}/collections/c"),
-        f"{STORE}/collections/c.json": {"collection": {"id": 9}},
+        f"{STORE}/collections.json?limit=250&page=1": {"collections": [{"handle": "c"}]},
     }
     items, _, fetcher = scrape(routes, collections=True)
-    assert len(items) == 4
+    assert len(items) == 2
     fetched = {r.url for r in fetcher.requests}
-    assert f"{STORE}/sitemap_products_1.xml" not in fetched  # bulk already covered them
+    assert f"{STORE}/sitemap_products_1.xml" in fetched
     assert f"{STORE}/sitemap_pages_1.xml" not in fetched
+    # Collections come from /collections.json, not the sitemap (issue #64)
+    assert f"{STORE}/sitemap_collections_1.xml" not in fetched
+    assert f"{STORE}/collections/c.json" not in fetched
 
 
 def test_first_item_at_the_bail_deadline_is_never_lost():
