@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `--collections` gets collection items from Shopify stores again
+  ([#64](https://github.com/ndgigliotti/shopify-spy/issues/64)). Shopify answers
+  `/collections/<handle>.json` with 429 for every request, so the items now come from
+  the paged `/collections.json` list, and the sitemap is no longer read for them.
+  Their fields, values and `url` are unchanged. Only the order changes: collections
+  now come as a block after the products, instead of mixed in with the sitemap's
+  product fetches.
+
 ## 0.4.1
 
 ### Changed
