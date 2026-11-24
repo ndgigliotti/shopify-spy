@@ -207,3 +207,12 @@ def test_bad_network_proxy_error_hides_credentials(tmp_path, yaml_text, locs):
     if ("network", "proxy") in locs:
         assert "network.proxy" in str(exc)
         assert "ftp://u:***@h:1" in str(exc)
+
+
+def test_bad_non_proxy_value_keeps_its_input(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("network:\n  proxy: http://u:secret@h:1\n  timeout: abc\n")
+    with pytest.raises(ValidationError) as info:
+        load_config_from_file(path)
+    assert "input_value='abc'" in str(info.value)
+    assert info.value.errors()[0]["input"] == "abc"

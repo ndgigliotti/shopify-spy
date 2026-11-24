@@ -79,10 +79,6 @@ class ThrottleConfig(BaseModel):
 class Config(BaseModel):
     """Root configuration model."""
 
-    # network.proxy may hold credentials, so errors never echo the input (set on
-    # the root: a nested model's setting has no effect when the parent validates)
-    model_config = ConfigDict(hide_input_in_errors=True)
-
     scrape: ScrapeConfig = Field(default_factory=ScrapeConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     network: NetworkConfig = Field(default_factory=NetworkConfig)
@@ -180,6 +176,9 @@ def load_config(config_path: Path | None = None) -> Config:
     return Config()
 
 
+_PROXY_LOC = ("network", "proxy")
+
+
 def load_config_from_file(path: Path) -> Config:
     """Load and validate configuration from a specific file."""
     import yaml
@@ -194,10 +193,15 @@ def load_config_from_file(path: Path) -> Config:
     try:
         return Config.model_validate(data)
     except ValidationError as exc:
-        # hide_input_in_errors only covers str(exc); errors() still carries each
-        # raw input, which can be (or contain) a proxy URL with credentials
-        line_errors = [{**error, "input": "<hidden>"} for error in exc.errors(include_url=False)]
-        raise ValidationError.from_exception_data(exc.title, line_errors, hide_input=True) from None
+        # network.proxy may hold credentials, so hide the input of any error at
+        # it or at a level that contains it (the whole file, or all of network)
+        line_errors = [
+            {**error, "input": "<hidden>"}
+            if _PROXY_LOC[: len(error["loc"])] == error["loc"]
+            else error
+            for error in exc.errors(include_url=False)
+        ]
+        raise ValidationError.from_exception_data(exc.title, line_errors) from None
 
 
 def create_default_config(path: Path | None = None) -> Path:
