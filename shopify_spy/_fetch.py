@@ -205,10 +205,12 @@ def redact_url(url: str) -> str:
         parts = urllib.parse.urlsplit(url)
     except ValueError:
         parts = None
-    if parts is None or "@" not in parts.netloc:
+    if parts is None or not parts.netloc:
         # No parseable netloc (e.g. scheme-less "u:secret@host:8080"): mask
         # everything up to the last "@"
         return "***" + url[url.rindex("@") :]
+    if "@" not in parts.netloc:
+        return url  # the "@" is in the path, query or fragment
     userinfo, _, hostport = parts.netloc.rpartition("@")
     user, sep, _ = userinfo.partition(":")
     masked = f"{user}:***" if sep else "***"

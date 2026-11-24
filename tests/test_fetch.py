@@ -263,6 +263,8 @@ DEAD_PROXY = "http://127.0.0.1:9"
         ("http://token@gw:8000", "http://***@gw:8000"),
         ("socks5://u:p@[::1]:1080/x", "socks5://u:***@[::1]:1080/x"),
         ("http://gw:8000", "http://gw:8000"),
+        ("http://gw:8000/?session=a@b", "http://gw:8000/?session=a@b"),
+        ("http://u:p@gw:8000/?session=a@b", "http://u:***@gw:8000/?session=a@b"),
         ("not a url", "not a url"),
     ],
 )
