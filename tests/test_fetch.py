@@ -35,6 +35,7 @@ from shopify_spy._fetch import (
     decompress,
     load_corpus,
     redact_url,
+    uses_proxy,
     validate_proxy,
 )
 
@@ -300,6 +301,28 @@ def test_validate_proxy_error_is_redacted():
         validate_proxy("ftp://u:secret@h:1")
     assert "secret" not in str(info.value)
     assert "ftp://u:***@h:1" in str(info.value)
+
+
+@pytest.mark.parametrize(
+    ("env", "url", "expected"),
+    [
+        ({}, "https://a.com", False),
+        ({"HTTPS_PROXY": "http://gw:8080"}, "https://a.com", True),
+        ({"HTTPS_PROXY": "http://gw:8080"}, "http://a.com", False),
+        ({"ALL_PROXY": "socks5://gw:1080"}, "http://a.com", True),
+        ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "a.com"}, "https://a.com", False),
+        ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "*"}, "https://a.com", False),
+    ],
+)
+def test_uses_proxy_from_environment(clean_proxy_env, env, url, expected):
+    for name, value in env.items():
+        clean_proxy_env.setenv(name, value)
+    assert uses_proxy(url, None) is expected
+
+
+def test_explicit_proxy_is_always_used(clean_proxy_env):
+    clean_proxy_env.setenv("NO_PROXY", "*")
+    assert uses_proxy("https://a.com", "http://gw:8080")
 
 
 def test_explicit_proxy_skips_the_environment(clean_proxy_env):

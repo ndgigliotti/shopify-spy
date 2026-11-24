@@ -539,6 +539,7 @@ def test_proxy_407_fails_store_without_leaking_credentials(
         list(run)
     [store] = run.result.stores
     assert store.status == "no_response"
+    assert store.hint == "requests went through a proxy; check that it is reachable"
     assert proxy.records and all(command == "CONNECT" for command, _, _ in proxy.records)
     assert "secret" not in repr(run.result)
     assert "secret" not in str(info.value)

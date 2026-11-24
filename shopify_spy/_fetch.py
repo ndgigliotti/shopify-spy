@@ -249,6 +249,17 @@ def _env_proxies() -> list[str]:
     return [v if "://" in v else f"http://{v}" for v in values]
 
 
+def uses_proxy(url: str, proxy: str | None) -> bool:
+    """Whether a request to ``url`` goes through a proxy, explicit or from the environment."""
+    if proxy is not None:
+        return True
+    parts = urllib.parse.urlsplit(url)
+    env = {scheme: info for scheme, info in urllib.request.getproxies().items() if info}
+    if parts.scheme not in env and "all" not in env:
+        return False
+    return not urllib.request.proxy_bypass_environment(parts.hostname or "")
+
+
 def check_proxy_support(proxy: str | None) -> None:
     """Raise ValueError now for a proxy httpx would reject when building its client.
 

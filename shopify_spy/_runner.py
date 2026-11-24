@@ -20,7 +20,7 @@ from typing import Any
 
 from shopify_spy import _shopify as shopify
 from shopify_spy import _woocommerce as woocommerce
-from shopify_spy._fetch import FetcherFactory, HttpxFetcher, redact_url
+from shopify_spy._fetch import FetcherFactory, HttpxFetcher, redact_url, uses_proxy
 from shopify_spy._images import RESULT_FIELD as IMAGES_FIELD
 from shopify_spy._images import ImageDownloader
 from shopify_spy._policy import IdentityPool, ThrottleSettings, retry_policy_for
@@ -89,7 +89,7 @@ class StoreState:
     def items(self) -> int:
         return self.ctx.items if self.ctx else 0
 
-    def result(self, platform: str) -> StoreResult:
+    def result(self, platform: str, via_proxy: bool = False) -> StoreResult:
         stats = self.ctx.session.stats if self.ctx else StoreStats()
         reason = self.finish_reason or "closed"
         duration = 0.0
@@ -117,6 +117,7 @@ class StoreState:
             images_failed=stats.images_failed,
             errors=list(self.errors),
             duration=duration,
+            via_proxy=via_proxy,
         )
 
 
@@ -357,7 +358,12 @@ class Runner:
         return False
 
     def results(self) -> list[StoreResult]:
-        return [s.result(self.config.platform) for s in self.states]
+        # A custom fetcher_factory ignores proxies, so there's nothing to blame
+        custom = self.config.fetcher_factory is not None
+        return [
+            s.result(self.config.platform, not custom and uses_proxy(s.url, self.config.proxy))
+            for s in self.states
+        ]
 
 
 def _unwrap(exc: BaseException) -> BaseException:
