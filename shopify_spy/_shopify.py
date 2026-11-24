@@ -142,8 +142,9 @@ async def _past_bulk(
         # With an item limit the catalog may be far bigger than needed (millions of
         # products), so don't read the whole sitemap up front; it's streamed below
         collections = await _collections(ctx, emit, seen, paged.origin, None)
-    sitemap_ok = await _sitemap(ctx, emit, seen)
-    return not seen or sitemap_ok, collections
+    walk = _sitemap_walk(ctx)
+    await _fetch_documents(ctx, emit, _product_locs(walk), seen)
+    return not seen or walk.root_ok, collections
 
 
 async def _page_products(
@@ -387,16 +388,6 @@ async def _emit_collections(
                 "image_urls": image_urls(collection, ctx.images),
             }
         )
-
-
-async def _sitemap(ctx: StoreContext, emit: Emit, seen: set[str]) -> bool:
-    """Fetch the sitemap's products whose handles weren't seen.
-
-    Returns whether the top-level sitemap could be read.
-    """
-    walk = _sitemap_walk(ctx)
-    await _fetch_documents(ctx, emit, _product_locs(walk), seen)
-    return walk.root_ok
 
 
 def _listed_handle(loc: str) -> str | None:
