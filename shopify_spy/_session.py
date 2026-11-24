@@ -341,6 +341,16 @@ class StoreSession:
         covered = max([cut, *self._excused_ends])
         self.bail_deadline -= max(0.0, end - covered)
 
+    async def _sleep_before_retry(self, delay: float, excused_until: float | None) -> None:
+        if not delay:
+            return
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            if excused_until is not None:
+                self._unexcuse_from_bail(excused_until)
+            raise
+
     def _retry_delay(
         self, attempt: int, retry_after: float | None, rate_limited: bool
     ) -> tuple[float, float | None]:
@@ -438,12 +448,6 @@ class StoreSession:
                     slot.pause(delay)
                 attempt += 1
                 logger.info("Retrying %s (attempt %d, %s) in %.1fs", url, attempt, reason, delay)
-                if delay:
-                    try:
-                        await asyncio.sleep(delay)
-                    except asyncio.CancelledError:
-                        if excused_until is not None:
-                            self._unexcuse_from_bail(excused_until)
-                        raise
+                await self._sleep_before_retry(delay, excused_until)
         finally:
             self.stats.rate_limits += limited and kind.rate_limits
