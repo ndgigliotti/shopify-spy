@@ -8,7 +8,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+from shopify_spy._fetch import validate_proxy
 
 OutputFormat = Literal["json", "jsonl", "csv", "xlsx", "xml"]
 OutputSchema = Literal["native", "unified"]
@@ -50,6 +52,9 @@ class OutputConfig(BaseModel):
 class NetworkConfig(BaseModel):
     """Configuration for network settings."""
 
+    # The proxy URL may hold credentials, so errors never echo the input
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     concurrent_requests: int = Field(default=16, ge=1)
     timeout: int = Field(default=180, ge=1)
     retries: int = Field(default=2, ge=0)
@@ -57,6 +62,12 @@ class NetworkConfig(BaseModel):
     respect_robots_txt: bool = True
     verify_tls: bool = True
     max_concurrent_stores: int | None = Field(default=16, ge=1)  # None = no limit
+    proxy: str | None = None  # None = HTTPS_PROXY/HTTP_PROXY/ALL_PROXY from the environment
+
+    @field_validator("proxy")
+    @classmethod
+    def _check_proxy(cls, value: str | None) -> str | None:
+        return None if value is None else validate_proxy(value)
 
 
 class ThrottleConfig(BaseModel):
@@ -70,6 +81,9 @@ class ThrottleConfig(BaseModel):
 
 class Config(BaseModel):
     """Root configuration model."""
+
+    # Set here too: a nested model's setting has no effect when the parent validates
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     scrape: ScrapeConfig = Field(default_factory=ScrapeConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
@@ -93,6 +107,7 @@ class Config(BaseModel):
             "respect_robots_txt": self.network.respect_robots_txt,
             "verify_tls": self.network.verify_tls,
             "max_concurrent_stores": self.network.max_concurrent_stores,
+            "proxy": self.network.proxy,
             "throttle": self.throttle.enabled,
             "throttle_start_delay": self.throttle.start_delay,
             "throttle_max_delay": self.throttle.max_delay,
@@ -130,6 +145,7 @@ network:
   timeout: 180             # Request timeout (seconds)
   retries: 2               # Retry failed requests
   # user_agent: MyBot/1.0 (+https://example.com)  # Custom user agent
+  # proxy: http://proxy.example.com:8080  # Fixed proxy (overrides HTTPS_PROXY)
   respect_robots_txt: true
   verify_tls: true         # Verify TLS certificates (false = --insecure)
   max_concurrent_stores: 16  # Stores scraped at once
@@ -177,7 +193,13 @@ def load_config_from_file(path: Path) -> Config:
     if data is None:
         return Config()
 
-    return Config.model_validate(data)
+    try:
+        return Config.model_validate(data)
+    except ValidationError as exc:
+        # hide_input_in_errors only covers str(exc); errors() still carries each
+        # raw input, which can be (or contain) a proxy URL with credentials
+        line_errors = [{**error, "input": "<hidden>"} for error in exc.errors(include_url=False)]
+        raise ValidationError.from_exception_data(exc.title, line_errors, hide_input=True) from None
 
 
 def create_default_config(path: Path | None = None) -> Path:

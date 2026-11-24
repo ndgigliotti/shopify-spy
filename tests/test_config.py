@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from shopify_spy._config import (
     Config,
@@ -168,3 +169,41 @@ def test_load_config_with_limit(tmp_path):
     config_file.write_text("scrape:\n  limit: 25\n")
     config = load_config_from_file(config_file)
     assert config.scrape.limit == 25
+
+
+# --- network.proxy ---
+
+
+def test_network_proxy_from_file(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("network:\n  proxy: http://cfg:1\n")
+    assert load_config_from_file(path).to_kwargs()["proxy"] == "http://cfg:1"
+
+
+def test_network_proxy_defaults_to_none():
+    assert Config().to_kwargs()["proxy"] is None
+
+
+@pytest.mark.parametrize(
+    ("yaml_text", "locs"),
+    [
+        ("network:\n  proxy: ftp://u:secret@h:1\n", {("network", "proxy")}),
+        (
+            "network:\n  proxy: ftp://u:secret@h:1\n  timeout: -1\n",
+            {("network", "proxy"), ("network", "timeout")},
+        ),
+        ("network:\n  - ftp://u:secret@h:1\n", {("network",)}),
+    ],
+)
+def test_bad_network_proxy_error_hides_credentials(tmp_path, yaml_text, locs):
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml_text)
+    with pytest.raises(ValidationError) as info:
+        load_config_from_file(path)
+    exc = info.value
+    assert "secret" not in str(exc)
+    assert "secret" not in repr(exc.errors())
+    assert {error["loc"] for error in exc.errors()} == locs
+    if ("network", "proxy") in locs:
+        assert "network.proxy" in str(exc)
+        assert "ftp://u:***@h:1" in str(exc)

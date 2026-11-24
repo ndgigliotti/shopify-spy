@@ -21,6 +21,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from shopify_spy._fetch import check_proxy_support
 from shopify_spy._policy import ThrottleSettings
 from shopify_spy._results import RunResult, ScrapeFailed, StoreResult, run_finish_reason
 from shopify_spy._runner import RunConfig, Runner
@@ -54,6 +55,7 @@ class ScrapeOptions(BaseModel):
     user_agent: str | None = None
     respect_robots_txt: bool = True
     verify_tls: bool = True
+    proxy: str | None = Field(default=None, repr=False)
     max_concurrent_stores: int | None = Field(default=16, ge=1)
     throttle: bool = True
     throttle_start_delay: float = Field(default=1.0, ge=0)
@@ -70,10 +72,15 @@ def _prepare(
     backoff = options.pop("_backoff", True)
     if options.get("platform") == "auto":
         raise ValueError("auto-detection isn't supported yet; use 'shopify' or 'woocommerce'")
+    proxy = options.get("proxy")
+    if proxy is not None and not isinstance(proxy, str):
+        # Checked here so pydantic never echoes the value, which may hold credentials
+        raise TypeError(f"proxy must be a URL string, got {type(proxy).__name__}")
     try:
         opts = ScrapeOptions(**options)
     except ValidationError as exc:
         raise ValueError(str(exc)) from None
+    check_proxy_support(opts.proxy, use_env=opts.fetcher_factory is None)
     if opts.images and opts.images_dir is None:
         raise ValueError(
             "images=True needs images_dir, e.g. scrape(url, images=True, images_dir='images')"
@@ -128,6 +135,7 @@ def _config(opts: ScrapeOptions, backoff: bool) -> RunConfig:
         user_agent=opts.user_agent,
         respect_robots_txt=opts.respect_robots_txt,
         verify_tls=opts.verify_tls,
+        proxy=opts.proxy,
         max_concurrent_stores=opts.max_concurrent_stores,
         throttle=ThrottleSettings(
             enabled=opts.throttle,
@@ -428,6 +436,12 @@ _SCRAPE_DOC = """
             swapped after a 403.
         respect_robots_txt: Obey robots.txt (default True).
         verify_tls: Verify TLS certificates (default True).
+        proxy: A fixed proxy URL for every request: http://, https://, or socks5://
+            with the ``shopify-spy[socks]`` extra. It overrides HTTPS_PROXY,
+            HTTP_PROXY and ALL_PROXY, which are otherwise honored (with NO_PROXY);
+            an explicit proxy ignores NO_PROXY. Credentials in it are masked in
+            logs and errors. It gives a fixed egress, not a way around a store's
+            rate limits. Ignored with a custom ``fetcher_factory``.
         max_concurrent_stores: Stores scraped at once (None = no limit).
         throttle, throttle_start_delay, throttle_max_delay,
         throttle_target_concurrency: AutoThrottle settings (on by default).

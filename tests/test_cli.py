@@ -399,6 +399,43 @@ def test_insecure_and_max_stores_map_to_kwargs():
     assert defaults["max_concurrent_stores"] == 16
 
 
+def test_proxy_flag_overrides_config_proxy():
+    config = Config(network={"proxy": "http://cfg:1"})
+    assert _overrides(config).to_kwargs()["proxy"] == "http://cfg:1"
+    assert _overrides(config, proxy=None).to_kwargs()["proxy"] == "http://cfg:1"
+    assert _overrides(config, proxy="http://cli:2").to_kwargs()["proxy"] == "http://cli:2"
+
+
+def test_invalid_proxy_flag_is_a_clean_redacted_error(cli):
+    run = cli(None, "shop.test", "--proxy", "ftp://u:secret@h:1", "--peek", output=False)
+    assert run.exit_code == 1
+    assert "Error: proxy must be" in run.stderr
+    assert "Traceback" not in run.stderr + run.stdout
+    assert "secret" not in run.stderr + run.stdout
+
+
+def test_socks_proxy_flag_without_socksio_is_a_clean_error(cli, monkeypatch):
+    monkeypatch.setitem(sys.modules, "socksio", None)
+    run = cli(None, "shop.test", "--proxy", "socks5://h:1080", "--peek", output=False)
+    assert run.exit_code == 1
+    assert "Error: SOCKS proxies need socksio" in run.stderr
+    assert "shopify-spy[socks]" in run.stderr
+    assert "Traceback" not in run.stderr + run.stdout
+
+
+def test_proxy_flag_reaches_library(cli, monkeypatch):
+    seen = {}
+    real = cli_module.scrape_async
+
+    def spy_scrape(urls, **kwargs):
+        seen.update(kwargs)
+        return real(urls, **kwargs)
+
+    monkeypatch.setattr(cli_module, "scrape_async", spy_scrape)
+    cli(None, "shop.test", "--proxy", "http://u:p@gw:8000")
+    assert seen["proxy"] == "http://u:p@gw:8000"
+
+
 def test_overrides_map_to_kwargs():
     kwargs = _overrides(
         limit=7, throttle=False, ignore_robots=True, bail=0, concurrent=2

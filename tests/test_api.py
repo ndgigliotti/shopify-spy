@@ -470,3 +470,90 @@ async def test_async_request_shutdown():
         elapsed = time.monotonic() - start
     assert run.result.stores[0].finish_reason == "shutdown"
     assert elapsed < 5, f"graceful shutdown took {elapsed:.1f}s"
+
+
+# --- Proxy ---
+
+
+@pytest.mark.parametrize("proxy", ["ftp://h:1", "h:8080", "http://", "http://h:notaport"])
+def test_invalid_proxy_raises_at_call_time(proxy):
+    with pytest.raises(ValueError, match="proxy must be"):
+        spy.scrape("a.com", proxy=proxy)
+
+
+def test_non_string_proxy_raises_type_error():
+    with pytest.raises(TypeError, match="proxy must be a URL string, got int"):
+        spy.scrape("a.com", proxy=8080)
+
+
+def test_default_proxy_accepted(clean_proxy_env):
+    spy.scrape("a.com", proxy=None)
+
+
+def test_invalid_proxy_error_is_redacted():
+    with pytest.raises(ValueError) as info:
+        spy.scrape("a.com", proxy="ftp://u:secret@h:1")
+    assert "secret" not in str(info.value)
+
+
+@pytest.fixture
+def no_socksio(monkeypatch):
+    monkeypatch.setitem(sys.modules, "socksio", None)
+
+
+def test_socks_proxy_without_socksio_raises_at_call_time(no_socksio):
+    with pytest.raises(ValueError, match=r"shopify-spy\[socks\]"):
+        spy.scrape_async("a.com", proxy="socks5://h:1080")
+
+
+@pytest.mark.parametrize("name", ["HTTPS_PROXY", "ALL_PROXY"])
+def test_socks_proxy_from_environment_raises_at_call_time(clean_proxy_env, no_socksio, name):
+    clean_proxy_env.setenv(name, "socks5://h:1080")
+    with pytest.raises(ValueError, match=r"environment.*shopify-spy\[socks\]"):
+        spy.scrape("a.com")
+
+
+@pytest.mark.parametrize("name", ["HTTPS_PROXY", "ALL_PROXY"])
+def test_no_proxy_star_skips_environment_socks(clean_proxy_env, no_socksio, name):
+    clean_proxy_env.setenv(name, "socks5://h:1080")
+    clean_proxy_env.setenv("NO_PROXY", "*")
+    spy.scrape("a.com")
+
+
+@pytest.mark.parametrize("value", ["http://", "http://:8080", "http://h:99999"])
+def test_environment_proxies_httpx_accepts_still_accepted(clean_proxy_env, value):
+    clean_proxy_env.setenv("HTTPS_PROXY" if value.endswith("99999") else "HTTP_PROXY", value)
+    spy.scrape("a.com")
+
+
+def test_custom_fetcher_skips_environment_check(clean_proxy_env, no_socksio):
+    clean_proxy_env.setenv("HTTPS_PROXY", "socks5://h:1080")
+    items, _, _ = scrape(ok_routes(), "shop.test")
+    assert len(items) == 2
+
+
+def test_proxy_407_fails_store_without_leaking_credentials(
+    clean_proxy_env, recording_proxy, caplog
+):
+    proxy = recording_proxy(reject_connect=True)
+    url = f"http://u:secret@127.0.0.1:{proxy.port}"
+    caplog.set_level("DEBUG", logger="shopify_spy")
+    run = spy.scrape(STORE, proxy=url, retries=0, bail=None, throttle=False)
+    with pytest.raises(spy.ScrapeFailed) as info:
+        list(run)
+    [store] = run.result.stores
+    assert store.status == "no_response"
+    assert proxy.records and all(command == "CONNECT" for command, _, _ in proxy.records)
+    assert "secret" not in repr(run.result)
+    assert "secret" not in str(info.value)
+    assert "secret" not in caplog.text
+    assert f"Using proxy http://u:***@127.0.0.1:{proxy.port}" in caplog.text
+
+
+def test_proxy_kept_out_of_option_reprs():
+    from shopify_spy._api import ScrapeOptions
+    from shopify_spy._runner import RunConfig
+
+    url = "http://u:secret@gw:8000"
+    assert "secret" not in repr(ScrapeOptions(proxy=url))
+    assert "secret" not in repr(RunConfig(proxy=url))

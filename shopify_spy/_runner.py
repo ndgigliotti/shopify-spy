@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import logging
 import time
 import traceback
@@ -20,7 +21,7 @@ from typing import Any
 
 from shopify_spy import _shopify as shopify
 from shopify_spy import _woocommerce as woocommerce
-from shopify_spy._fetch import FetcherFactory, HttpxFetcher
+from shopify_spy._fetch import FetcherFactory, HttpxFetcher, redact_url
 from shopify_spy._images import RESULT_FIELD as IMAGES_FIELD
 from shopify_spy._images import ImageDownloader
 from shopify_spy._policy import IdentityPool, ThrottleSettings, retry_policy_for
@@ -64,6 +65,7 @@ class RunConfig:
     user_agent: str | None = None
     respect_robots_txt: bool = True
     verify_tls: bool = True
+    proxy: str | None = field(default=None, repr=False)
     max_concurrent_stores: int | None = 16
     throttle: ThrottleSettings = field(default_factory=ThrottleSettings)
     backoff: bool = True
@@ -178,9 +180,14 @@ class Runner:
     async def _drive(self) -> None:
         watcher: asyncio.Task[None] | None = None
         try:
-            factory = self.config.fetcher_factory or (
-                lambda: HttpxFetcher(verify=self.config.verify_tls)
-            )
+            factory = self.config.fetcher_factory
+            if factory is None:
+                proxy = self.config.proxy
+                if proxy:
+                    logger.info("Using proxy %s", redact_url(proxy))
+                factory = functools.partial(
+                    HttpxFetcher, verify=self.config.verify_tls, proxy=proxy
+                )
             async with factory() as fetcher:
                 registry = HostRegistry(
                     concurrent_requests=self.config.concurrent_requests,

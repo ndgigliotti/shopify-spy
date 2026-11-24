@@ -13,6 +13,8 @@ import http.cookiejar
 import json
 import logging
 import ssl
+import urllib.parse
+import urllib.request
 import zlib
 from collections import defaultdict
 from collections.abc import Callable, Mapping
@@ -33,6 +35,11 @@ WARN_SIZE = 32 * 1024 * 1024
 
 # Only these are advertised, so anything else in Content-Encoding is unexpected
 ACCEPT_ENCODING = "gzip, deflate"
+
+# The schemes httpx.Proxy accepts
+PROXY_SCHEMES = ("http", "https", "socks5", "socks5h")
+SOCKS_HINT = "SOCKS proxies need socksio: pip install 'shopify-spy[socks]'"
+_ENV_PROXY_PREFIX = "proxy from the environment (HTTPS_PROXY, HTTP_PROXY or ALL_PROXY): "
 
 
 @dataclass(frozen=True)
@@ -186,33 +193,133 @@ def _is_cert_error(exc: BaseException) -> bool:
     return False
 
 
+def redact_url(url: str) -> str:
+    """The URL with its credentials masked: ``USER:***@`` or, with no password, ``***@``.
+
+    A lone username is masked too, since some proxy gateways take a token there.
+    Never raises; a URL without ``@`` comes back unchanged.
+    """
+    if "@" not in url:
+        return url
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        parts = None
+    if parts is None or "@" not in parts.netloc:
+        # No parseable netloc (e.g. scheme-less "u:secret@host:8080"): mask
+        # everything up to the last "@"
+        return "***" + url[url.rindex("@") :]
+    userinfo, _, hostport = parts.netloc.rpartition("@")
+    user, sep, _ = userinfo.partition(":")
+    masked = f"{user}:***" if sep else "***"
+    return urllib.parse.urlunsplit(parts._replace(netloc=f"{masked}@{hostport}"))
+
+
+def validate_proxy(url: str) -> str:
+    """Return ``url`` if it is a usable proxy URL, else raise ValueError (redacted)."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        valid = parts.scheme in PROXY_SCHEMES and bool(parts.hostname)
+        parts.port  # raises ValueError for a non-numeric or out-of-range port
+    except ValueError:
+        valid = False
+    if not valid:
+        schemes = ", ".join(f"{s}://" for s in PROXY_SCHEMES[:-1])
+        raise ValueError(
+            f"proxy must be an {schemes} or {PROXY_SCHEMES[-1]}:// URL with a host, "
+            f"got {redact_url(url)!r}"
+        )
+    return url
+
+
+def _env_proxies() -> list[str]:
+    """The proxy URLs httpx would take from the environment.
+
+    Mirrors httpx._utils.get_environment_proxies (private, so not imported);
+    test_fetch's parity test pins this to the installed httpx.
+    """
+    info = urllib.request.getproxies()
+    if any(host.strip() == "*" for host in info.get("no", "").split(",")):
+        return []
+    values = [info[scheme] for scheme in ("http", "https", "all") if info.get(scheme)]
+    return [v if "://" in v else f"http://{v}" for v in values]
+
+
+def _require_socksio(scheme: str) -> None:
+    if scheme in ("socks5", "socks5h"):
+        try:
+            import socksio  # noqa: F401
+        except ImportError:
+            raise ValueError(SOCKS_HINT) from None
+
+
+def check_proxy_support(proxy: str | None, *, use_env: bool) -> None:
+    """Raise ValueError now for a proxy httpx would reject when building its client.
+
+    An explicit ``proxy`` gets the full validate_proxy check. Environment proxies
+    get only the checks httpx applies itself, so setups that work today keep
+    working (httpx accepts a hostless ``HTTP_PROXY=http://``, for instance).
+    """
+    if proxy is not None:
+        validate_proxy(proxy)
+        _require_socksio(urllib.parse.urlsplit(proxy).scheme)
+        return
+    if not use_env:
+        return
+    import httpx
+
+    for value in _env_proxies():
+        try:
+            scheme = httpx.URL(value).scheme
+        except httpx.InvalidURL as exc:
+            raise ValueError(f"{_ENV_PROXY_PREFIX}{exc}") from None
+        if scheme not in PROXY_SCHEMES:
+            raise ValueError(f"{_ENV_PROXY_PREFIX}unknown scheme in {redact_url(value)!r}")
+        try:
+            _require_socksio(scheme)
+        except ValueError as exc:
+            raise ValueError(f"{_ENV_PROXY_PREFIX}{exc}") from None
+
+
 class HttpxFetcher:
-    """Default transport: httpx over HTTP/1.1, one hop per fetch."""
+    """Default transport: httpx over HTTP/1.1, one hop per fetch.
+
+    An explicit ``proxy`` replaces any proxy from the environment (NO_PROXY included).
+    """
 
     capabilities = FetcherCapabilities()
 
-    def __init__(self, *, verify: bool = True, trust_env: bool = True) -> None:
+    def __init__(
+        self, *, verify: bool = True, trust_env: bool = True, proxy: str | None = None
+    ) -> None:
         self._verify = verify
         self._trust_env = trust_env
+        self._proxy = proxy
         self._client: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> Self:
         import httpx  # imported here: it's slow to import and only needed for real HTTP
 
-        self._client = httpx.AsyncClient(
-            http1=True,
-            http2=False,
-            verify=self._verify,
-            trust_env=self._trust_env,
-            follow_redirects=False,
-            headers={"Accept-Encoding": ACCEPT_ENCODING},
-            timeout=None,  # a total deadline is enforced per fetch instead
-            # Never store cookies: the client is shared by every store in a run
-            # (a raw CookieJar: httpx copies a Cookies object into a default jar)
-            cookies=http.cookiejar.CookieJar(
-                http.cookiejar.DefaultCookiePolicy(allowed_domains=[])
-            ),
-        )
+        try:
+            self._client = httpx.AsyncClient(
+                http1=True,
+                http2=False,
+                verify=self._verify,
+                trust_env=self._trust_env,
+                proxy=self._proxy,
+                follow_redirects=False,
+                headers={"Accept-Encoding": ACCEPT_ENCODING},
+                timeout=None,  # a total deadline is enforced per fetch instead
+                # Never store cookies: the client is shared by every store in a run
+                # (a raw CookieJar: httpx copies a Cookies object into a default jar)
+                cookies=http.cookiejar.CookieJar(
+                    http.cookiejar.DefaultCookiePolicy(allowed_domains=[])
+                ),
+            )
+        except ImportError:
+            # SOCKS without socksio; check_proxy_support catches this at call time
+            # unless the environment changed since
+            raise ValueError(SOCKS_HINT) from None
         return self
 
     async def __aexit__(self, *exc: object) -> None:

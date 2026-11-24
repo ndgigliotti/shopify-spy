@@ -35,7 +35,7 @@ from shopify_spy._export import (
     unified_records,
     write_status,
 )
-from shopify_spy._fetch import FetcherFactory
+from shopify_spy._fetch import FetcherFactory, check_proxy_support, validate_proxy
 from shopify_spy._flatten import default_columns
 from shopify_spy._results import _PLATFORM_NAMES, RunResult, StoreResult, StoreStatus
 from shopify_spy._utils import normalize_url, read_url_file, split_valid_urls
@@ -198,6 +198,14 @@ def scrape(
         bool,
         typer.Option("--insecure", help="Don't verify TLS certificates."),
     ] = False,
+    proxy: Annotated[
+        str | None,
+        typer.Option(
+            "--proxy",
+            help="Proxy URL for every request (http://, https://, socks5:// with "
+            "shopify-spy\\[socks]); overrides HTTPS_PROXY/HTTP_PROXY.",
+        ),
+    ] = None,
     peek: Annotated[
         bool,
         typer.Option(
@@ -219,6 +227,15 @@ def scrape(
     # Load config file (or defaults)
     config = load_config(config_path)
 
+    # Checked before the overrides so a bad --proxy is a clean error, not a
+    # ValidationError traceback from Config()
+    if proxy is not None:
+        try:
+            validate_proxy(proxy)
+        except ValueError as exc:
+            err_console.print(f"[red]Error: {escape(str(exc))}[/red]")
+            raise typer.Exit(1) from None
+
     # Apply CLI overrides
     config = apply_cli_overrides(
         config,
@@ -237,6 +254,7 @@ def scrape(
         bail=bail,
         insecure=insecure,
         max_stores=max_stores,
+        proxy=proxy,
     )
 
     # --peek prints one item in total, logs quietly and downloads no images
@@ -255,6 +273,7 @@ def scrape(
         schema_for(config.output.format, config.output.schema_)
         if config.output.format == "xlsx" and not peek:
             require_xlsxwriter()
+        check_proxy_support(config.network.proxy, use_env=FETCHER_FACTORY is None)
     except (ValueError, ModuleNotFoundError) as exc:
         err_console.print(f"[red]Error: {escape(str(exc))}[/red]")
         raise typer.Exit(1) from None
@@ -334,6 +353,7 @@ def apply_cli_overrides(
     bail: int | None = None,
     insecure: bool = False,
     max_stores: int | None = None,
+    proxy: str | None = None,
 ) -> Config:
     """Apply CLI argument overrides to config. ``None`` keeps the config value."""
     scrape_dict = config.scrape.model_dump()
@@ -372,6 +392,8 @@ def apply_cli_overrides(
         network_dict["respect_robots_txt"] = False
     if insecure:
         network_dict["verify_tls"] = False
+    if proxy is not None:
+        network_dict["proxy"] = proxy
     if throttle is not None:
         throttle_dict["enabled"] = throttle
 
