@@ -15,6 +15,7 @@
   pydantic,
   pyyaml,
   rich,
+  socksio,
   typer,
   xlsxwriter,
 
@@ -41,7 +42,9 @@ buildPythonPackage {
     pyyaml
     rich
     typer
-    # The excel extra: the packaged CLI supports --format xlsx
+    # The excel and socks extras: the packaged CLI supports --format xlsx and
+    # --proxy socks5://, which a Nix user can't add with pip
+    socksio
     xlsxwriter
   ];
 
