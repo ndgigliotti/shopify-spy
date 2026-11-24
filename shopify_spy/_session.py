@@ -245,7 +245,7 @@ class StoreSession:
         self.request_timeout = request_timeout
         self.stats = StoreStats()
         self.bail_deadline: float | None = None  # set by the runner until the first item
-        self._bail_excused_until = float("-inf")
+        self._excused_ends: list[float] = []  # ends of Retry-After waits excused from bail
         self._seen: set[str] = set()
         self._store_slots = asyncio.Semaphore(STORE_CONCURRENCY)
 
@@ -314,26 +314,42 @@ class StoreSession:
             return None
         return max(0.0, self.bail_deadline - now())
 
-    def _excuse_from_bail(self, seconds: float) -> None:
-        """Move the bail deadline past a wait the server asked for with Retry-After.
+    def _excuse_from_bail(self, seconds: float) -> float | None:
+        """Move the bail deadline past a wait the server asked for with Retry-After;
+        return when the wait ends, or None without a deadline.
 
         Overlapping waits of concurrent requests count once, by their union.
         """
         if self.bail_deadline is None:
-            return
+            return None
         start = now()
         end = start + seconds
-        self.bail_deadline += max(0.0, end - max(start, self._bail_excused_until))
-        self._bail_excused_until = max(self._bail_excused_until, end)
+        self._excused_ends = [e for e in self._excused_ends if e > start]
+        covered = max(self._excused_ends, default=start)
+        self.bail_deadline += max(0.0, end - covered)
+        self._excused_ends.append(end)
+        return end
 
-    def _retry_delay(self, attempt: int, retry_after: float | None, rate_limited: bool) -> float:
-        """The wait before a retry; a server's Retry-After isn't cut short by --bail."""
+    def _unexcuse_from_bail(self, end: float) -> None:
+        """Take back the unspent part of an excused wait that was cut short (say, by
+        the WooCommerce variation budget), unless another wait still covers it."""
+        if end in self._excused_ends:
+            self._excused_ends.remove(end)
+        if self.bail_deadline is None:
+            return
+        cut = now()
+        covered = max([cut, *self._excused_ends])
+        self.bail_deadline -= max(0.0, end - covered)
+
+    def _retry_delay(
+        self, attempt: int, retry_after: float | None, rate_limited: bool
+    ) -> tuple[float, float | None]:
+        """The wait before a retry, and when its bail excusal ends if it has one; a
+        server's Retry-After isn't cut short by --bail."""
         excused = rate_limited and retry_after is not None
         cap = None if excused else self.bail_time_left()
         delay = self.retry.delay(attempt, retry_after, cap, rate_limited)
-        if excused:
-            self._excuse_from_bail(delay)
-        return delay
+        return delay, self._excuse_from_bail(delay) if excused else None
 
     async def _fetch_with_retries(self, url: str, kind: RequestKind) -> Response | None:
         if not await self._allowed(url, kind):
@@ -385,7 +401,7 @@ class StoreSession:
                     refused = not kind.rotate and response.status == 403
                     if refused or not self.retry.should_retry_status(response.status, attempt):
                         if rate_limited:  # no retry left, but the host still has to back off
-                            slot.pause(self._retry_delay(attempt, retry_after, True))
+                            slot.pause(self._retry_delay(attempt, retry_after, True)[0])
                         return response
                     # A concurrent refusal of the same agent may have swapped it already
                     if (
@@ -417,12 +433,17 @@ class StoreSession:
                     retry_after = None
                     rate_limited = False
                     reason = name
-                delay = self._retry_delay(attempt, retry_after, rate_limited)
+                delay, excused_until = self._retry_delay(attempt, retry_after, rate_limited)
                 if rate_limited:
                     slot.pause(delay)
                 attempt += 1
                 logger.info("Retrying %s (attempt %d, %s) in %.1fs", url, attempt, reason, delay)
                 if delay:
-                    await asyncio.sleep(delay)
+                    try:
+                        await asyncio.sleep(delay)
+                    except asyncio.CancelledError:
+                        if excused_until is not None:
+                            self._unexcuse_from_bail(excused_until)
+                        raise
         finally:
             self.stats.rate_limits += limited and kind.rate_limits

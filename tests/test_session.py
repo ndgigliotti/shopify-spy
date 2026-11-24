@@ -432,6 +432,19 @@ async def test_overlapping_retry_after_waits_extend_bail_once():
     assert 0.9 <= session.bail_deadline - deadline < 1.5
 
 
+async def test_cut_short_retry_after_wait_gives_back_its_bail_credit():
+    session, _ = make_session(
+        {f"{STORE}/p": Seq([(429, "", {"Retry-After": "1"}), (200, "ok")])},
+        robots=False,
+        retry=RetryPolicy(retries=1, backoff=True, base_delay=0.0),
+    )
+    deadline = session.bail_deadline = now() + 0.1
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.2):
+            await get(session, f"{STORE}/p")
+    assert 0.1 <= session.bail_deadline - deadline < 0.5
+
+
 async def test_429_without_retry_after_capped_by_bail_deadline():
     session, _ = make_session(
         {f"{STORE}/p": Seq([(429, ""), (200, "ok")])},
