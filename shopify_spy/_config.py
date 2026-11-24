@@ -52,9 +52,6 @@ class OutputConfig(BaseModel):
 class NetworkConfig(BaseModel):
     """Configuration for network settings."""
 
-    # The proxy URL may hold credentials, so errors never echo the input
-    model_config = ConfigDict(hide_input_in_errors=True)
-
     concurrent_requests: int = Field(default=16, ge=1)
     timeout: int = Field(default=180, ge=1)
     retries: int = Field(default=2, ge=0)
@@ -82,7 +79,8 @@ class ThrottleConfig(BaseModel):
 class Config(BaseModel):
     """Root configuration model."""
 
-    # Set here too: a nested model's setting has no effect when the parent validates
+    # network.proxy may hold credentials, so errors never echo the input (set on
+    # the root: a nested model's setting has no effect when the parent validates)
     model_config = ConfigDict(hide_input_in_errors=True)
 
     scrape: ScrapeConfig = Field(default_factory=ScrapeConfig)
