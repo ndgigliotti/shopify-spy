@@ -317,29 +317,38 @@ async def _collection_list(ctx: StoreContext, base: str) -> list[ListedCollectio
     previous: list[Any] = []
     url = get_bulk_products_url(base, path="/collections.json")
     for _ in range(MAX_PAGES):
-        try:
-            response = await ctx.session.get(url)
-        except RequestFailed as exc:
-            logger.info("Collection list failed for %s: %s", url, exc)
+        fetched = await _collection_page(ctx, url)
+        if fetched is None:
             break
-        if response is None or not response.ok:
-            status = "skipped" if response is None else f"returned {response.status}"
-            logger.info("Collection list %s for %s", status, url)
-            break
-        data = response.json_or_none()
-        page = data.get("collections") if isinstance(data, dict) else None
-        if not isinstance(page, list) or not page or page == previous:
+        page, page_url = fetched
+        if not page or page == previous:
             break  # the end, or a server that ignores `page`
         previous = page
         for collection in page:
             if isinstance(collection, dict) and collection.get("handle"):
                 handle = str(collection["handle"])
-                collections.setdefault(handle, ListedCollection(collection, response.url))
+                collections.setdefault(handle, ListedCollection(collection, page_url))
         if len(page) < BULK_PAGE_SIZE:
             break
-        url = next_page_url(response.url)
+        url = next_page_url(page_url)
     logger.info("Collection list: %d collections", len(collections))
     return list(collections.values())
+
+
+async def _collection_page(ctx: StoreContext, url: str) -> tuple[list[Any], str] | None:
+    """One page of /collections.json and its URL after redirects, or None if it failed."""
+    try:
+        response = await ctx.session.get(url)
+    except RequestFailed as exc:
+        logger.info("Collection list failed for %s: %s", url, exc)
+        return None
+    if response is None or not response.ok:
+        status = "skipped" if response is None else f"returned {response.status}"
+        logger.info("Collection list %s for %s", status, url)
+        return None
+    data = response.json_or_none()
+    page = data.get("collections") if isinstance(data, dict) else None
+    return (page, response.url) if isinstance(page, list) else None
 
 
 def _collection_handles(collections: list[ListedCollection]) -> list[tuple[str, int]]:

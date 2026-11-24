@@ -64,6 +64,19 @@ class _Store(http.server.BaseHTTPRequestHandler):
         body = f'<?xml version="1.0"?><{tag} xmlns="{ns}">{entries}</{tag}>'
         self._send(200, body.encode(), "application/xml")
 
+    def _sitemap(self, path, base):
+        if path == "/sitemap.xml":
+            children = [f"{base}/sitemap_products_{n}.xml" for n in (1, 2)]
+            children.append(f"{base}/sitemap_collections_1.xml")
+            return self._xml("sitemapindex", "sitemap", children)
+        if path.startswith("/sitemap_collections_"):
+            locs = [f"{base}/collections/{c['handle']}" for c in COLLECTIONS]
+            return self._xml("urlset", "url", locs)
+        if path.startswith("/sitemap_products_"):
+            half = range(13_100) if "_1." in path else range(13_100, CATALOG)
+            return self._xml("urlset", "url", [f"{base}/products/p{i}" for i in half])
+        return self._send(404)
+
     def do_GET(self):
         url = urllib.parse.urlsplit(self.path)
         page = int(dict(urllib.parse.parse_qsl(url.query)).get("page", 1))
@@ -82,17 +95,8 @@ class _Store(http.server.BaseHTTPRequestHandler):
             return self._json({"products": window(LISTS[path])})
         if path == "/collections.json":
             return self._json({"collections": COLLECTIONS if page == 1 else []})
-        if path == "/sitemap.xml":
-            children = [f"{base}/sitemap_products_{n}.xml" for n in (1, 2)]
-            children.append(f"{base}/sitemap_collections_1.xml")
-            return self._xml("sitemapindex", "sitemap", children)
-        if path.startswith("/sitemap_collections_"):
-            return self._xml(
-                "urlset", "url", [f"{base}/collections/{c['handle']}" for c in COLLECTIONS]
-            )
-        if path.startswith("/sitemap_products_"):
-            half = range(13_100) if "_1." in path else range(13_100, CATALOG)
-            return self._xml("urlset", "url", [f"{base}/products/p{i}" for i in half])
+        if path.startswith("/sitemap"):
+            return self._sitemap(path, base)
         if path.startswith("/products/") and path.endswith(".json"):
             return self._json({"product": product(int(path[len("/products/p") : -5]))})
         if path.startswith("/collections/") and path.endswith(".json"):
