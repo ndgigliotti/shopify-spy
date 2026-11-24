@@ -51,6 +51,7 @@ dependencies = [
 
 [project.optional-dependencies]
 excel = ["xlsxwriter>=3.0"]
+socks = ["httpx[socks]>=0.28"]
 
 [project.urls]
 Homepage = "https://github.com/ndgigliotti/shopify-spy"
