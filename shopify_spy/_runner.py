@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import functools
 import logging
 import time
 import traceback
@@ -180,14 +179,11 @@ class Runner:
     async def _drive(self) -> None:
         watcher: asyncio.Task[None] | None = None
         try:
-            factory = self.config.fetcher_factory
-            if factory is None:
-                proxy = self.config.proxy
-                if proxy:
-                    logger.info("Using proxy %s", redact_url(proxy))
-                factory = functools.partial(
-                    HttpxFetcher, verify=self.config.verify_tls, proxy=proxy
-                )
+            factory = self.config.fetcher_factory or (
+                lambda: HttpxFetcher(verify=self.config.verify_tls, proxy=self.config.proxy)
+            )
+            if self.config.fetcher_factory is None and self.config.proxy:
+                logger.info("Using proxy %s", redact_url(self.config.proxy))
             async with factory() as fetcher:
                 registry = HostRegistry(
                     concurrent_requests=self.config.concurrent_requests,
