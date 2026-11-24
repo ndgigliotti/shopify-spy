@@ -226,9 +226,8 @@ def validate_proxy(url: str) -> str:
     except ValueError:
         valid = False
     if not valid:
-        schemes = ", ".join(f"{s}://" for s in PROXY_SCHEMES[:-1])
         raise ValueError(
-            f"proxy must be an {schemes} or {PROXY_SCHEMES[-1]}:// URL with a host, "
+            "proxy must be an http://, https://, socks5:// or socks5h:// URL with a host, "
             f"got {redact_url(url)!r}"
         )
     return url
