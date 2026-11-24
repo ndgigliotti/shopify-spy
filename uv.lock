@@ -715,7 +715,7 @@ version = "0.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "defusedxml" },
-    { name = "httpx" },
+    { name = "httpx", extra = ["socks"] },
     { name = "platformdirs" },
     { name = "protego" },
     { name = "pydantic" },
@@ -727,9 +727,6 @@ dependencies = [
 [package.optional-dependencies]
 excel = [
     { name = "xlsxwriter" },
-]
-socks = [
-    { name = "httpx", extra = ["socks"] },
 ]
 
 [package.dev-dependencies]
@@ -747,8 +744,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "defusedxml", specifier = ">=0.7" },
-    { name = "httpx", specifier = ">=0.28" },
-    { name = "httpx", extras = ["socks"], marker = "extra == 'socks'", specifier = ">=0.28" },
+    { name = "httpx", extras = ["socks"], specifier = ">=0.28" },
     { name = "platformdirs", specifier = ">=4.0" },
     { name = "protego", specifier = ">=0.4" },
     { name = "pydantic", specifier = ">=2.0" },
@@ -757,7 +753,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.15" },
     { name = "xlsxwriter", marker = "extra == 'excel'", specifier = ">=3.0" },
 ]
-provides-extras = ["excel", "socks"]
+provides-extras = ["excel"]
 
 [package.metadata.requires-dev]
 dev = [

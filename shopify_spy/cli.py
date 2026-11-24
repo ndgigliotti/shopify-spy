@@ -202,8 +202,8 @@ def scrape(
         str | None,
         typer.Option(
             "--proxy",
-            help="Proxy URL for every request (http://, https://, socks5:// with "
-            "shopify-spy\\[socks]); overrides HTTPS_PROXY/HTTP_PROXY.",
+            help="Proxy URL for every request (http://, https:// or socks5://); "
+            "overrides HTTPS_PROXY/HTTP_PROXY.",
         ),
     ] = None,
     peek: Annotated[

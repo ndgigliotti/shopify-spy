@@ -7,7 +7,6 @@ import http.server
 import json
 import socket
 import ssl
-import sys
 import threading
 import time
 import zlib
@@ -300,18 +299,8 @@ def test_validate_proxy_error_is_redacted():
     assert "ftp://u:***@h:1" in str(info.value)
 
 
-@pytest.fixture
-def no_socksio(monkeypatch):
-    monkeypatch.setitem(sys.modules, "socksio", None)
-
-
-def test_explicit_socks_without_socksio_names_the_extra(no_socksio):
-    with pytest.raises(ValueError, match=r"shopify-spy\[socks\]"):
-        check_proxy_support("socks5://h:1080")
-
-
-def test_explicit_proxy_skips_the_environment(clean_proxy_env, no_socksio):
-    clean_proxy_env.setenv("HTTPS_PROXY", "socks5://h:1080")
+def test_explicit_proxy_skips_the_environment(clean_proxy_env):
+    clean_proxy_env.setenv("HTTPS_PROXY", "socks4://h:1")
     check_proxy_support("http://h:1")
 
 
@@ -333,7 +322,7 @@ ENV_CASES = [
 @pytest.mark.parametrize(
     "env", ENV_CASES, ids=lambda env: ",".join(f"{k}={v}" for k, v in env.items())
 )
-async def test_environment_check_matches_httpx(clean_proxy_env, no_socksio, env):
+async def test_environment_check_matches_httpx(clean_proxy_env, env):
     """check_proxy_support mirrors httpx's env handling; this pins it to the installed httpx."""
     for name, value in env.items():
         clean_proxy_env.setenv(name, value)
@@ -351,11 +340,11 @@ async def test_environment_check_matches_httpx(clean_proxy_env, no_socksio, env)
     assert check_raised == httpx_raised
 
 
-async def test_environment_socks_backstop_raises_value_error(clean_proxy_env, no_socksio):
+async def test_environment_socks_proxy_builds_a_client(clean_proxy_env):
     clean_proxy_env.setenv("HTTPS_PROXY", "socks5://h:1080")
-    with pytest.raises(ValueError, match=r"shopify-spy\[socks\]"):
-        async with HttpxFetcher():
-            pass
+    check_proxy_support(None)
+    async with HttpxFetcher():
+        pass
 
 
 async def test_explicit_proxy_beats_environment(clean_proxy_env, recording_proxy):
@@ -508,15 +497,3 @@ def test_load_corpus(tmp_path, name):
     path = tmp_path / name
     path.write_bytes(gzip.compress(raw) if name.endswith(".gz") else raw)
     assert load_corpus(path) == entries
-
-
-async def test_unrelated_import_error_is_not_reported_as_socks(monkeypatch):
-    import httpx
-
-    def broken(*args, **kwargs):
-        raise ImportError("No module named 'certifi'")
-
-    monkeypatch.setattr(httpx, "AsyncClient", broken)
-    with pytest.raises(ImportError, match="certifi"):
-        async with HttpxFetcher():
-            pass

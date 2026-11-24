@@ -437,8 +437,8 @@ _SCRAPE_DOC = """
             swapped after a 403.
         respect_robots_txt: Obey robots.txt (default True).
         verify_tls: Verify TLS certificates (default True).
-        proxy: A fixed proxy URL for every request: http://, https://, or socks5://
-            with the ``shopify-spy[socks]`` extra. It overrides HTTPS_PROXY,
+        proxy: A fixed proxy URL for every request: http://, https:// or
+            socks5://. It overrides HTTPS_PROXY,
             HTTP_PROXY and ALL_PROXY, which are otherwise honored (with NO_PROXY);
             an explicit proxy ignores NO_PROXY. Credentials in it are masked in
             logs and errors. It gives a fixed egress, not a way around a store's

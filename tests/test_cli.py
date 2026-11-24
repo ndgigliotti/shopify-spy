@@ -414,17 +414,6 @@ def test_invalid_proxy_flag_is_a_clean_redacted_error(cli):
     assert "secret" not in run.stderr + run.stdout
 
 
-def test_socks_proxy_flag_without_socksio_is_a_clean_error(tmp_path, monkeypatch):
-    # The default transport: a custom FETCHER_FACTORY skips the proxy check
-    monkeypatch.setattr(cli_module, "_log_dir", lambda: tmp_path)
-    monkeypatch.setitem(sys.modules, "socksio", None)
-    run = runner.invoke(app, ["scrape", "shop.test", "--proxy", "socks5://h:1080", "--peek"])
-    assert run.exit_code == 1
-    assert "Error: SOCKS proxies need socksio" in run.stderr
-    assert "shopify-spy[socks]" in run.stderr
-    assert "Traceback" not in run.stderr + run.stdout
-
-
 def test_proxy_flag_reaches_library(cli, monkeypatch):
     seen = {}
     real = cli_module.scrape_async

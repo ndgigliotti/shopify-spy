@@ -38,7 +38,6 @@ ACCEPT_ENCODING = "gzip, deflate"
 
 # The schemes httpx.Proxy accepts
 PROXY_SCHEMES = ("http", "https", "socks5", "socks5h")
-SOCKS_HINT = "SOCKS proxies need socksio: pip install 'shopify-spy[socks]'"
 _ENV_PROXY_PREFIX = "proxy from the environment (HTTPS_PROXY, HTTP_PROXY or ALL_PROXY): "
 
 
@@ -246,14 +245,6 @@ def _env_proxies() -> list[str]:
     return [v if "://" in v else f"http://{v}" for v in values]
 
 
-def _require_socksio(scheme: str) -> None:
-    if scheme in ("socks5", "socks5h"):
-        try:
-            import socksio  # noqa: F401
-        except ImportError:
-            raise ValueError(SOCKS_HINT) from None
-
-
 def check_proxy_support(proxy: str | None) -> None:
     """Raise ValueError now for a proxy httpx would reject when building its client.
 
@@ -263,7 +254,6 @@ def check_proxy_support(proxy: str | None) -> None:
     """
     if proxy is not None:
         validate_proxy(proxy)
-        _require_socksio(urllib.parse.urlsplit(proxy).scheme)
         return
     import httpx
 
@@ -274,10 +264,6 @@ def check_proxy_support(proxy: str | None) -> None:
             raise ValueError(f"{_ENV_PROXY_PREFIX}{exc}") from None
         if scheme not in PROXY_SCHEMES:
             raise ValueError(f"{_ENV_PROXY_PREFIX}unknown scheme in {redact_url(value)!r}")
-        try:
-            _require_socksio(scheme)
-        except ValueError as exc:
-            raise ValueError(f"{_ENV_PROXY_PREFIX}{exc}") from None
 
 
 class HttpxFetcher:
@@ -299,30 +285,21 @@ class HttpxFetcher:
     async def __aenter__(self) -> Self:
         import httpx  # imported here: it's slow to import and only needed for real HTTP
 
-        try:
-            self._client = httpx.AsyncClient(
-                http1=True,
-                http2=False,
-                verify=self._verify,
-                trust_env=self._trust_env,
-                proxy=self._proxy,
-                follow_redirects=False,
-                headers={"Accept-Encoding": ACCEPT_ENCODING},
-                timeout=None,  # a total deadline is enforced per fetch instead
-                # Never store cookies: the client is shared by every store in a run
-                # (a raw CookieJar: httpx copies a Cookies object into a default jar)
-                cookies=http.cookiejar.CookieJar(
-                    http.cookiejar.DefaultCookiePolicy(allowed_domains=[])
-                ),
-            )
-        except ImportError as exc:
-            # httpx's error for SOCKS without socksio names the package; any
-            # other ImportError is a broken install and propagates as is.
-            # check_proxy_support catches this at call time unless the
-            # environment changed since
-            if "socksio" not in str(exc):
-                raise
-            raise ValueError(SOCKS_HINT) from None
+        self._client = httpx.AsyncClient(
+            http1=True,
+            http2=False,
+            verify=self._verify,
+            trust_env=self._trust_env,
+            proxy=self._proxy,
+            follow_redirects=False,
+            headers={"Accept-Encoding": ACCEPT_ENCODING},
+            timeout=None,  # a total deadline is enforced per fetch instead
+            # Never store cookies: the client is shared by every store in a run
+            # (a raw CookieJar: httpx copies a Cookies object into a default jar)
+            cookies=http.cookiejar.CookieJar(
+                http.cookiejar.DefaultCookiePolicy(allowed_domains=[])
+            ),
+        )
         return self
 
     async def __aexit__(self, *exc: object) -> None:

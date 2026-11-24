@@ -496,26 +496,17 @@ def test_invalid_proxy_error_is_redacted():
     assert "secret" not in str(info.value)
 
 
-@pytest.fixture
-def no_socksio(monkeypatch):
-    monkeypatch.setitem(sys.modules, "socksio", None)
-
-
-def test_socks_proxy_without_socksio_raises_at_call_time(no_socksio):
-    with pytest.raises(ValueError, match=r"shopify-spy\[socks\]"):
-        spy.scrape_async("a.com", proxy="socks5://h:1080")
-
-
 @pytest.mark.parametrize("name", ["HTTPS_PROXY", "ALL_PROXY"])
-def test_socks_proxy_from_environment_raises_at_call_time(clean_proxy_env, no_socksio, name):
-    clean_proxy_env.setenv(name, "socks5://h:1080")
-    with pytest.raises(ValueError, match=r"environment.*shopify-spy\[socks\]"):
+def test_bad_environment_proxy_raises_at_call_time(clean_proxy_env, name):
+    clean_proxy_env.setenv(name, "socks4://u:secret@h:1")
+    with pytest.raises(ValueError, match="environment") as info:
         spy.scrape("a.com")
+    assert "secret" not in str(info.value)
 
 
 @pytest.mark.parametrize("name", ["HTTPS_PROXY", "ALL_PROXY"])
-def test_no_proxy_star_skips_environment_socks(clean_proxy_env, no_socksio, name):
-    clean_proxy_env.setenv(name, "socks5://h:1080")
+def test_no_proxy_star_skips_environment_check(clean_proxy_env, name):
+    clean_proxy_env.setenv(name, "socks4://h:1")
     clean_proxy_env.setenv("NO_PROXY", "*")
     spy.scrape("a.com")
 
@@ -526,13 +517,13 @@ def test_environment_proxies_httpx_accepts_still_accepted(clean_proxy_env, value
     spy.scrape("a.com")
 
 
-def test_custom_fetcher_skips_environment_check(clean_proxy_env, no_socksio):
-    clean_proxy_env.setenv("HTTPS_PROXY", "socks5://h:1080")
+def test_custom_fetcher_skips_environment_check(clean_proxy_env):
+    clean_proxy_env.setenv("HTTPS_PROXY", "socks4://h:1")
     items, _, _ = scrape(ok_routes(), "shop.test")
     assert len(items) == 2
 
 
-def test_custom_fetcher_ignores_explicit_socks_proxy(no_socksio):
+def test_custom_fetcher_ignores_explicit_proxy():
     items, _, _ = scrape(ok_routes(), "shop.test", proxy="socks5://h:1080")
     assert len(items) == 2
 

@@ -55,7 +55,7 @@ A script can also declare the dependency itself ([inline script metadata](https:
 import shopify_spy as spy
 ```
 
-Excel output (`--format xlsx`) needs the `excel` extra: `pipx install 'shopify-spy[excel]'`, `uv tool install 'shopify-spy[excel]'` or `uv add 'shopify-spy[excel]'`. SOCKS proxies (`--proxy socks5://...`) need the `socks` extra the same way: `'shopify-spy[socks]'`.
+Excel output (`--format xlsx`) needs the `excel` extra: `pipx install 'shopify-spy[excel]'`, `uv tool install 'shopify-spy[excel]'` or `uv add 'shopify-spy[excel]'`.
 
 Requires Python 3.11+.
 
@@ -196,7 +196,7 @@ spy scrape [URL] [OPTIONS]
 - `--user-agent, -A TEXT` - Custom User-Agent header
 - `--ignore-robots, -i` - Ignore robots.txt restrictions
 - `--insecure` - Don't verify TLS certificates
-- `--proxy URL` - Send every request through this proxy (`http://`, `https://`, or `socks5://` with the `socks` extra); overrides `HTTPS_PROXY`/`HTTP_PROXY`, see [Limitations](#limitations)
+- `--proxy URL` - Send every request through this proxy (`http://`, `https://` or `socks5://`); overrides `HTTPS_PROXY`/`HTTP_PROXY`, see [Limitations](#limitations)
 - `--bail INT` - Abort if no items scraped within N seconds (default: 30, 0 to disable)
 - `--peek` - Print 1 item to stdout as JSONL and exit (no files or directories created); with `--schema unified`, its unified rows
 - `--verbose, -v` - Show debug output (logs to both file and terminal)
@@ -559,7 +559,7 @@ result = await spy.scrape_async(urls, platform="woocommerce")  # RunResult with 
 spy scrape https://example.com --no-throttle
 ```
 
-**Proxies.** Requests honor the `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` environment variables. To set one fixed proxy instead, use `--proxy URL`, `network.proxy` in the config file, or `proxy=` in the library; it overrides those variables, `NO_PROXY` included. `http://` and `https://` proxies work out of the box, and `socks5://` needs the `socks` extra (`pip install 'shopify-spy[socks]'`). Credentials in the URL are masked in logs and errors (`http://USER:***@gateway:PORT`). A proxy is for a fixed egress, such as a company network or another region; it is not a way around a store's rate limits, which in practice key on user agent or endpoint as much as on IP.
+**Proxies.** Requests honor the `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` environment variables. To set one fixed proxy instead, use `--proxy URL`, `network.proxy` in the config file, or `proxy=` in the library; it overrides those variables, `NO_PROXY` included. `http://`, `https://` and `socks5://` proxies all work out of the box. Credentials in the URL are masked in logs and errors (`http://USER:***@gateway:PORT`). A proxy is for a fixed egress, such as a company network or another region; it is not a way around a store's rate limits, which in practice key on user agent or endpoint as much as on IP.
 
 ## Feedback
 

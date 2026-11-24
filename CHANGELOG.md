@@ -7,7 +7,8 @@
 - `--proxy URL`, `network.proxy` in the config file and `proxy=` on
   `scrape`/`scrape_async` send every request through one fixed proxy, overriding the
   environment. Credentials in the URL are masked in logs and errors.
-- A `socks` extra (`pip install 'shopify-spy[socks]'`) for `socks5://` proxies.
+- `socks5://` proxies work out of the box: socksio (httpx's `socks` extra) is now a
+  default dependency.
 - The README documents the `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY`
   environment variables, which were already honored.
 
@@ -20,9 +21,8 @@
   Their fields, values and `url` are unchanged. Only the order changes: collections
   now come as a block after the products, instead of mixed in with the sitemap's
   product fetches.
-- A SOCKS proxy without socksio installed, from `--proxy` or the environment, raises a
-  `ValueError` naming the `socks` extra at call time instead of an `ImportError` from
-  inside the run.
+- A SOCKS proxy in the environment (`HTTPS_PROXY=socks5://...`) no longer crashes the
+  run with an `ImportError` for the missing socksio package.
 
 ## 0.4.1
 

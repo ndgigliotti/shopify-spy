@@ -44,14 +44,13 @@ dependencies = [
     "pyyaml>=6.0",
     "pydantic>=2.0",
     "platformdirs>=4.0",
-    "httpx>=0.28",
+    "httpx[socks]>=0.28",
     "protego>=0.4",
     "defusedxml>=0.7",
 ]
 
 [project.optional-dependencies]
 excel = ["xlsxwriter>=3.0"]
-socks = ["httpx[socks]>=0.28"]
 
 [project.urls]
 Homepage = "https://github.com/ndgigliotti/shopify-spy"
