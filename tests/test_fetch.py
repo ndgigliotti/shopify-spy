@@ -508,3 +508,15 @@ def test_load_corpus(tmp_path, name):
     path = tmp_path / name
     path.write_bytes(gzip.compress(raw) if name.endswith(".gz") else raw)
     assert load_corpus(path) == entries
+
+
+async def test_unrelated_import_error_is_not_reported_as_socks(monkeypatch):
+    import httpx
+
+    def broken(*args, **kwargs):
+        raise ImportError("No module named 'certifi'")
+
+    monkeypatch.setattr(httpx, "AsyncClient", broken)
+    with pytest.raises(ImportError, match="certifi"):
+        async with HttpxFetcher():
+            pass

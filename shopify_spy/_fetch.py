@@ -315,9 +315,13 @@ class HttpxFetcher:
                     http.cookiejar.DefaultCookiePolicy(allowed_domains=[])
                 ),
             )
-        except ImportError:
-            # SOCKS without socksio; check_proxy_support catches this at call time
-            # unless the environment changed since
+        except ImportError as exc:
+            # httpx's error for SOCKS without socksio names the package; any
+            # other ImportError is a broken install and propagates as is.
+            # check_proxy_support catches this at call time unless the
+            # environment changed since
+            if "socksio" not in str(exc):
+                raise
             raise ValueError(SOCKS_HINT) from None
         return self
 
