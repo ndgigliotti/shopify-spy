@@ -25,7 +25,7 @@ ROBOTS_TOKEN = "shopify-spy"
 
 RETRY_STATUSES = frozenset({500, 502, 503, 504, 522, 524, 408, 429, 403})
 RETRY_MAX_DELAY = 60.0  # longest wait before a retry, Retry-After included
-ROTATE_ON_STATUSES = frozenset({403})
+ROTATE_ON_STATUSES = frozenset({403, 429})
 # "Slow down" responses: they pause the host and raise its delay floor (HostSlot.pause)
 RATE_LIMIT_STATUSES = frozenset({429, 503})
 
@@ -197,7 +197,7 @@ USER_AGENTS = load_user_agents()
 
 @dataclass
 class IdentityPool:
-    """A store's browser identity: one random UA, swapped only after a 403.
+    """A store's browser identity: one random UA, swapped only after a 403 or 429.
 
     A fixed ``user_agent`` disables rotation.
     """

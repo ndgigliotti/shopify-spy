@@ -336,9 +336,9 @@ def test_should_retry_status():
     assert not retry.should_retry_status(404, 0)
 
 
-def test_retry_policy_for_http_transport_rotates_on_403():
+def test_retry_policy_for_http_transport_rotates_on_403_and_429():
     retry = retry_policy_for(FetcherCapabilities(), retries=3, backoff=False)
-    assert retry.rotate_on == frozenset({403})
+    assert retry.rotate_on == frozenset({403, 429})
     assert (retry.retries, retry.backoff) == (3, False)
     # The retry cap doesn't follow throttle settings (throttle_max_delay=0 kept retries)
     assert retry.max_delay == RETRY_MAX_DELAY

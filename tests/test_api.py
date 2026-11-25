@@ -10,7 +10,7 @@ import warnings
 import pytest
 
 import shopify_spy as spy
-from shopify_spy._fetch import FakeFetcher, FetchConnectionError, FetchTLSError
+from shopify_spy._fetch import FakeFetcher, FetchConnectionError, FetchTLSError, Seq
 from tests.flow_support import FAST, STORE, bulk_url, products, scrape, urlset, woo_url
 
 OTHER = "https://other.test"
@@ -133,6 +133,35 @@ def test_rate_limited_woocommerce_fallback_fails():
     [store] = run.result.stores
     assert store.status == spy.StoreStatus.rate_limited
     assert store.responses_by_status == {404: 1}  # fallback requests aren't counted
+
+
+def test_retry_after_wait_on_a_new_user_agent_outlasts_bail():
+    """A 429 whose Retry-After is longer than --bail: the store waits and recovers."""
+
+    async def slow_products(request):
+        # Answers after --bail would have fired had the wait counted against it
+        await asyncio.sleep(0.1)
+        return products(1)
+
+    routes = {bulk_url(1): Seq([(429, "", {"Retry-After": "1"}), slow_products])}
+    items, result, fetcher = scrape(routes, bail=0.3, _backoff=True, retries=1)
+    [store] = result.stores
+    assert store.status == spy.StoreStatus.ok
+    assert len(items) == 1
+    first, retry = [r.identity.user_agent for r in fetcher.requests if r.url == bulk_url(1)]
+    assert first != retry
+
+
+def test_retry_after_waits_are_excused_from_bail_per_request():
+    """An IP-limited store waits out every Retry-After, then ends rate_limited."""
+    limited = (429, "", {"Retry-After": "1"})
+    routes = {f"{STORE}/robots.txt": limited, bulk_url(1): limited, f"{STORE}/sitemap.xml": limited}
+    _, result, _ = scrape(routes, bail=0.1, _backoff=True, retries=0)
+    [store] = result.stores
+    assert store.status == spy.StoreStatus.rate_limited
+    assert store.finish_reason != "bail"
+    # robots.txt's pause holds /products.json, whose pause holds sitemap.xml
+    assert 1.8 <= store.duration < 3
 
 
 def test_on_failure_raise_not_when_some_succeed():

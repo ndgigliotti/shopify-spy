@@ -27,7 +27,6 @@ from shopify_spy._fetch import (
 from shopify_spy._policy import (
     RATE_LIMIT_STATUSES,
     ROBOTS_TOKEN,
-    ROTATE_ON_STATUSES,
     HostSlot,
     IdentityPool,
     RetryPolicy,
@@ -55,7 +54,7 @@ class RequestKind:
     check_robots: bool = True  # obey robots.txt for this request
     counted: bool = True  # counts toward the store's diagnosis stats
     dedupe: bool = True  # skip a URL this store already requested
-    rotate: bool = True  # a 403 may swap the store's user agent and retry
+    rotate: bool = True  # a 403 or 429 may swap the store's user agent; without it a 403 is final
     # A 429 counts toward StoreStats.rate_limits: its pause holds up the store's data
     # (images come after the data they belong to)
     rate_limits: bool = True
@@ -246,6 +245,7 @@ class StoreSession:
         self.request_timeout = request_timeout
         self.stats = StoreStats()
         self.bail_deadline: float | None = None  # set by the runner until the first item
+        self._excused_ends: list[float] = []  # ends of Retry-After waits excused from bail
         self._seen: set[str] = set()
         self._store_slots = asyncio.Semaphore(STORE_CONCURRENCY)
 
@@ -314,12 +314,59 @@ class StoreSession:
             return None
         return max(0.0, self.bail_deadline - now())
 
+    def _excuse_from_bail(self, seconds: float) -> float | None:
+        """Move the bail deadline past a wait the server asked for with Retry-After;
+        return when the wait ends, or None without a deadline.
+
+        Overlapping waits of concurrent requests count once, by their union.
+        """
+        if self.bail_deadline is None:
+            return None
+        start = now()
+        end = start + seconds
+        self._excused_ends = [e for e in self._excused_ends if e > start]
+        covered = max(self._excused_ends, default=start)
+        self.bail_deadline += max(0.0, end - covered)
+        self._excused_ends.append(end)
+        return end
+
+    def _unexcuse_from_bail(self, end: float) -> None:
+        """Take back the unspent part of an excused wait that was cut short (say, by
+        the WooCommerce variation budget), unless another wait still covers it."""
+        if end in self._excused_ends:
+            self._excused_ends.remove(end)
+        if self.bail_deadline is None:
+            return
+        cut = now()
+        covered = max([cut, *self._excused_ends])
+        self.bail_deadline -= max(0.0, end - covered)
+
+    async def _sleep_before_retry(self, delay: float, excused_until: float | None) -> None:
+        if not delay:
+            return
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            if excused_until is not None:
+                self._unexcuse_from_bail(excused_until)
+            raise
+
+    def _retry_delay(
+        self, attempt: int, retry_after: float | None, rate_limited: bool
+    ) -> tuple[float, float | None]:
+        """The wait before a retry, and when its bail excusal ends if it has one; a
+        server's Retry-After isn't cut short by --bail."""
+        excused = rate_limited and retry_after is not None
+        cap = None if excused else self.bail_time_left()
+        delay = self.retry.delay(attempt, retry_after, cap, rate_limited)
+        return delay, self._excuse_from_bail(delay) if excused else None
+
     async def _fetch_with_retries(self, url: str, kind: RequestKind) -> Response | None:
         if not await self._allowed(url, kind):
             return None
         slot = self.registry.slot(url)
-        # Whether a 429 is this request's last word: retries used up, or --bail or a
-        # shutdown cut its wait short
+        # Whether a 429 is this request's last word: retries used up, or a shutdown (or
+        # --bail, for a wait without Retry-After) cut its wait short
         limited = False
         try:
             attempt = 0
@@ -331,12 +378,13 @@ class StoreSession:
                 async with self._store_slots, slot.semaphore:
                     sent_at = await slot.wait_turn()
                     self.stats.requests += 1
+                    sent = self.identity.current
                     try:
                         response = await self.fetcher.fetch(
                             Request(
                                 method="GET",
                                 url=url,
-                                identity=self.identity.current,
+                                identity=sent,
                                 timeout=self.request_timeout,
                             )
                         )
@@ -360,15 +408,18 @@ class StoreSession:
                     retry_after = parse_retry_after(response.headers.get("retry-after"))
                     rate_limited = response.status in RATE_LIMIT_STATUSES
                     # Whatever the transport rotates on, a 403 to such a kind is final
-                    refused = not kind.rotate and response.status in ROTATE_ON_STATUSES
+                    refused = not kind.rotate and response.status == 403
                     if refused or not self.retry.should_retry_status(response.status, attempt):
                         if rate_limited:  # no retry left, but the host still has to back off
-                            wait = self.retry.delay(
-                                attempt, retry_after, self.bail_time_left(), True
-                            )
-                            slot.pause(wait)
+                            slot.pause(self._retry_delay(attempt, retry_after, True)[0])
                         return response
-                    if response.status in self.retry.rotate_on and self.identity.rotates:
+                    # A concurrent refusal of the same agent may have swapped it already
+                    if (
+                        kind.rotate
+                        and response.status in self.retry.rotate_on
+                        and self.identity.rotates
+                        and self.identity.current.user_agent == sent.user_agent
+                    ):
                         self.identity.rotate()
                         logger.debug(
                             "Swapped user agent after %d: %s",
@@ -392,12 +443,11 @@ class StoreSession:
                     retry_after = None
                     rate_limited = False
                     reason = name
-                delay = self.retry.delay(attempt, retry_after, self.bail_time_left(), rate_limited)
+                delay, excused_until = self._retry_delay(attempt, retry_after, rate_limited)
                 if rate_limited:
                     slot.pause(delay)
                 attempt += 1
                 logger.info("Retrying %s (attempt %d, %s) in %.1fs", url, attempt, reason, delay)
-                if delay:
-                    await asyncio.sleep(delay)
+                await self._sleep_before_retry(delay, excused_until)
         finally:
             self.stats.rate_limits += limited and kind.rate_limits

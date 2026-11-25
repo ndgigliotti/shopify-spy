@@ -22,6 +22,8 @@ from shopify_spy._session import (
     SingleFlight,
     StoreSession,
 )
+from shopify_spy._session import STORE as STORE_KIND
+from shopify_spy._woocommerce import VARIATIONS
 
 STORE = "https://shop.test"
 DISALLOW_PRIVATE = (200, "User-agent: *\nDisallow: /private\n")
@@ -296,6 +298,91 @@ async def test_503_does_not_rotate_user_agent():
     assert first == second
 
 
+@pytest.mark.parametrize("kind", [STORE_KIND, PROBE])
+async def test_429_rotates_user_agent(kind):
+    session, fetcher = make_session(
+        {f"{STORE}/p": Seq([(429, ""), (200, "ok")])},
+        robots=False,
+        identity=IdentityPool(agents=["ua-1", "ua-2"]),
+    )
+    assert (await get(session, f"{STORE}/p", kind=kind)).status == 200
+    first, second = [r.identity.user_agent for r in fetcher.requests]
+    assert first != second
+
+
+async def test_robots_429_rotates_user_agent():
+    session, fetcher = make_session(
+        {f"{STORE}/robots.txt": Seq([(429, ""), (200, "")]), f"{STORE}/p": (200, "ok")},
+        identity=IdentityPool(agents=["ua-1", "ua-2"]),
+    )
+    assert (await get(session, f"{STORE}/p")).status == 200
+    first, second = [r.identity.user_agent for r in fetcher.requests if "robots" in r.url]
+    assert first != second
+
+
+async def test_429_on_non_rotating_kind_retries_with_same_user_agent():
+    session, fetcher = make_session(
+        {f"{STORE}/p": Seq([(429, ""), (200, "ok")])},
+        robots=False,
+        identity=IdentityPool(agents=["ua-1", "ua-2"]),
+    )
+    assert (await get(session, f"{STORE}/p", kind=VARIATIONS)).status == 200
+    first, second = [r.identity.user_agent for r in fetcher.requests]
+    assert first == second
+
+
+async def test_403_on_non_rotating_kind_is_final():
+    session, fetcher = make_session(
+        {f"{STORE}/p": Seq([(403, ""), (200, "ok")])},
+        robots=False,
+        identity=IdentityPool(agents=["ua-1", "ua-2"]),
+    )
+    assert (await get(session, f"{STORE}/p", kind=VARIATIONS)).status == 403
+    assert fetcher.count(f"{STORE}/p") == 1
+
+
+async def test_429_with_fixed_user_agent_keeps_it():
+    session, fetcher = make_session(
+        {f"{STORE}/p": Seq([(429, ""), (200, "ok")])},
+        robots=False,
+        identity=IdentityPool(user_agent="fixed/1.0"),
+    )
+    await get(session, f"{STORE}/p")
+    assert [r.identity.user_agent for r in fetcher.requests] == ["fixed/1.0", "fixed/1.0"]
+
+
+def refuse_first_together(refusal):
+    """A route for two URLs: both first requests get ``refusal`` once both are in flight."""
+    both_arrived = asyncio.Event()
+    calls: dict[str, int] = {}
+
+    async def route(request):
+        calls[request.url] = calls.get(request.url, 0) + 1
+        if calls[request.url] > 1:
+            return (200, "ok")
+        if len(calls) == 2:
+            both_arrived.set()
+        await both_arrived.wait()
+        return refusal
+
+    return route
+
+
+@pytest.mark.parametrize("status", [403, 429])
+async def test_concurrent_refusals_of_one_user_agent_rotate_once(status):
+    refuse = refuse_first_together((status, ""))
+    session, fetcher = make_session(
+        {f"{STORE}/a": refuse, f"{STORE}/b": refuse},
+        robots=False,
+        identity=IdentityPool(agents=["ua-1", "ua-2"]),
+    )
+    responses = await asyncio.gather(get(session, f"{STORE}/a"), get(session, f"{STORE}/b"))
+    assert [r.status for r in responses] == [200, 200]
+    agents = [r.identity.user_agent for r in fetcher.requests]
+    assert agents[0] == agents[1]
+    assert set(agents[2:]) == {"ua-1", "ua-2"} - {agents[0]}
+
+
 async def test_transport_error_retried_then_succeeds():
     session, _ = make_session({f"{STORE}/p": Seq([FetchTimeout("slow"), (200, "ok")])})
     assert (await get(session, f"{STORE}/p")).status == 200
@@ -319,17 +406,68 @@ async def test_tls_error_not_retried():
     assert session.stats.tls_errors == 1
 
 
-async def test_retry_after_capped_by_bail_deadline():
+@pytest.mark.parametrize("status", [429, 503])
+async def test_retry_after_not_capped_by_bail_deadline(status):
     session, _ = make_session(
-        {f"{STORE}/p": Seq([(429, "", {"Retry-After": "30"}), (200, "ok")])},
+        {f"{STORE}/p": Seq([(status, "", {"Retry-After": "1"}), (200, "ok")])},
         robots=False,
         retry=RetryPolicy(retries=1, backoff=True, base_delay=0.0, max_delay=60.0),
     )
-    session.bail_deadline = now() + 0.1
-    loop = asyncio.get_running_loop()
-    start = loop.time()
+    deadline = session.bail_deadline = now() + 0.1
+    start = now()
     assert (await get(session, f"{STORE}/p")).status == 200
-    assert 0.05 <= loop.time() - start < 0.5
+    assert now() - start >= 0.9
+    assert session.bail_deadline - deadline >= 0.9
+
+
+async def test_overlapping_retry_after_waits_extend_bail_once():
+    limit = refuse_first_together((429, "", {"Retry-After": "1"}))
+    session, _ = make_session(
+        {f"{STORE}/a": limit, f"{STORE}/b": limit},
+        robots=False,
+        retry=RetryPolicy(retries=1, backoff=True, base_delay=0.0),
+    )
+    deadline = session.bail_deadline = now() + 0.1
+    await asyncio.gather(get(session, f"{STORE}/a"), get(session, f"{STORE}/b"))
+    assert 0.9 <= session.bail_deadline - deadline < 1.5
+
+
+async def test_cut_short_retry_after_wait_gives_back_its_bail_credit():
+    session, _ = make_session(
+        {f"{STORE}/p": Seq([(429, "", {"Retry-After": "1"}), (200, "ok")])},
+        robots=False,
+        retry=RetryPolicy(retries=1, backoff=True, base_delay=0.0),
+    )
+    deadline = session.bail_deadline = now() + 0.1
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.2):
+            await get(session, f"{STORE}/p")
+    assert 0.1 <= session.bail_deadline - deadline < 0.5
+
+
+async def test_429_without_retry_after_capped_by_bail_deadline():
+    session, _ = make_session(
+        {f"{STORE}/p": Seq([(429, ""), (200, "ok")])},
+        robots=False,
+        retry=RetryPolicy(retries=1, backoff=True, rate_limit_base_delay=30.0),
+    )
+    deadline = session.bail_deadline = now() + 0.1
+    start = now()
+    assert (await get(session, f"{STORE}/p")).status == 200
+    assert 0.05 <= now() - start < 0.5
+    assert session.bail_deadline == deadline
+
+
+async def test_final_429_retry_after_extends_bail_deadline():
+    session, _ = make_session(
+        {f"{STORE}/p": (429, "", {"Retry-After": "1"})},
+        robots=False,
+        retry=RetryPolicy(retries=0),
+    )
+    deadline = session.bail_deadline = now() + 0.1
+    assert (await get(session, f"{STORE}/p")).status == 429
+    assert session.registry.slot(STORE).paused_until - now() >= 0.9
+    assert session.bail_deadline - deadline >= 0.9
 
 
 async def test_429_pauses_the_whole_host():

@@ -74,6 +74,7 @@ WOO_VARIATIONS = [
 class _Handler(http.server.BaseHTTPRequestHandler):
     scenario = ""
     hits: dict
+    agents: list  # user agents in the order first seen
 
     def log_message(self, *args):
         pass
@@ -89,9 +90,25 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def _hang(self):
         time.sleep(BAIL * 4)
 
+    def _record_agent(self):
+        agent = self.headers.get("User-Agent", "")
+        if agent not in self.agents:
+            self.agents.append(agent)
+
+    def _user_agent_rate_limited(self, path):
+        # Shopify on 2026-11-14 (#62): one user agent is refused for longer than
+        # --bail, any other is served
+        if path == "/robots.txt":
+            return self._send(404)
+        if self.headers.get("User-Agent", "") == self.agents[0]:
+            return self._send(429, headers={"Retry-After": str(BAIL + 1)})
+        page = [{"id": 1, "handle": "p1", "title": "P1"}] if "page=1" in self.path else []
+        return self._send(200, json.dumps({"products": page}).encode())
+
     def do_GET(self):  # noqa: C901 - one branch per scenario
         path = self.path.split("?")[0]
         count = self.hits[path] = self.hits.get(path, 0) + 1
+        self._record_agent()
         host = self.headers.get("Host", "")
         s = self.scenario
 
@@ -150,10 +167,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(404)
             return self._send(429, headers={"Retry-After": "0"})
         if s == "robots_rate_limited":
-            # Shopify per IP: robots.txt 429s with Retry-After: 60, past --bail
-            if path == "/robots.txt":
-                return self._send(429, headers={"Retry-After": "60"})
-            return self._send(200, b'{"products": []}')
+            # Shopify per IP, from robots.txt on: the Retry-After waits (3 x 3 x 2 s)
+            # outlast --bail but don't count against it, so the retries run out first
+            return self._send(429, headers={"Retry-After": "2"})
+        if s == "user_agent_rate_limited":
+            return self._user_agent_rate_limited(path)
         if s == "rate_limited_no_retry_after":
             # Stupell (#30): 429s without Retry-After; retries wait until --bail
             return self._send(404) if path == "/robots.txt" else self._send(429)
@@ -182,7 +200,8 @@ def stores():
     servers = {}
 
     def start(scenario):
-        handler = type(f"H_{scenario}", (_Handler,), {"scenario": scenario, "hits": {}})
+        attrs = {"scenario": scenario, "hits": {}, "agents": []}
+        handler = type(f"H_{scenario}", (_Handler,), attrs)
         server = http.server.ThreadingHTTPServer(("127.0.0.1", _free_port()), handler)
         server.daemon_threads = True
         threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -235,6 +254,7 @@ EXPECTED_SHOPIFY = {
     "rate_limited": "rate limited (429)",
     "rate_limited_no_retry_after": "rate limited (429)",
     "robots_rate_limited": "rate limited (429)",
+    "user_agent_rate_limited": "ok",
     "unavailable": "unavailable (5xx)",
     "forbidden_then_rate_limited": "403 Forbidden",
 }
