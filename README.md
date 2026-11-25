@@ -75,7 +75,7 @@ spy scrape --peek https://www.example.com
 nix develop github:ndgigliotti/shopify-spy
 ```
 
-The Nix package includes Excel support, so `--format xlsx` works without the `excel` extra. In your own flake, `overlays.default` adds `python3Packages.shopify-spy` (for every Python version) and a top-level `shopify-spy`.
+The CLI and the dev shell include Excel support, so `--format xlsx` works without the `excel` extra. In your own flake, `overlays.default` adds `python3Packages.shopify-spy` (for every Python version) and a top-level `shopify-spy`. As in nixpkgs, the library package leaves Excel support out; add it with `python3.withPackages (ps: [ ps.shopify-spy ] ++ ps.shopify-spy.optional-dependencies.excel)`.
 
 ## Quick Start
 

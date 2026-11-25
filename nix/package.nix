@@ -1,3 +1,7 @@
+# Kept line for line with nixpkgs' pkgs/development/python-modules/shopify-spy/default.nix,
+# so dependency changes port as a copy. Deliberate differences: src and version come
+# from the flake, e2e tests run, the changelog link has no fetcher tag, and there's no
+# maintainers (our pinned nixpkgs may predate lib.maintainers.ndgigliotti).
 {
   lib,
   buildPythonPackage,
@@ -15,8 +19,9 @@
   pydantic,
   pyyaml,
   rich,
-  socksio,
   typer,
+
+  # optional-dependencies
   xlsxwriter,
 
   # tests
@@ -24,9 +29,10 @@
   pytest-asyncio,
   pytestCheckHook,
   respx,
+  writableTmpDirAsHomeHook,
 }:
 
-buildPythonPackage {
+buildPythonPackage (finalAttrs: {
   pname = "shopify-spy";
   inherit version src;
   pyproject = true;
@@ -42,34 +48,35 @@ buildPythonPackage {
     pyyaml
     rich
     typer
-    # httpx's socks extra, a default dependency
-    socksio
-    # The excel extra: the packaged CLI supports --format xlsx
-    xlsxwriter
-  ];
+  ]
+  ++ httpx.optional-dependencies.socks;
+
+  optional-dependencies = {
+    excel = [ xlsxwriter ];
+  };
 
   nativeCheckInputs = [
     openpyxl
     pytest-asyncio
     pytestCheckHook
     respx
+    writableTmpDirAsHomeHook
+  ]
+  ++ lib.concatAttrValues finalAttrs.passthru.optional-dependencies;
+
+  disabledTestMarks = [
+    # Calls real stores
+    "integration"
+    # nixpkgs also skips e2e (tight timeouts on its builders); our CI check runs them
   ];
-
-  # The CLI writes its log under the platformdirs state directory
-  preCheck = ''
-    export HOME=$(mktemp -d)
-  '';
-
-  # Integration tests call real stores; the e2e tests only use local servers, so they stay
-  disabledTestMarks = [ "integration" ];
 
   pythonImportsCheck = [ "shopify_spy" ];
 
   meta = {
     description = "Python library and CLI to scrape product data, images, and collections from Shopify and WooCommerce stores";
     homepage = "https://github.com/ndgigliotti/shopify-spy";
-    changelog = "https://github.com/ndgigliotti/shopify-spy/blob/v${version}/CHANGELOG.md";
+    changelog = "https://github.com/ndgigliotti/shopify-spy/blob/v${finalAttrs.version}/CHANGELOG.md";
     license = lib.licenses.mit;
     mainProgram = "shopify-spy";
   };
-}
+})
