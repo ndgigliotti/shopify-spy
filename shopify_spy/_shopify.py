@@ -27,8 +27,14 @@ YIELD_WINDOW = 10
 # Sitemap documents fetched at once per store (the session's slots still apply)
 FETCH_CONCURRENCY = 32
 
-# Shopify child sitemaps that never list products or collections
-SKIPPED_CHILD_SITEMAPS = ("sitemap_pages_", "sitemap_blogs_", "sitemap_agentic_discovery")
+# Shopify child sitemaps that never list products; collections come from
+# /collections.json, since /collections/<handle>.json answers 429 (issue #64)
+SKIPPED_CHILD_SITEMAPS = (
+    "sitemap_pages_",
+    "sitemap_blogs_",
+    "sitemap_agentic_discovery",
+    "sitemap_collections_",
+)
 
 next_bulk_page_url = next_page_url
 
@@ -73,6 +79,12 @@ class Paging(enum.Enum):
     FAILED = enum.auto()  # anything else that stopped it partway
 
 
+class ListedCollection(NamedTuple):
+    collection: dict[str, Any]  # an entry of /collections.json
+    handle: str
+    page_url: str  # the list page it came from, after redirects
+
+
 class Paged(NamedTuple):
     outcome: Paging
     origin: str  # where the last response came from, after redirects
@@ -87,31 +99,49 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
     stopped partway and the sitemap couldn't be read to fill the gap.
     """
     seen_handles: set[str] = set()
+    covered = True
     bulk = Paging.FAILED
+    base = ctx.url
+    collections: list[ListedCollection] | None = None
     if ctx.products:
         paged = await _page_products(
             ctx, emit, seen_handles, get_bulk_products_url(ctx.url), "Bulk"
         )
-        bulk = paged.outcome
-        if bulk is Paging.CAPPED and ctx.item_limit is None:
-            # List the sitemap first, so collections know which products are missing
-            walk = _sitemap_walk(ctx, want_products=True)
-            locs = [loc async for loc in _wanted_locs(ctx, walk, want_products=True)]
-            listed = {h for loc in locs if (h := _listed_handle(loc))} if walk.root_ok else None
-            await _collections(ctx, emit, seen_handles, paged.origin, listed)
-            await _fetch_documents(ctx, emit, _each(locs), seen_handles)
-            return walk.root_ok
-        if bulk is Paging.CAPPED:
-            # With an item limit the catalog may be far bigger than needed (millions of
-            # products), so don't read the whole sitemap up front; it's streamed below
-            await _collections(ctx, emit, seen_handles, paged.origin, None)
-        elif bulk is Paging.COMPLETE and not ctx.collections:
-            return True
-    bulk_complete = bulk is Paging.COMPLETE
-    sitemap_ok = await _sitemap(ctx, emit, seen_handles, skip_products=bulk_complete)
+        bulk, base = paged.outcome, paged.origin
+        if bulk is not Paging.COMPLETE:
+            covered, collections = await _past_bulk(ctx, emit, seen_handles, paged)
+    if ctx.collections:
+        if collections is None:
+            collections = await _collection_list(ctx, base)
+        await _emit_collections(ctx, emit, collections)
     if ctx.items == 0 and bulk is Paging.NOT_FOUND:
         await ctx.probe_platform("/wp-json/", _looks_like_woocommerce, "woocommerce")
-    return bulk_complete or not seen_handles or sitemap_ok
+    return covered
+
+
+async def _past_bulk(
+    ctx: StoreContext, emit: Emit, seen: set[str], paged: Paged
+) -> tuple[bool, list[ListedCollection] | None]:
+    """Find the products bulk didn't reach: collections past the limit, then the sitemap.
+
+    Returns whether the catalog was covered, and the collection list if it was read.
+    """
+    collections = None
+    if paged.outcome is Paging.CAPPED and ctx.item_limit is None:
+        # List the sitemap first, so collections know which products are missing
+        walk = _sitemap_walk(ctx)
+        locs = [loc async for loc in _product_locs(walk)]
+        listed = {h for loc in locs if (h := _listed_handle(loc))} if walk.root_ok else None
+        collections = await _collections(ctx, emit, seen, paged.origin, listed)
+        await _fetch_documents(ctx, emit, _each(locs), seen)
+        return walk.root_ok, collections
+    if paged.outcome is Paging.CAPPED:
+        # With an item limit the catalog may be far bigger than needed (millions of
+        # products), so don't read the whole sitemap up front; it's streamed below
+        collections = await _collections(ctx, emit, seen, paged.origin, None)
+    walk = _sitemap_walk(ctx)
+    await _fetch_documents(ctx, emit, _product_locs(walk), seen)
+    return not seen or walk.root_ok, collections
 
 
 async def _page_products(
@@ -212,7 +242,7 @@ async def _page_products(
 
 async def _collections(
     ctx: StoreContext, emit: Emit, seen: set[str], base: str, listed: set[str] | None
-) -> None:
+) -> list[ListedCollection] | None:
     """Get past the bulk limit through collections, each with its own 25,000 limit.
 
     /collections/all lists the catalog in another order than /products.json, then
@@ -222,6 +252,9 @@ async def _collections(
     (``listed``, None if it couldn't be read) are missing than the list has pages,
     and until the last YIELD_WINDOW collections found less than a product per
     page. Products in no collection are left to the sitemap.
+
+    Returns /collections.json's entries, or None if it wasn't read. The session
+    requests a URL only once, so collection items are built from this list.
     """
 
     remaining = None if listed is None else listed - seen
@@ -231,7 +264,7 @@ async def _collections(
 
     if cheaper_one_by_one(MAX_PAGES):
         logger.info("Bulk stopped at the 25,000-product limit; %d missing", len(remaining or ()))
-        return
+        return None
     logger.info("Bulk stopped at Shopify's 25,000-product limit; paging collections")
 
     async def page(path: str, label: str) -> Paged:
@@ -243,8 +276,9 @@ async def _collections(
     await page("/collections/all/products.json", "Collection all")
     if remaining == set():
         logger.info("Collections found every product in the sitemap")
-        return
-    queue = deque(await _collection_handles(ctx, base))
+        return None
+    collections = await _collection_list(ctx, base)
+    queue = deque(_collection_handles(collections))
     recent: deque[Paged] = deque(maxlen=YIELD_WINDOW)
 
     def worthwhile() -> bool:
@@ -270,55 +304,84 @@ async def _collections(
         logger.info("Collections found every product in the sitemap")
     elif queue:
         logger.info("Collections stopped paying off; skipped the last %d", len(queue))
+    return collections
 
 
-async def _collection_handles(ctx: StoreContext, base: str) -> list[tuple[str, int]]:
-    """(handle, products count) from /collections.json, largest first.
+async def _collection_list(ctx: StoreContext, base: str) -> list[ListedCollection]:
+    """Every entry of the paged /collections.json, once per handle.
 
-    Empty collections and "all" are left out; a missing count is -1.
+    A failed page is logged and ends the list with what was read so far.
     """
-    counts: dict[str, int] = {}
+    collections: dict[str, ListedCollection] = {}
     previous: list[Any] = []
     url = get_bulk_products_url(base, path="/collections.json")
     for _ in range(MAX_PAGES):
-        try:
-            response = await ctx.session.get(url)
-        except RequestFailed as exc:
-            logger.info("Collection list failed for %s: %s", url, exc)
+        fetched = await _collection_page(ctx, url)
+        if fetched is None:
             break
-        if response is None or not response.ok:
-            status = "skipped" if response is None else f"returned {response.status}"
-            logger.info("Collection list %s for %s", status, url)
-            break
-        data = response.json_or_none()
-        page = data.get("collections") if isinstance(data, dict) else None
-        if not isinstance(page, list) or not page or page == previous:
+        page, page_url = fetched
+        if not page or page == previous:
             break  # the end, or a server that ignores `page`
         previous = page
         for collection in page:
             if isinstance(collection, dict) and collection.get("handle"):
-                count = collection.get("products_count")
-                # A missing count sorts last but is still paged
-                counts[str(collection["handle"])] = count if isinstance(count, int) else -1
+                handle = str(collection["handle"])
+                collections.setdefault(handle, ListedCollection(collection, handle, page_url))
         if len(page) < BULK_PAGE_SIZE:
             break
-        url = next_page_url(response.url)
-    handles = [(h, n) for h, n in counts.items() if n != 0 and h.lower() != "all"]
-    logger.info("Collection list: %d collections to page", len(handles))
+        url = next_page_url(page_url)
+    logger.info("Collection list: %d collections", len(collections))
+    return list(collections.values())
+
+
+async def _collection_page(ctx: StoreContext, url: str) -> tuple[list[Any], str] | None:
+    """One page of /collections.json and its URL after redirects, or None if it failed."""
+    try:
+        response = await ctx.session.get(url)
+    except RequestFailed as exc:
+        logger.info("Collection list failed for %s: %s", url, exc)
+        return None
+    if response is None or not response.ok:
+        status = "skipped" if response is None else f"returned {response.status}"
+        logger.info("Collection list %s for %s", status, url)
+        return None
+    data = response.json_or_none()
+    page = data.get("collections") if isinstance(data, dict) else None
+    return (page, response.url) if isinstance(page, list) else None
+
+
+def _collection_handles(collections: list[ListedCollection]) -> list[tuple[str, int]]:
+    """(handle, products count) of the collections worth paging, largest first.
+
+    Empty collections and "all" are left out; a missing count is -1.
+    """
+    handles = []
+    for collection, handle, _ in collections:
+        count = collection.get("products_count")
+        # A missing count sorts last but is still paged
+        count = count if isinstance(count, int) else -1
+        if count != 0 and handle.lower() != "all":
+            handles.append((handle, count))
     return sorted(handles, key=lambda hn: -hn[1])
 
 
-async def _sitemap(ctx: StoreContext, emit: Emit, seen: set[str], skip_products: bool) -> bool:
-    """Fetch product/collection JSON documents listed in the sitemap.
-
-    After a complete bulk run every product is already emitted, so product entries
-    are skipped; after a partial one, only products whose handles weren't seen are
-    fetched. Returns whether the top-level sitemap could be read.
-    """
-    want_products = ctx.products and not skip_products
-    walk = _sitemap_walk(ctx, want_products)
-    await _fetch_documents(ctx, emit, _wanted_locs(ctx, walk, want_products), seen)
-    return walk.root_ok
+async def _emit_collections(
+    ctx: StoreContext, emit: Emit, collections: list[ListedCollection]
+) -> None:
+    """Emit each listed collection; /collections/<handle>.json answers 429 (issue #64),
+    so the list entry is used instead."""
+    for collection, handle, page_url in collections:
+        parts = urllib.parse.urlsplit(page_url)
+        handle = urllib.parse.quote(handle)
+        await emit(
+            {
+                "collection": collection,
+                "url": f"{parts.scheme}://{parts.netloc}/collections/{handle}.json",
+                "store": parts.netloc,
+                "platform": "shopify",
+                "image_urls": image_urls(collection, ctx.images),
+            }
+        )
 
 
 def _listed_handle(loc: str) -> str | None:
@@ -328,31 +391,20 @@ def _listed_handle(loc: str) -> str | None:
     return product_handle(loc) if path.startswith("/products/") else None
 
 
-def _sitemap_walk(ctx: StoreContext, want_products: bool) -> sitemap.SitemapWalk:
+def _sitemap_walk(ctx: StoreContext) -> sitemap.SitemapWalk:
     def follow(child: str) -> bool:
-        """Skip Shopify child sitemaps that can't list anything wanted."""
+        """Skip Shopify child sitemaps that can't list products."""
         name = urllib.parse.urlsplit(child).path.rsplit("/", 1)[-1]
-        if name.startswith("sitemap_products_"):
-            return want_products
-        if name.startswith("sitemap_collections_"):
-            return ctx.collections
         return not name.startswith(SKIPPED_CHILD_SITEMAPS)
 
     return sitemap.iter_locs(ctx.session, get_sitemap_url(ctx.url), follow)
 
 
-async def _wanted_locs(
-    ctx: StoreContext, walk: sitemap.SitemapWalk, want_products: bool
-) -> AsyncIterator[str]:
-    """The store's own product and collection entries, as far as they're wanted."""
+async def _product_locs(walk: sitemap.SitemapWalk) -> AsyncIterator[str]:
+    """The store's own product entries."""
     async for loc in walk:
         parts = urllib.parse.urlsplit(loc)
-        if (parts.hostname or "").lower() not in walk.hosts:
-            continue
-        if "/products/" in parts.path:
-            if want_products:
-                yield loc
-        elif "/collections/" in parts.path and ctx.collections:
+        if (parts.hostname or "").lower() in walk.hosts and "/products/" in parts.path:
             yield loc
 
 

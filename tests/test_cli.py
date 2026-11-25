@@ -1271,9 +1271,8 @@ def test_csv_uses_fixed_columns(cli):
     """D2: CSV has fixed columns, so collection rows keep theirs."""
     routes = {
         products_url("store.com"): bulk(1),
-        sitemap_url("store.com"): urlset("https://store.com/collections/all"),
-        "https://store.com/collections/all.json": {
-            "collection": {"id": 9, "handle": "all", "products_count": 1}
+        "https://store.com/collections.json?limit=250&page=1": {
+            "collections": [{"id": 9, "handle": "all", "products_count": 1}]
         },
     }
     run = cli(routes, "-F", "csv", "--collections", "store.com")

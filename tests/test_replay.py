@@ -108,6 +108,17 @@ def test_replay_matches_snapshot(name, tmp_path):
     assert run_case(name, tmp_path) == expected
 
 
+def test_collections_come_from_the_list_alone():
+    # The corpus has no /collections/<handle>.json or sitemap: Shopify answers the
+    # former 429 (issue #64), and a complete bulk run leaves the sitemap nothing to add
+    corpus, urls, options = CASES["collections"]
+    fetcher = ReplayFetcher(load_corpus(CORPUS / corpus))
+    spy.scrape(
+        urls, fetcher_factory=lambda: fetcher, _backoff=False, throttle=False, **options
+    ).collect()
+    assert not fetcher.misses
+
+
 def test_woocommerce_variations_have_their_own_prices():
     entries = load_corpus(CORPUS / CASES["woocommerce"][0])
     fetcher = ReplayFetcher(entries)
