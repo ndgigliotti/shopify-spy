@@ -17,6 +17,16 @@
 - The README documents the `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY`
   environment variables, which were already honored.
 
+### Changed
+
+- A 429 (Too Many Requests) now swaps the store's user agent, as a 403 already did
+  ([#62](https://github.com/ndgigliotti/shopify-spy/issues/62)), but only when the
+  refused request carried the store's current one. A fixed `--user-agent` stays fixed.
+- Time spent waiting out a server's `Retry-After` on a 429 or 503 no longer counts
+  against `--bail`, so a rate-limited store isn't cut off mid-wait. A rate-limited
+  store can take several minutes to fail. A 429 without `Retry-After` is still capped
+  by bail.
+
 ### Fixed
 
 - `--collections` gets collection items from Shopify stores again
