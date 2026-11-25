@@ -196,6 +196,7 @@ spy scrape [URL] [OPTIONS]
 - `--user-agent, -A TEXT` - Custom User-Agent header
 - `--ignore-robots, -i` - Ignore robots.txt restrictions
 - `--insecure` - Don't verify TLS certificates
+- `--proxy URL` - Send every request through this proxy (`http://`, `https://` or `socks5://`); overrides `HTTPS_PROXY`/`HTTP_PROXY`, see [Limitations](#limitations)
 - `--bail INT` - Abort if no items scraped within N seconds (default: 30, 0 to disable)
 - `--peek` - Print 1 item to stdout as JSONL and exit (no files or directories created); with `--schema unified`, its unified rows
 - `--verbose, -v` - Show debug output (logs to both file and terminal)
@@ -242,6 +243,7 @@ network:
   timeout: 180             # Request timeout (seconds)
   retries: 2               # Retry failed requests
   # user_agent: MyBot/1.0 (+https://example.com)  # Custom user agent
+  # proxy: http://proxy.example.com:8080  # Fixed proxy (overrides HTTPS_PROXY)
   respect_robots_txt: true
   verify_tls: true         # Verify TLS certificates (false = --insecure)
   max_concurrent_stores: 16  # Stores scraped at once
@@ -310,7 +312,7 @@ File names start with the platform and a UTC timestamp. A status JSON file is wr
 | `rate limited (429)` | `rate_limited` | The store answered 429 (Too Many Requests) after retries and no successful response, or a 429 its retries didn't get past held it until `--bail` fired with no items; retry later with a lower `--concurrent` |
 | `unavailable (5xx)` | `unavailable` | The store answered 5xx server errors (often an outage or maintenance) and no successful response; retry later |
 | `TLS error` | `tls_error` | The certificate failed verification; try `--insecure` |
-| `no response` | `no_response` | The store never answered (DNS, connection or network failure) |
+| `no response` | `no_response` | The store never answered (DNS, connection or network failure), or a proxy refused the request (407); with a proxy in use, the hint says to check it |
 | `failed` | `error` | An unexpected error (details in the log file) |
 | `stopped` | `stopped` | Interrupted (Ctrl-C) before producing anything |
 | `invalid URL` | `invalid_url` | The URL was malformed and skipped before scraping |
@@ -529,7 +531,7 @@ spy.write_items(spy.scrape(blocked, respect_robots_txt=False), "products.jsonl",
 
 - **How a run works.** `scrape()` returns a run without fetching anything; stores are scraped while something iterates it, one item at a time. Items aren't kept, so memory stays flat however big the catalog, and a run can be iterated only once (call `scrape()` again for another pass). Iterating it yourself, or passing it to `write_items()`, streams; `run.collect()` and `list(run)` hold every item in memory. `run.result` (per-store results) is available once iteration ends, and `run.stores` gives a snapshot mid-run. Leaving early (`break`, `run.close()`, or the end of a `with spy.scrape(...) as run:` block) stops the run; stores that hadn't finished get the `finish_reason` `closed`.
 - **Failures are never silent.** By default `scrape()` raises `ScrapeFailed` (listing each store's status) when every store failed; `on_failure="warn"` or `"ignore"` relax that, and `strict=True` raises when any store failed. Each `StoreResult` has a `status`, an item count and sometimes a `hint`, such as a likely wrong `platform`. A store that only answered 429s, or that 429s held up until `bail` fired, is `rate_limited`, and one that only answered 5xx errors is `unavailable`; both are failures worth retrying later.
-- **Options** match the CLI: `platform`, `products`, `collections`, `images` (with `images_dir`), `max_items_per_store` (per store; use `itertools.islice` for a total), `bail`, `concurrent_requests`, `request_timeout`, `retries`, `user_agent`, `respect_robots_txt`, `verify_tls`, `max_concurrent_stores`, `throttle` and the `throttle_*` settings.
+- **Options** match the CLI: `platform`, `products`, `collections`, `images` (with `images_dir`), `max_items_per_store` (per store; use `itertools.islice` for a total), `bail`, `concurrent_requests`, `request_timeout`, `retries`, `user_agent`, `respect_robots_txt`, `verify_tls`, `proxy`, `max_concurrent_stores`, `throttle` and the `throttle_*` settings.
 - **Images:** `images=True, images_dir="images"` saves files under `images/full/`; each item's `scraped_images` records have a `path` relative to `images_dir`, so the file is `Path(images_dir) / record["path"]`.
 - **Schemas:** `write_items(run, "products.jsonl")` writes items as scraped; `schema="unified"` writes the same one-row-per-variant records as the CLI's `--schema unified`, shared by both platforms (see [Unified schema](#unified-schema)), so items from Shopify and WooCommerce runs can go in one file. CSV and Excel are always unified (`schema="native"` raises `ValueError`). `fields=[...]` picks unified columns (a name that isn't one of them is logged and left empty). Other dicts, such as `summarize(item).asdict()`, get a column per key. `"products.xlsx"` writes the unified rows as typed cells (see [Excel output](#excel-output)), keeping rows in a temporary folder next to the file until it closes. A write that fails partway leaves the file ending on the last whole item.
 - **No side effects:** nothing is written unless `images=True`, no config file is read, and nothing is printed (logs go to the `shopify_spy` logger; `on_failure="warn"` issues a `ScrapeWarning`, which Python shows on stderr).
@@ -556,6 +558,8 @@ result = await spy.scrape_async(urls, platform="woocommerce")  # RunResult with 
 # Disable throttling (faster but riskier)
 spy scrape https://example.com --no-throttle
 ```
+
+**Proxies.** Requests honor the `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` environment variables. To set one fixed proxy instead, use `--proxy URL`, `network.proxy` in the config file, or `proxy=` in the library; it overrides those variables, `NO_PROXY` included. `http://`, `https://` and `socks5://` proxies all work out of the box. Credentials in the URL are masked in logs and errors (`http://USER:***@gateway:PORT`). `--proxy` takes them as typed, but in the environment variables a `/`, `?` or `#` in them must be percent-encoded (`%2F`, `%3F`, `%23`). To keep a password out of shell history and process lists, or out of a coding agent's transcript, set it in the environment before starting the shell or agent rather than passing it to `--proxy`. A proxy is for a fixed egress, such as a company network or another region; it is not a way around a store's rate limits, which in practice key on user agent or endpoint as much as on IP.
 
 ## Feedback
 

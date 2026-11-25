@@ -8,7 +8,7 @@ import logging
 import signal
 import sys
 import time
-from collections.abc import Container
+from collections.abc import Callable, Container
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -35,7 +35,7 @@ from shopify_spy._export import (
     unified_records,
     write_status,
 )
-from shopify_spy._fetch import FetcherFactory
+from shopify_spy._fetch import FetcherFactory, check_proxy_support, validate_proxy
 from shopify_spy._flatten import default_columns
 from shopify_spy._results import _PLATFORM_NAMES, RunResult, StoreResult, StoreStatus
 from shopify_spy._utils import normalize_url, read_url_file, split_valid_urls
@@ -198,6 +198,14 @@ def scrape(
         bool,
         typer.Option("--insecure", help="Don't verify TLS certificates."),
     ] = False,
+    proxy: Annotated[
+        str | None,
+        typer.Option(
+            "--proxy",
+            help="Proxy URL for every request (http://, https:// or socks5://); "
+            "overrides HTTPS_PROXY/HTTP_PROXY.",
+        ),
+    ] = None,
     peek: Annotated[
         bool,
         typer.Option(
@@ -219,6 +227,11 @@ def scrape(
     # Load config file (or defaults)
     config = load_config(config_path)
 
+    # Checked before the overrides so a bad --proxy is a clean error, not a
+    # ValidationError traceback from Config()
+    if proxy is not None:
+        _exit_on_invalid(lambda: validate_proxy(proxy))
+
     # Apply CLI overrides
     config = apply_cli_overrides(
         config,
@@ -237,6 +250,7 @@ def scrape(
         bail=bail,
         insecure=insecure,
         max_stores=max_stores,
+        proxy=proxy,
     )
 
     # --peek prints one item in total, logs quietly and downloads no images
@@ -251,13 +265,7 @@ def scrape(
     if verbose and quiet:
         err_console.print("[red]Error: Cannot use both --verbose and --quiet[/red]")
         raise typer.Exit(1)
-    try:
-        schema_for(config.output.format, config.output.schema_)
-        if config.output.format == "xlsx" and not peek:
-            require_xlsxwriter()
-    except (ValueError, ModuleNotFoundError) as exc:
-        err_console.print(f"[red]Error: {escape(str(exc))}[/red]")
-        raise typer.Exit(1) from None
+    _exit_on_invalid(lambda: _check_options(config, peek))
 
     # Warn about Shopify-only flags used with WooCommerce
     if config.scrape.platform == Platform.woocommerce:
@@ -292,6 +300,23 @@ def scrape(
     )
 
 
+def _exit_on_invalid(check: Callable[[], object]) -> None:
+    """Run ``check``; print its ValueError or missing module as an error and exit 1."""
+    try:
+        check()
+    except (ValueError, ModuleNotFoundError) as exc:
+        err_console.print(f"[red]Error: {escape(str(exc))}[/red]")
+        raise typer.Exit(1) from None
+
+
+def _check_options(config: Config, peek: bool) -> None:
+    schema_for(config.output.format, config.output.schema_)
+    if config.output.format == "xlsx" and not peek:
+        require_xlsxwriter()
+    if FETCHER_FACTORY is None:
+        check_proxy_support(config.network.proxy)
+
+
 @app.command()
 def init(
     path: Annotated[
@@ -316,6 +341,10 @@ def init(
     console.print(f"[green]Created config file: {created}[/green]")
 
 
+def _given(**values: Any) -> dict[str, Any]:
+    return {key: value for key, value in values.items() if value is not None}
+
+
 def apply_cli_overrides(
     config: Config,
     *,
@@ -334,46 +363,32 @@ def apply_cli_overrides(
     bail: int | None = None,
     insecure: bool = False,
     max_stores: int | None = None,
+    proxy: str | None = None,
 ) -> Config:
     """Apply CLI argument overrides to config. ``None`` keeps the config value."""
-    scrape_dict = config.scrape.model_dump()
-    output_dict = config.output.model_dump()
-    network_dict = config.network.model_dump()
-    throttle_dict = config.throttle.model_dump()
-
-    if platform is not None:
-        scrape_dict["platform"] = platform
-    if products is not None:
-        scrape_dict["products"] = products
-    if collections is not None:
-        scrape_dict["collections"] = collections
-    if images is not None:
-        scrape_dict["images"] = images
-    if limit is not None:
-        scrape_dict["limit"] = limit
-    if bail is not None:
-        scrape_dict["bail"] = bail
-    if output is not None:
-        output_dict["dir"] = output
-    if format is not None:
-        output_dict["format"] = format
-    if schema is not None:
-        output_dict["schema_"] = schema
-    elif format in UNIFIED_ONLY_FORMATS and output_dict["schema_"] == "native":
+    scrape_dict = config.scrape.model_dump() | _given(
+        platform=platform,
+        products=products,
+        collections=collections,
+        images=images,
+        limit=limit,
+        bail=bail,
+    )
+    output_dict = config.output.model_dump() | _given(dir=output, format=format, schema_=schema)
+    if schema is None and format in UNIFIED_ONLY_FORMATS and output_dict["schema_"] == "native":
         # A config's native schema (meant for JSONL, say) doesn't block -F csv
         output_dict["schema_"] = None
-    if concurrent is not None:
-        network_dict["concurrent_requests"] = concurrent
-    if max_stores is not None:
-        network_dict["max_concurrent_stores"] = max_stores
-    if user_agent is not None:
-        network_dict["user_agent"] = user_agent
+    network_dict = config.network.model_dump() | _given(
+        concurrent_requests=concurrent,
+        max_concurrent_stores=max_stores,
+        user_agent=user_agent,
+        proxy=proxy,
+    )
     if ignore_robots:
         network_dict["respect_robots_txt"] = False
     if insecure:
         network_dict["verify_tls"] = False
-    if throttle is not None:
-        throttle_dict["enabled"] = throttle
+    throttle_dict = config.throttle.model_dump() | _given(enabled=throttle)
 
     return Config(
         scrape=scrape_dict,

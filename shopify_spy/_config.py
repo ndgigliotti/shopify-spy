@@ -8,7 +8,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+from shopify_spy._fetch import validate_proxy
 
 OutputFormat = Literal["json", "jsonl", "csv", "xlsx", "xml"]
 OutputSchema = Literal["native", "unified"]
@@ -57,6 +59,12 @@ class NetworkConfig(BaseModel):
     respect_robots_txt: bool = True
     verify_tls: bool = True
     max_concurrent_stores: int | None = Field(default=16, ge=1)  # None = no limit
+    proxy: str | None = None  # None = HTTPS_PROXY/HTTP_PROXY/ALL_PROXY from the environment
+
+    @field_validator("proxy")
+    @classmethod
+    def _check_proxy(cls, value: str | None) -> str | None:
+        return None if value is None else validate_proxy(value)
 
 
 class ThrottleConfig(BaseModel):
@@ -93,6 +101,7 @@ class Config(BaseModel):
             "respect_robots_txt": self.network.respect_robots_txt,
             "verify_tls": self.network.verify_tls,
             "max_concurrent_stores": self.network.max_concurrent_stores,
+            "proxy": self.network.proxy,
             "throttle": self.throttle.enabled,
             "throttle_start_delay": self.throttle.start_delay,
             "throttle_max_delay": self.throttle.max_delay,
@@ -130,6 +139,7 @@ network:
   timeout: 180             # Request timeout (seconds)
   retries: 2               # Retry failed requests
   # user_agent: MyBot/1.0 (+https://example.com)  # Custom user agent
+  # proxy: http://proxy.example.com:8080  # Fixed proxy (overrides HTTPS_PROXY)
   respect_robots_txt: true
   verify_tls: true         # Verify TLS certificates (false = --insecure)
   max_concurrent_stores: 16  # Stores scraped at once
@@ -166,6 +176,9 @@ def load_config(config_path: Path | None = None) -> Config:
     return Config()
 
 
+_PROXY_LOC = ("network", "proxy")
+
+
 def load_config_from_file(path: Path) -> Config:
     """Load and validate configuration from a specific file."""
     import yaml
@@ -177,7 +190,18 @@ def load_config_from_file(path: Path) -> Config:
     if data is None:
         return Config()
 
-    return Config.model_validate(data)
+    try:
+        return Config.model_validate(data)
+    except ValidationError as exc:
+        # network.proxy may hold credentials, so hide the input of any error at
+        # it or at a level that contains it (the whole file, or all of network)
+        line_errors = [
+            {**error, "input": "<hidden>"}
+            if _PROXY_LOC[: len(error["loc"])] == error["loc"]
+            else error
+            for error in exc.errors(include_url=False)
+        ]
+        raise ValidationError.from_exception_data(exc.title, line_errors) from None
 
 
 def create_default_config(path: Path | None = None) -> Path:

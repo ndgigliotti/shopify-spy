@@ -13,6 +13,8 @@ import http.cookiejar
 import json
 import logging
 import ssl
+import urllib.parse
+import urllib.request
 import zlib
 from collections import defaultdict
 from collections.abc import Callable, Mapping
@@ -33,6 +35,10 @@ WARN_SIZE = 32 * 1024 * 1024
 
 # Only these are advertised, so anything else in Content-Encoding is unexpected
 ACCEPT_ENCODING = "gzip, deflate"
+
+# The schemes httpx.Proxy accepts
+PROXY_SCHEMES = ("http", "https", "socks5", "socks5h")
+_ENV_PROXY_PREFIX = "proxy from the environment (HTTPS_PROXY, HTTP_PROXY or ALL_PROXY): "
 
 
 @dataclass(frozen=True)
@@ -186,14 +192,137 @@ def _is_cert_error(exc: BaseException) -> bool:
     return False
 
 
+def redact_url(url: str) -> str:
+    """The URL with its credentials masked: ``USER:***@`` or, with no password, ``***@``.
+
+    A lone username is masked too, since some proxy gateways take a token there.
+    Never raises; a URL without ``@`` comes back unchanged.
+    """
+    if "@" not in url:
+        return url
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        parts = None
+    if parts is None or not parts.netloc:
+        # No parseable netloc (e.g. scheme-less "u:secret@host:8080"): mask
+        # everything up to the last "@"
+        return "***" + url[url.rindex("@") :]
+    if "@" not in parts.netloc:
+        # An unencoded "/", "?" or "#" in a password moves the "@" past the
+        # netloc, where it can't be told apart from a path or query "@": mask
+        # everything between "//" and the last "@"
+        start = url.index("//") + 2
+        return url[:start] + "***" + url[url.rindex("@") :]
+    userinfo, _, hostport = parts.netloc.rpartition("@")
+    user, sep, _ = userinfo.partition(":")
+    masked = f"{user}:***" if sep else "***"
+    return urllib.parse.urlunsplit(parts._replace(netloc=f"{masked}@{hostport}"))
+
+
+_USERINFO_ESCAPES = str.maketrans({"/": "%2F", "?": "%3F", "#": "%23"})
+
+
+def encode_proxy_userinfo(url: str) -> str:
+    """``url`` with any ``/``, ``?`` or ``#`` in its credentials percent-encoded.
+
+    Unencoded, they end the host part, so ``http://tok?en@gw:8080`` would go to host
+    ``tok``. A proxy URL has no use for a path or query, so everything between
+    ``//`` and the last ``@`` is taken as the credentials.
+    """
+    scheme, sep, rest = url.partition("://")
+    userinfo, at, hostport = rest.rpartition("@")
+    if not (sep and at):
+        return url
+    return f"{scheme}://{userinfo.translate(_USERINFO_ESCAPES)}@{hostport}"
+
+
+def validate_proxy(url: str) -> str:
+    """Return ``url`` if it is a usable proxy URL, else raise ValueError (redacted).
+
+    Credentials may be typed unencoded (see encode_proxy_userinfo).
+    """
+    try:
+        parts = urllib.parse.urlsplit(encode_proxy_userinfo(url))
+        valid = parts.scheme in PROXY_SCHEMES and bool(parts.hostname)
+        parts.port  # raises ValueError for a non-numeric or out-of-range port
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError(
+            "proxy must be an http://, https://, socks5:// or socks5h:// URL with a host, "
+            f"got {redact_url(url)!r}"
+        )
+    return url
+
+
+def _env_proxies() -> list[str]:
+    """The proxy URLs httpx would take from the environment.
+
+    Mirrors httpx._utils.get_environment_proxies (private, so not imported);
+    test_fetch's parity test pins this to the installed httpx.
+    """
+    info = urllib.request.getproxies()
+    if any(host.strip() == "*" for host in info.get("no", "").split(",")):
+        return []
+    values = [info[scheme] for scheme in ("http", "https", "all") if info.get(scheme)]
+    return [v if "://" in v else f"http://{v}" for v in values]
+
+
+def uses_proxy(url: str, proxy: str | None) -> bool:
+    """Whether a request to ``url`` goes through a proxy, explicit or from the environment."""
+    if proxy is not None:
+        return True
+    parts = urllib.parse.urlsplit(url)
+    env = {scheme: info for scheme, info in urllib.request.getproxies().items() if info}
+    if parts.scheme not in env and "all" not in env:
+        return False
+    return not urllib.request.proxy_bypass_environment(parts.hostname or "")
+
+
+def check_proxy_support(proxy: str | None) -> None:
+    """Raise ValueError now for a proxy httpx would reject when building its client.
+
+    An explicit ``proxy`` gets the full validate_proxy check. Environment proxies
+    get only the checks httpx applies itself, so setups that work today keep
+    working (httpx accepts a hostless ``HTTP_PROXY=http://``, for instance). The
+    exception is unencoded credentials, which httpx would send to the wrong host.
+    """
+    if proxy is not None:
+        validate_proxy(proxy)
+        return
+    import httpx
+
+    for value in _env_proxies():
+        # httpx parses these itself, so they aren't encoded for it (see
+        # encode_proxy_userinfo); stricter than httpx, which would misroute them
+        if encode_proxy_userinfo(value) != value:
+            raise ValueError(
+                f"{_ENV_PROXY_PREFIX}percent-encode any /, ? or # in the credentials "
+                f"(%2F, %3F, %23), got {redact_url(value)!r}"
+            )
+        try:
+            scheme = httpx.URL(value).scheme
+        except httpx.InvalidURL as exc:
+            raise ValueError(f"{_ENV_PROXY_PREFIX}{exc}") from None
+        if scheme not in PROXY_SCHEMES:
+            raise ValueError(f"{_ENV_PROXY_PREFIX}unknown scheme in {redact_url(value)!r}")
+
+
 class HttpxFetcher:
-    """Default transport: httpx over HTTP/1.1, one hop per fetch."""
+    """Default transport: httpx over HTTP/1.1, one hop per fetch.
+
+    An explicit ``proxy`` replaces any proxy from the environment (NO_PROXY included).
+    """
 
     capabilities = FetcherCapabilities()
 
-    def __init__(self, *, verify: bool = True, trust_env: bool = True) -> None:
+    def __init__(
+        self, *, verify: bool = True, trust_env: bool = True, proxy: str | None = None
+    ) -> None:
         self._verify = verify
         self._trust_env = trust_env
+        self._proxy = None if proxy is None else encode_proxy_userinfo(proxy)
         self._client: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> Self:
@@ -204,6 +333,7 @@ class HttpxFetcher:
             http2=False,
             verify=self._verify,
             trust_env=self._trust_env,
+            proxy=self._proxy,
             follow_redirects=False,
             headers={"Accept-Encoding": ACCEPT_ENCODING},
             timeout=None,  # a total deadline is enforced per fetch instead

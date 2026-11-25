@@ -5,14 +5,18 @@ HTTP traffic (robots.txt retries, redirects, fallbacks), not hand-written stats.
 Run with: uv run pytest -m e2e
 """
 
+import collections
 import csv
+import http.client
 import http.server
 import json
+import os
 import socket
 import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 
 import pytest
 
@@ -185,6 +189,7 @@ def stores():
         servers[scenario] = server
         return f"http://127.0.0.1:{server.server_address[1]}"
 
+    start.servers = servers  # type: ignore[attr-defined]
     yield start
     for server in servers.values():
         server.shutdown()
@@ -299,3 +304,92 @@ def test_woocommerce_variation_rows_in_csv(tmp_path, stores):
         ("2", "8 oz", "STEAK-8", "28.00", "", "true"),
         ("3", "12 oz", "STEAK-12", "40.00", "50.00", "false"),
     ]
+
+
+class _ForwardingProxy(http.server.BaseHTTPRequestHandler):
+    """Relays absolute-form GETs to their target, recording (path, Proxy-Authorization)."""
+
+    records: list
+
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):  # noqa: N802
+        target = urllib.parse.urlsplit(self.path)
+        self.records.append((target.path, self.headers.get("Proxy-Authorization")))
+        headers = {
+            k: v
+            for k, v in self.headers.items()
+            if k.lower() not in ("proxy-authorization", "proxy-connection", "connection")
+        }
+        conn = http.client.HTTPConnection(target.hostname, target.port, timeout=30)
+        try:
+            path = target.path + (f"?{target.query}" if target.query else "")
+            conn.request("GET", path, headers=headers)
+            resp = conn.getresponse()
+            body = resp.read()
+        finally:
+            conn.close()
+        self.send_response(resp.status)
+        for k, v in resp.getheaders():
+            if k.lower() not in ("content-length", "transfer-encoding", "connection"):
+                self.send_header(k, v)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+@pytest.fixture
+def forwarding_proxy():
+    handler = type("Proxy", (_ForwardingProxy,), {"records": []})
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", _free_port()), handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield server.server_address[1], handler.records
+    server.shutdown()
+
+
+def _run_verbose(tmp_path, urls, *args):
+    """Like _run, at DEBUG with the log inside tmp_path; returns (process, status JSON)."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "shopify_spy.cli",
+            "scrape",
+            *urls,
+            "--output",
+            str(tmp_path / "out"),
+            "--bail",
+            str(BAIL),
+            "--verbose",
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=tmp_path,
+        env={**os.environ, "XDG_STATE_HOME": str(tmp_path / "state")},
+    )
+    status_files = list((tmp_path / "out").glob("status/*_status.json"))
+    assert status_files, result.stdout + result.stderr
+    return result, json.loads(status_files[0].read_text())
+
+
+def test_proxy_sees_every_request(tmp_path, stores, forwarding_proxy):
+    """--proxy routes every request, robots.txt included, and never prints the password."""
+    port, records = forwarding_proxy
+    url = stores("woo_variations_ok")
+    proxy = f"http://u:secret@127.0.0.1:{port}"
+    result, status = _run_verbose(tmp_path, [url], "--platform", "woocommerce", "--proxy", proxy)
+    assert {e["url"]: e["status"] for e in status["urls"]} == {url: "ok"}
+
+    hits = stores.servers["woo_variations_ok"].RequestHandlerClass.hits
+    assert "/robots.txt" in hits
+    assert collections.Counter(path for path, _ in records) == hits
+    assert all(auth and auth.startswith("Basic ") for _, auth in records)
+
+    log_text = open(status["log_file"], encoding="utf-8").read()
+    assert f"Using proxy http://u:***@127.0.0.1:{port}" in log_text
+    for text in (result.stdout, result.stderr, json.dumps(status), log_text):
+        assert "secret" not in text

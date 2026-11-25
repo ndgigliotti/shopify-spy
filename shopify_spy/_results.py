@@ -23,7 +23,7 @@ class StoreStatus(StrEnum):
     rate_limited = "rate_limited"  # HTTP 429 after retries
     unavailable = "unavailable"  # HTTP 5xx after retries (outage, maintenance)
     tls_error = "tls_error"  # certificate verification failed
-    no_response = "no_response"  # DNS or connection failures only
+    no_response = "no_response"  # DNS or connection failures, or a proxy that refused (407)
     error = "error"  # unexpected exception while scraping this store
     stopped = "stopped"  # closed or shut down before it produced anything
 
@@ -89,6 +89,7 @@ class StoreResult:
     images_failed: int = 0
     errors: list[str] = field(default_factory=list)
     duration: float = 0.0
+    via_proxy: bool = False  # requests went through a proxy (proxy= or the environment)
 
     @property
     def failed(self) -> bool:
@@ -97,10 +98,15 @@ class StoreResult:
     @property
     def hint(self) -> str | None:
         """Readable advice, e.g. "looks like WooCommerce; pass platform='woocommerce'"."""
-        if self.suggested_platform is None:
-            return None
-        name = _PLATFORM_NAMES.get(self.suggested_platform, self.suggested_platform)
-        return f"looks like {name}; pass platform='{self.suggested_platform}'"
+        if self.suggested_platform is not None:
+            name = _PLATFORM_NAMES.get(self.suggested_platform, self.suggested_platform)
+            return f"looks like {name}; pass platform='{self.suggested_platform}'"
+        # Otherwise a bad proxy reads as every store being down
+        if self.via_proxy and self.status in (StoreStatus.no_response, StoreStatus.tls_error):
+            if self.responses_by_status.get(407):
+                return "the proxy refused its credentials (407); check the proxy URL"
+            return "requests went through a proxy; check that it is reachable"
+        return None
 
 
 @dataclass(frozen=True)
@@ -181,6 +187,9 @@ def diagnose(
     # Stopped by the caller, maybe mid-retry: a 429 or 5xx then isn't the store's last word
     stopped = finish_reason in ("closed", "shutdown")
     if stats.successes == 0:
+        # 407 comes from the proxy, so nothing reached the store
+        if stats.by_status[407] > 0:
+            return StoreStatus.no_response
         if stats.robots_disallowed > 0:
             return StoreStatus.robots_blocked
         if stats.by_status[403] > 0:

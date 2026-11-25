@@ -15,6 +15,7 @@
   pydantic,
   pyyaml,
   rich,
+  socksio,
   typer,
   xlsxwriter,
 
@@ -41,6 +42,8 @@ buildPythonPackage {
     pyyaml
     rich
     typer
+    # httpx's socks extra, a default dependency
+    socksio
     # The excel extra: the packaged CLI supports --format xlsx
     xlsxwriter
   ];

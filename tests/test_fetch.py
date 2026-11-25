@@ -31,8 +31,13 @@ from shopify_spy._fetch import (
     Response,
     Seq,
     _is_cert_error,
+    check_proxy_support,
     decompress,
+    encode_proxy_userinfo,
     load_corpus,
+    redact_url,
+    uses_proxy,
+    validate_proxy,
 )
 
 PAYLOAD = b'{"products": []}' * 20
@@ -245,6 +250,187 @@ def test_decompress_bomb_guard():
 def test_decompress_within_limit():
     data = b"a" * 1000
     assert decompress(gzip.compress(data), zlib.MAX_WBITS | 16, max_size=1000) == data
+
+
+# --- Proxies -------------------------------------------------------------------------
+
+DEAD_PROXY = "http://127.0.0.1:9"
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("http://USER:PASS@gw:8000", "http://USER:***@gw:8000"),
+        ("http://token@gw:8000", "http://***@gw:8000"),
+        ("socks5://u:p@[::1]:1080/x", "socks5://u:***@[::1]:1080/x"),
+        ("http://gw:8000", "http://gw:8000"),
+        ("http://gw:8000/?session=a@b", "http://***@b"),
+        ("http://user:pa#ss@host:8080", "http://***@host:8080"),
+        ("http://user:p/ss@host:8080", "http://***@host:8080"),
+        ("http://tok?en@host:8080", "http://***@host:8080"),
+        ("http://u:p@gw:8000/?session=a@b", "http://u:***@gw:8000/?session=a@b"),
+        ("not a url", "not a url"),
+    ],
+)
+def test_redact_url(url, expected):
+    assert redact_url(url) == expected
+
+
+@pytest.mark.parametrize("url", ["u:secret@host:8080", "http://u:secret@[bad:8080", "@secret@h"])
+def test_redact_url_without_parseable_netloc_hides_userinfo(url):
+    assert "secret" not in redact_url(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["ftp://h:1", "h:8080", "http://", "http://h:notaport", "http://h:99999", "socks4://h:1"],
+)
+def test_validate_proxy_rejects(url):
+    with pytest.raises(ValueError, match="proxy must be an http://"):
+        validate_proxy(url)
+
+
+@pytest.mark.parametrize(
+    "url", ["http://h:8080", "https://u:p@h", "socks5://h:1080", "socks5h://h:1080"]
+)
+def test_validate_proxy_accepts(url):
+    assert validate_proxy(url) == url
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("http://tok?en@gw:8080", "http://tok%3Fen@gw:8080"),
+        ("http://u:p/s#s@gw:8080", "http://u:p%2Fs%23s@gw:8080"),
+        ("http://u:p@ss@gw:8080", "http://u:p@ss@gw:8080"),
+        ("http://gw:8080", "http://gw:8080"),
+    ],
+)
+def test_encode_proxy_userinfo(url, expected):
+    assert encode_proxy_userinfo(url) == expected
+    assert validate_proxy(url) == url
+
+
+def test_fetcher_encodes_proxy_credentials():
+    assert HttpxFetcher(proxy="http://tok?en@gw:8080")._proxy == "http://tok%3Fen@gw:8080"
+
+
+def test_unencoded_environment_credentials_are_rejected(clean_proxy_env):
+    clean_proxy_env.setenv("HTTPS_PROXY", "http://u:sec?ret@gw:8080")
+    with pytest.raises(ValueError, match="percent-encode") as info:
+        check_proxy_support(None)
+    assert "sec" not in str(info.value)
+
+
+def test_validate_proxy_error_is_redacted():
+    with pytest.raises(ValueError) as info:
+        validate_proxy("ftp://u:secret@h:1")
+    assert "secret" not in str(info.value)
+    assert "ftp://u:***@h:1" in str(info.value)
+
+
+@pytest.mark.parametrize(
+    ("env", "url", "expected"),
+    [
+        ({}, "https://a.com", False),
+        ({"HTTPS_PROXY": "http://gw:8080"}, "https://a.com", True),
+        ({"HTTPS_PROXY": "http://gw:8080"}, "http://a.com", False),
+        ({"ALL_PROXY": "socks5://gw:1080"}, "http://a.com", True),
+        ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "a.com"}, "https://a.com", False),
+        ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "*"}, "https://a.com", False),
+    ],
+)
+def test_uses_proxy_from_environment(clean_proxy_env, env, url, expected):
+    for name, value in env.items():
+        clean_proxy_env.setenv(name, value)
+    assert uses_proxy(url, None) is expected
+
+
+def test_explicit_proxy_is_always_used(clean_proxy_env):
+    clean_proxy_env.setenv("NO_PROXY", "*")
+    assert uses_proxy("https://a.com", "http://gw:8080")
+
+
+def test_explicit_proxy_skips_the_environment(clean_proxy_env):
+    clean_proxy_env.setenv("HTTPS_PROXY", "socks4://h:1")
+    check_proxy_support("http://h:1")
+
+
+ENV_CASES = [
+    {"HTTPS_PROXY": "socks5://h:1080"},
+    {"ALL_PROXY": "socks5://h:1080", "NO_PROXY": "*"},
+    {"HTTPS_PROXY": "socks5://h:1080", "NO_PROXY": "*"},
+    {"HTTPS_PROXY": "socks5://h:1080", "NO_PROXY": "example.com, *"},
+    {"HTTP_PROXY": "http://"},
+    {"HTTP_PROXY": "http://:8080"},
+    {"HTTPS_PROXY": "h:8080"},
+    {"HTTPS_PROXY": "http://h:notaport"},
+    {"HTTPS_PROXY": "socks4://h:1"},
+    {"HTTPS_PROXY": "http://h:99999"},
+    {"ALL_PROXY": "socks5h://h:1080"},
+]
+
+
+@pytest.mark.parametrize(
+    "env", ENV_CASES, ids=lambda env: ",".join(f"{k}={v}" for k, v in env.items())
+)
+async def test_environment_check_matches_httpx(clean_proxy_env, env):
+    """check_proxy_support mirrors httpx's env handling; this pins it to the installed httpx."""
+    for name, value in env.items():
+        clean_proxy_env.setenv(name, value)
+    try:
+        check_proxy_support(None)
+        check_raised = False
+    except ValueError:
+        check_raised = True
+    try:
+        async with HttpxFetcher():
+            pass
+        httpx_raised = False
+    except Exception:
+        httpx_raised = True
+    assert check_raised == httpx_raised
+
+
+async def test_environment_socks_proxy_builds_a_client(clean_proxy_env):
+    clean_proxy_env.setenv("HTTPS_PROXY", "socks5://h:1080")
+    check_proxy_support(None)
+    async with HttpxFetcher():
+        pass
+
+
+async def test_explicit_proxy_beats_environment(clean_proxy_env, recording_proxy):
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        clean_proxy_env.setenv(name, DEAD_PROXY)
+    proxy = recording_proxy()
+    async with asyncio.timeout(5):
+        async with HttpxFetcher(proxy=proxy.url) as fetcher:
+            response = await fetcher.fetch(make_request("http://shop.test/products.json"))
+    assert response.json() == {"proxied": True}
+    assert proxy.records == [("GET", "http://shop.test/products.json", None)]
+
+
+async def test_environment_proxy_is_used_without_option(clean_proxy_env, recording_proxy):
+    proxy = recording_proxy()
+    clean_proxy_env.setenv("HTTP_PROXY", proxy.url)
+    async with asyncio.timeout(5):
+        async with HttpxFetcher() as fetcher:
+            await fetcher.fetch(make_request("http://shop.test/robots.txt"))
+    assert proxy.records == [("GET", "http://shop.test/robots.txt", None)]
+
+
+async def test_proxy_407_on_connect_hides_credentials(clean_proxy_env, recording_proxy):
+    proxy = recording_proxy(reject_connect=True)
+    url = f"http://u:secret@127.0.0.1:{proxy.port}"
+    async with asyncio.timeout(5):
+        async with HttpxFetcher(proxy=url) as fetcher:
+            with pytest.raises(FetchConnectionError) as info:
+                await fetcher.fetch(make_request("https://shop.test/"))
+    assert "407" in str(info.value)
+    assert "secret" not in str(info.value)
+    [(command, _, auth)] = proxy.records
+    assert command == "CONNECT"
+    assert auth is not None and auth.startswith("Basic ")
 
 
 # --- FakeFetcher ----------------------------------------------------------------------

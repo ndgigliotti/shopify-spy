@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added
+
+- `--proxy URL`, `network.proxy` in the config file and `proxy=` on
+  `scrape`/`scrape_async` send every request through one fixed proxy, overriding the
+  environment. Credentials in the URL are masked in logs and errors.
+- `--proxy` and `proxy=` take credentials as typed: a `/`, `?` or `#` in them no
+  longer sends requests to the wrong host. In `HTTPS_PROXY` and the other variables
+  they're an error that says to percent-encode them.
+- With a proxy in use, a store with no response gets a hint to check the proxy, and a
+  proxy's 407 (refused credentials) counts as `no_response` rather than an empty store.
+- `socks5://` proxies work out of the box: socksio (httpx's `socks` extra) is now a
+  default dependency.
+- The README documents the `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY`
+  environment variables, which were already honored.
+
 ### Fixed
 
 - `--collections` gets collection items from Shopify stores again
@@ -11,6 +26,8 @@
   Their fields, values and `url` are unchanged. Only the order changes: collections
   now come as a block after the products, instead of mixed in with the sitemap's
   product fetches.
+- A SOCKS proxy in the environment (`HTTPS_PROXY=socks5://...`) no longer crashes the
+  run with an `ImportError` for the missing socksio package.
 
 ## 0.4.1
 
