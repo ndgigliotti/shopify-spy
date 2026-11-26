@@ -20,6 +20,8 @@
 
 ### Fixed
 
+- The robots.txt hint now says `--ignore-robots` ignores robots.txt, not that it
+  "bypasses" it.
 - `help(spy.scrape)` and `help(spy.scrape_async)` no longer indent everything from
   "Args" on a level deeper than the summary on Python 3.13+. They now give each
   option's default and document `images_dir`.
