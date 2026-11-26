@@ -159,34 +159,39 @@ async def _myshopify_bulk(
     """Page /products.json on the myshopify.com domain the homepage names (issue #92).
 
     Returns how paging went and the emit that puts items under ``own_origin``, or None
-    if it found no products. With --bail, the wait for its first item is limited to
-    half the store's remaining bail time, since the shared myshopify.com slot may be
-    busy or paused by other stores; the rest is left to the sitemap.
+    if it found no products. With --bail, the homepage and the wait for the first item
+    are limited to half the store's remaining bail time, since the homepage may be slow
+    and the shared myshopify.com slot busy or paused by other stores; the rest is left
+    to the sitemap.
     """
-    handle = await _myshopify_handle(ctx, own_origin)
-    if handle is None:
-        return None
-    host = f"{handle}.myshopify.com"
     scheme = urllib.parse.urlsplit(ctx.url).scheme
     left = ctx.session.bail_time_left()
     budget = None if left is None else left / 2
     deadline = asyncio.timeout(budget)
+    host = None
 
     def on_first() -> None:
         ctx.products_from = host
         deadline.reschedule(None)  # never cut short a paging that produces items
 
     listing_emit = _rehosted(emit, own_origin, on_first)
-    url = get_bulk_products_url(f"{scheme}://{host}")
     try:
         async with deadline:
+            handle = await _myshopify_handle(ctx, own_origin)
+            if handle is None:
+                return None
+            host = f"{handle}.myshopify.com"
+            url = get_bulk_products_url(f"{scheme}://{host}")
             paged = await _page_products(
                 ctx, listing_emit, seen, url, "myshopify.com bulk", kind=MYSHOPIFY
             )
     except TimeoutError:
         if not deadline.expired():
             raise
-        logger.info("%s: no answer from %s within %.1fs, using the sitemap", ctx.url, host, budget)
+        source = host or f"{own_origin}/"
+        logger.info(
+            "%s: no answer from %s within %.1fs, using the sitemap", ctx.url, source, budget
+        )
         return None
     return (paged, listing_emit) if paged.found > 0 else None
 

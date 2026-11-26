@@ -890,6 +890,17 @@ def test_myshopify_wait_is_cut_to_half_the_bail_left():
     assert b.products_from is None
 
 
+def test_slow_homepage_is_cut_to_half_the_bail_left():
+    async def slow_homepage(request):
+        await asyncio.sleep(30)
+        return homepage("acme.myshopify.com")
+
+    items, result, fetcher = scrape(headless(**{HOMEPAGE: slow_homepage}), bail=2, retries=0)
+    assert myshopify_requests(fetcher) == []
+    assert [i["url"] for i in items] == [HAT]
+    assert result.stores[0].status == "ok"
+
+
 def test_collections_come_from_the_myshopify_domain():
     routes = headless(**{f"{ACME}/collections.json?limit=250&page=1": collection_list(("c", 1))})
     items, _, fetcher = scrape(routes, collections=True)

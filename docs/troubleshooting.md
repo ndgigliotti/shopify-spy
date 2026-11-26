@@ -87,7 +87,7 @@ A headless Shopify store runs its storefront on a custom frontend (Hydrogen or a
 - The `myshopify.com` domain is used only when the homepage names exactly one; none or several (an app or marketplace domain, say) go straight to the sitemap.
 - A `myshopify.com` domain behind a password page (a redirect to `/password`), or one that fails in any other way, falls back to the sitemap as before.
 - Requests to `*.myshopify.com`, robots.txt included, go one at a time across the whole run, since those hosts are Shopify's rather than the store's. A 403 or 429 there doesn't swap the store's user agent.
-- With `--bail`, the attempt waits at most half of the store's remaining bail time for its first item before the sitemap is tried with the rest.
+- With `--bail`, the homepage and the wait for the first item take at most half of the store's remaining bail time before the sitemap is tried with the rest.
 
 ## WooCommerce stores
 
