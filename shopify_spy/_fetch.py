@@ -51,7 +51,8 @@ class Identity:
 
     user_agent: str | None
     headers: Mapping[str, str] = field(default_factory=dict)
-    impersonate: str | None = None  # for TLS-impersonating transports later
+    # Unread: CurlCffiFetcher takes its profile from its constructor instead
+    impersonate: str | None = None
 
 
 @dataclass(frozen=True)
