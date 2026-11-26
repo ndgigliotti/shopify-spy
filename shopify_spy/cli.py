@@ -914,7 +914,7 @@ def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
         )
     if StoreStatus.robots_blocked in present:
         hints.append(
-            "Likely blocked by robots.txt. Retry with [bold]--ignore-robots[/bold] (-i) to bypass."
+            "Likely blocked by robots.txt. Retry with [bold]--ignore-robots[/bold] (-i) to ignore it."
         )
     if StoreStatus.rate_limited in present:
         # Requests, not responses: robots.txt's 429 isn't in responses_by_status
