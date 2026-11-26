@@ -111,6 +111,7 @@ class StoreState:
             complete=reason == "finished" and not self.errored and not self.truncated,
             finish_reason=reason,
             suggested_platform=self.ctx.suggested_platform if self.ctx else None,
+            products_from=self.ctx.products_from if self.ctx else None,
             responses_by_status=dict(stats.by_status),
             robots_disallowed=stats.robots_disallowed,
             rate_limited_requests=stats.rate_limits,
