@@ -87,43 +87,63 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
     base = ctx.url
     page, size = 1, PAGE_SIZE
     seen = _Seen()
-    while True:
-        try:
-            response = await ctx.session.get(get_api_url(base, page, size))
-        except RequestFailed as exc:
-            logger.info("Magento GraphQL request failed: %s", exc)
-            return False
-        if response is None:
-            return False
+    while (response := await _get(ctx, get_api_url(base, page, size))) is not None:
         where = f"{_endpoint(response.url)} page {page}"
         products, problem = _read(response)
         if products is None:
             smaller = _smaller_page_size(page, size, problem)
-            if smaller is not None:
-                logger.info("Magento page size limit (%s); retrying with %d", problem, smaller)
-                size = smaller
-                continue
-            return await _failed(ctx, response, where, page, problem)
+            if smaller is None:
+                return await _failed(ctx, response, where, page, problem)
+            logger.info("Magento page size limit (%s); retrying with %d", problem, smaller)
+            size = smaller
+            continue
         if problem is not None:
             logger.warning("Magento GraphQL answered with errors for %s: %s", where, problem)
-        total = products.get("total_count")
-        total = total if isinstance(total, int) and not isinstance(total, bool) else None
-        batch = dicts(products["items"])
-        if not batch:
-            return seen.finish(total, where)
-        logger.info("Magento: %d products from %s", len(batch), where)
-        fresh = seen.fresh(batch)
-        if fresh is None:
-            # A server ignoring currentPage would otherwise repeat this page forever
-            logger.warning("Page repeated earlier products; stopping at %s", where)
-            return False
-        for product in fresh:
-            await emit(_item(product, response, ctx.images))
-        if total is not None and page * size >= total:
-            return seen.finish(total, where)
+        done = await _take_page(ctx, emit, response, products, seen, where, page * size)
+        if done is not None:
+            return done
         page += 1
         # Past a redirect (http to https, apex to www), not through it on every page
         base = origin(response.url)
+    return False
+
+
+async def _get(ctx: StoreContext, url: str) -> Response | None:
+    """The response, or None if the request failed or was skipped (robots.txt)."""
+    try:
+        return await ctx.session.get(url)
+    except RequestFailed as exc:
+        logger.info("Magento GraphQL request failed: %s", exc)
+        return None
+
+
+async def _take_page(
+    ctx: StoreContext,
+    emit: Emit,
+    response: Response,
+    products: dict[str, Any],
+    seen: _Seen,
+    where: str,
+    read: int,
+) -> bool | None:
+    """Emit a page's new products; return whether the store got to the end, or None
+    to read the next page. ``read`` is ``currentPage * pageSize``."""
+    total = products.get("total_count")
+    total = total if isinstance(total, int) and not isinstance(total, bool) else None
+    batch = dicts(products["items"])
+    if not batch:
+        return seen.finish(total, where)
+    logger.info("Magento: %d products from %s", len(batch), where)
+    fresh = seen.fresh(batch)
+    if fresh is None:
+        # A server ignoring currentPage would otherwise repeat this page forever
+        logger.warning("Page repeated earlier products; stopping at %s", where)
+        return False
+    for product in fresh:
+        await emit(_item(product, response, ctx.images))
+    if total is not None and read >= total:
+        return seen.finish(total, where)
+    return None
 
 
 async def _failed(
