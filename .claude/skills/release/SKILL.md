@@ -93,10 +93,13 @@ can't merge them; a nixpkgs committer has to.
   (`gh pr list -R NixOS/nixpkgs --search shopify-spy`) and **(ask)** approve it
   as maintainer. If none appears within a few days, read the newest log under
   https://nixpkgs-update-logs.nixos.org/python3Packages.shopify-spy/
-- Changes: **(ask)** open the bump PR yourself with the dependency changes in
-  `default.nix`. It merges when a committer reviews it. If the bot's PR for the
-  same version is already open (an extra-only change can pass its build), don't
-  approve it; **(ask)** comment there linking yours so a committer closes it.
+- Changes: open the bump PR yourself, following [nixpkgs.md](nixpkgs.md), which
+  has the steps and every nixpkgs rule that applies. Under nixpkgs'
+  automation/AI policy the user writes every sentence nixpkgs reads, so read it
+  before starting. The PR merges when a committer reviews it. If the bot's PR for
+  the same version is already open (an extra-only change can pass its build),
+  don't approve it; **(ask)** the user to comment there, in their own words,
+  linking yours so a committer closes it.
 - Close any shopify-spy issue tracking a nixpkgs change (like #71) once its PR
   merges.
 
