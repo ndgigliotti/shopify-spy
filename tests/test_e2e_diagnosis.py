@@ -73,6 +73,7 @@ WOO_VARIATIONS = [
 
 class _Handler(http.server.BaseHTTPRequestHandler):
     scenario = ""
+    redirect_to = ""  # redirect_to_loopback: the origin to send every request to
     hits: dict
     agents: list  # user agents in the order first seen
 
@@ -129,6 +130,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 port = host.split(":")[1]
                 return self._send(301, headers={"Location": f"http://localhost:{port}{self.path}"})
             return self._send(200, DISALLOW_ALL) if path == "/robots.txt" else self._send(200)
+        if s == "redirect_to_loopback":
+            if path == "/robots.txt":
+                return self._send(404)
+            return self._send(302, headers={"Location": f"{self.redirect_to}{self.path}"})
+        if s == "loopback_target":
+            return self._send(200, b'{"products": []}')
         if s == "robots_403_hang":
             return self._send(403) if path == "/robots.txt" else self._hang()
         if s == "robots_404_hang":
@@ -327,7 +334,8 @@ def test_woocommerce_variation_rows_in_csv(tmp_path, stores):
 
 
 class _ForwardingProxy(http.server.BaseHTTPRequestHandler):
-    """Relays absolute-form GETs to their target, recording (path, Proxy-Authorization)."""
+    """Relays absolute-form GETs to their target's port on 127.0.0.1, so it can serve
+    made-up hostnames, recording (path, Proxy-Authorization)."""
 
     records: list
 
@@ -342,7 +350,7 @@ class _ForwardingProxy(http.server.BaseHTTPRequestHandler):
             for k, v in self.headers.items()
             if k.lower() not in ("proxy-authorization", "proxy-connection", "connection")
         }
-        conn = http.client.HTTPConnection(target.hostname, target.port, timeout=30)
+        conn = http.client.HTTPConnection("127.0.0.1", target.port, timeout=30)
         try:
             path = target.path + (f"?{target.query}" if target.query else "")
             conn.request("GET", path, headers=headers)
@@ -413,3 +421,20 @@ def test_proxy_sees_every_request(tmp_path, stores, forwarding_proxy):
     assert f"Using proxy http://u:***@127.0.0.1:{port}" in log_text
     for text in (result.stdout, result.stderr, json.dumps(status), log_text):
         assert "secret" not in text
+
+
+def test_non_public_redirect_refused(tmp_path, stores, forwarding_proxy):
+    """Through a proxy only literal IPs are checked: a public-looking store's redirect
+    to 127.0.0.1 is refused before any request reaches it, robots.txt included."""
+    proxy_port, _ = forwarding_proxy
+    target = stores("loopback_target")
+    port = stores("redirect_to_loopback").rsplit(":", 1)[1]
+    stores.servers["redirect_to_loopback"].RequestHandlerClass.redirect_to = target
+    url = f"http://store.test:{port}"
+    _, status = _run_verbose(tmp_path, [url], "--proxy", f"http://127.0.0.1:{proxy_port}")
+    assert {e["url"]: e["status"] for e in status["urls"]} == {url: "0 items"}
+    assert stores.servers["loopback_target"].RequestHandlerClass.hits == {}
+    assert stores.servers["redirect_to_loopback"].RequestHandlerClass.hits
+    log_text = open(status["log_file"], encoding="utf-8").read()
+    assert f"Refused request to {target}/" in log_text
+    assert "127.0.0.1 is not a public address" in log_text
