@@ -605,6 +605,22 @@ def test_no_on_site_page_is_empty():
     assert_fast_exit(s)
 
 
+@pytest.mark.parametrize("spec", [(403, ""), (503, "")], ids=["403", "503"])
+def test_unreadable_product_sitemap_is_an_error(spec):
+    child = f"{STORE}/sitemap_products_1.xml"
+    routes = {
+        SITEMAP: sitemapindex(child, f"{STORE}/sitemap_pages_1.xml"),
+        child: spec,
+        f"{STORE}/sitemap_pages_1.xml": urlset(f"{STORE}/about"),
+    }
+    _, result, fetcher = scrape_ld(routes)
+    [s] = result.stores
+    assert s.status == "error"
+    assert f"no page listed; unreadable sitemaps: {child}" in s.errors[0]
+    assert fetcher.count(f"{STORE}/about") == 0
+    assert_fast_exit(s)
+
+
 def test_empty_sitemap_is_empty():
     _, result, _ = scrape_ld({SITEMAP: urlset()})
     [s] = result.stores

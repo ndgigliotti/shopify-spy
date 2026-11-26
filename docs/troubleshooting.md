@@ -19,7 +19,7 @@ Every store ends with a status, which the CLI lists when a store fails and the [
 | `unavailable (5xx)` | `unavailable` | The store answered 5xx server errors (often an outage or maintenance) and no successful response; retry later |
 | `TLS error` | `tls_error` | The certificate failed verification; try `--insecure` |
 | `no response` | `no_response` | The store never answered (DNS, connection or network failure), or a proxy refused the request (407); with a proxy in use, the library's `StoreResult.hint` says to check it (see [Proxies](cli.md#proxies)) |
-| `failed` | `error` | An unexpected error, a Magento store whose `/graphql` answered without products, or a JSON-LD store whose pages had no Product data or whose sitemap wasn't found (the reason is in the [log file](#log-files) and `StoreResult.errors`; see [Magento stores](#magento-stores) and [JSON-LD stores](#json-ld-stores)) |
+| `failed` | `error` | An unexpected error, a Magento store whose `/graphql` answered without products, or a JSON-LD store whose pages had no Product data or whose sitemaps weren't found or couldn't be read (the reason is in the [log file](#log-files) and `StoreResult.errors`; see [Magento stores](#magento-stores) and [JSON-LD stores](#json-ld-stores)) |
 | `stopped` | `stopped` | Interrupted (Ctrl-C) before producing anything |
 | `invalid URL` | `invalid_url` | The URL was malformed and skipped before scraping |
 
@@ -104,4 +104,5 @@ Magento scraping uses the storefront GraphQL API at `/graphql`, which Magento Op
   - **Bot challenges** that answer pages with a challenge instead of the product.
 - **`failed` with "stopped at --bail":** the store had checked some pages without finding a Product when `--bail` (30 seconds by default) fired. Throttling gives a host about one request per response time, so a slow store may check fewer than 50 pages in that time. Raise `--bail` to check more.
 - **`failed` with "no sitemap found":** the sitemap URLs answered, but not with a sitemap (an HTML catch-all page, say). The scraper reads the robots.txt `Sitemap:` lines, then `/sitemap.xml`, `/sitemap_index.xml` and `/xmlsitemap.php`. A store whose sitemap is elsewhere, and not named in robots.txt, can't be read. When every sitemap URL answers 404, 403 or is disallowed, the store ends `404 Not Found`, `403 Forbidden` or `blocked by robots.txt`.
+- **`failed` with "no page listed; unreadable sitemaps":** a sitemap was found, but the sitemaps it pointed to for products (an index's product sitemaps, say) answered an error status or failed to respond, so no page was checked. The message lists them. A retry later may get through; a 403 suggests a bot challenge.
 - **Lower fidelity:** variants are often missing (many stores publish one Product with a single offer or a price range), prices may be a range (`AggregateOffer`), and fields the native platforms have, such as tags or stock counts, usually aren't there.

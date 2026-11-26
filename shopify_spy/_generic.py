@@ -55,8 +55,8 @@ _TAXONOMY_FRAGMENTS = (
 
 
 class JsonLdError(Exception):
-    """The store's sitemaps listed pages, but none gave a schema.org Product, or
-    no sitemap could be found."""
+    """The store's sitemaps listed pages, but none gave a schema.org Product; no
+    sitemap could be found; or the sitemaps to read for pages couldn't be read."""
 
 
 async def run(ctx: StoreContext, emit: Emit) -> bool:
@@ -73,6 +73,10 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
             raise JsonLdError(f"no sitemap found at {', '.join(listing.tried)}")
         return False  # diagnose() reports the sitemaps' 404, 403 or robots.txt
     if pages.counts.checked == 0:
+        if listing.unread:
+            # diagnose() would call it empty: the sitemap index's 2xx is a success
+            await pages.probe_others()
+            raise JsonLdError(f"no page listed; unreadable sitemaps: {', '.join(listing.unread)}")
         return listing.complete  # no on-site page listed: empty
     await pages.probe_others()
     raise JsonLdError(pages.reason())
@@ -109,7 +113,8 @@ class _Listing:
 
     ``roots`` are the top-level sitemaps that parsed; ``answered`` is whether any
     candidate answered 2xx; ``complete`` becomes True once every sitemap chosen for
-    pages was readable and no off-site URL among them was left out.
+    pages was readable and no off-site URL among them was left out; ``unread``
+    lists those that weren't readable.
     """
 
     def __init__(self, ctx: StoreContext) -> None:
@@ -120,7 +125,7 @@ class _Listing:
         self.answered = False
         self.complete = False
         self._dropped = 0
-        self._unread = 0  # sitemaps that couldn't be read
+        self.unread: list[str] = []  # chosen sitemaps that couldn't be read
 
     def _on_site(self, url: str) -> bool:
         if _site(hostname(url)) in self.sites:
@@ -129,20 +134,20 @@ class _Listing:
         return False
 
     async def locs(self) -> AsyncIterator[str]:
-        found, unread = await self._top_level()
+        found, missing = await self._top_level()
         read = {doc.url: doc for doc in found if doc.root == "urlset"}
         # Products are chosen before the off-site and unread ones are counted, so a
         # sitemap that wouldn't have been read doesn't make the listing incomplete
-        for source in _prefer_products(self._sources(found) + unread):
-            if source in unread:
-                self._unread += 1
+        for source in _prefer_products(self._sources(found) + missing):
+            if source in missing:
+                self.unread.append(source)
             elif self._on_site(source):
                 async for loc in self._source_locs(source, read):
                     if self._on_site(loc):
                         yield loc
         if self._dropped:
             logger.info("Sitemaps listed %d off-site links", self._dropped)
-        self.complete = bool(found) and not self._unread and not self._dropped
+        self.complete = bool(found) and not self.unread and not self._dropped
 
     def _sources(self, found: list[_Sitemap]) -> list[str]:
         """The sitemaps to choose product sitemaps from: the top-level urlsets and
@@ -162,7 +167,8 @@ class _Listing:
         async for loc in walk:
             self.sites |= {_site(host) for host in walk.hosts}
             yield loc
-        self._unread += not walk.root_ok
+        if not walk.root_ok:
+            self.unread.append(source)
 
     async def _top_level(self) -> tuple[list[_Sitemap], list[str]]:
         """The robots.txt-listed sitemaps that parse, else the first well-known one,
