@@ -476,18 +476,20 @@ def test_unknown_impersonate_target_is_a_clean_error():
     assert "Traceback" not in err
 
 
-@pytest.mark.parametrize("from_config", [False, True])
+@pytest.mark.parametrize("from_config", [None, "user_agent", "impersonate"])
 def test_impersonate_with_user_agent_is_a_clean_error(cli, tmp_path, from_config):
+    flags = {"impersonate": ["--impersonate", "chrome"], "user_agent": ["-A", "MyBot/1.0"]}
+    values = {"impersonate": "chrome", "user_agent": "MyBot/1.0"}
+    args = [arg for key, pair in flags.items() if key != from_config for arg in pair]
     if from_config:
         config_file = tmp_path / "spy.yaml"
-        config_file.write_text("network:\n  user_agent: MyBot/1.0\n")
-        args = ["-c", str(config_file)]
-    else:
-        args = ["--user-agent", "MyBot/1.0"]
-    run = cli(shop("shop.test", 1), "--impersonate", "chrome", *args, "shop.test")
+        config_file.write_text(f"network:\n  {from_config}: {values[from_config]}\n")
+        args += ["-c", str(config_file)]
+    run = cli(shop("shop.test", 1), *args, "shop.test")
     assert run.exit_code == 1
     err = " ".join(run.stderr.split())
     assert "Error: --impersonate sets the user agent from the browser profile" in err
+    assert "network.impersonate or network.user_agent" in err
     assert not run.requests
 
 

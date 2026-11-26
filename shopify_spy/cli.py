@@ -536,8 +536,9 @@ def _check_options(config: Config, peek: bool) -> None:
 def _check_impersonate(target: str, user_agent: str | None) -> None:
     if user_agent is not None:
         raise ValueError(
-            "--impersonate sets the user agent from the browser profile; drop "
-            "--user-agent (or network.user_agent in the config file)"
+            "--impersonate sets the user agent from the browser profile, so it can't be "
+            "combined with --user-agent; drop one (each may come from network.impersonate "
+            "or network.user_agent in the config file)"
         )
     # A test transport ignores the profile, as the library does with fetcher_factory
     if FETCHER_FACTORY is None:
