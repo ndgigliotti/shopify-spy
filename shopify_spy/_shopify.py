@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator, Callable
 from typing import Any, NamedTuple
 
 from shopify_spy import _sitemap as sitemap
+from shopify_spy._fetch import Response
 from shopify_spy._session import (
     FALLBACK,
     MYSHOPIFY,
@@ -308,12 +309,8 @@ async def _page_products(
         pages += 1
         first = pages == 1
         base = origin(response.url)
-        if urllib.parse.urlsplit(response.url).path == "/password":
-            logger.info("%s is password protected at %s", label, response.url)
-            return done(Paging.FAILED)
-        if not response.ok:
-            logger.info("%s returned %d for %s", label, response.status, url)
-            return done(Paging.NOT_FOUND if first and response.status == 404 else Paging.FAILED)
+        if (unlisted := _unlisted(response, label, url, first)) is not None:
+            return done(unlisted)
         data = response.json_or_none()
         products = data.get("products") if isinstance(data, dict) else None
         if products == [] and not first:
@@ -363,6 +360,17 @@ async def _page_products(
             logger.info("%s reached Shopify's 100-page limit at %s", label, response.url)
             return done(Paging.CAPPED)
         url = next_page_url(response.url)
+
+
+def _unlisted(response: Response, label: str, url: str, first: bool) -> Paging | None:
+    """How paging ends on a response that can't be a product list, or None if it can."""
+    if urllib.parse.urlsplit(response.url).path == "/password":
+        logger.info("%s is password protected at %s", label, response.url)
+        return Paging.FAILED
+    if not response.ok:
+        logger.info("%s returned %d for %s", label, response.status, url)
+        return Paging.NOT_FOUND if first and response.status == 404 else Paging.FAILED
+    return None
 
 
 async def _collections(

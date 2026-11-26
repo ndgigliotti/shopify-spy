@@ -746,17 +746,7 @@ def run_scrape(
 
     if total > 0:
         if not peek:
-            if show_counter:
-                console.print("[green]Done![/green]")
-            else:
-                console.print(f"[green]Done! Scraped {total} item(s).[/green]")
-            if not multi and stores and stores[0].products_from:
-                console.print(f"  Products came from {escape(stores[0].products_from)}.")
-            if log_file:
-                console.print(f"  Log: {log_file}")
-            if multi:
-                for s in stores:
-                    console.print(f"  {escape(_host(s.input_url))}: {_display_status(s)}")
+            _print_done(total, stores, show_counter=show_counter, multi=multi, log_file=log_file)
         if failures:
             (err_console if peek else console).print(
                 f"[yellow]Warning: {failures} store(s) failed with an error.[/yellow]"
@@ -876,6 +866,23 @@ def _host(url: str) -> str:
         return normalize_url(url).netloc or url
     except ValueError:
         return url
+
+
+def _print_done(
+    total: int, stores: list[StoreResult], *, show_counter: bool, multi: bool, log_file: Path | None
+) -> None:
+    """The end-of-run summary of a run that scraped items."""
+    if show_counter:
+        console.print("[green]Done![/green]")
+    else:
+        console.print(f"[green]Done! Scraped {total} item(s).[/green]")
+    if not multi and stores and stores[0].products_from:
+        console.print(f"  Products came from {escape(stores[0].products_from)}.")
+    if log_file:
+        console.print(f"  Log: {log_file}")
+    if multi:
+        for s in stores:
+            console.print(f"  {escape(_host(s.input_url))}: {_display_status(s)}")
 
 
 def _display_status(store: StoreResult) -> str:

@@ -105,6 +105,33 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         page = [{"id": 1, "handle": "p1", "title": "P1"}] if "page=1" in self.path else []
         return self._send(200, json.dumps({"products": page}).encode())
 
+    def _products_fail_sitemap_hang(self, path, host):
+        if path == "/robots.txt":
+            return self._send(404)
+        if path == "/products.json":
+            if self.scenario == "products_429_sitemap_hang":
+                return self._send(429, headers={"Retry-After": "0"})
+            return self._send(404)
+        if path == "/":  # names no myshopify.com domain, so the sitemap comes next
+            return self._send(200, b"<html></html>", {"Content-Type": "text/html"})
+        if path == "/sitemap.xml":
+            index = (
+                b'<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/'
+                b'schemas/sitemap/0.9"><sitemap><loc>http://'
+                + host.encode()
+                + b"/sitemap_products_1.xml</loc></sitemap></sitemapindex>"
+            )
+            return self._send(200, index, {"Content-Type": "application/xml"})
+        return self._hang()
+
+    def _headless_myshopify(self, path):
+        # A headless storefront: no /products.json, but the homepage names the shop's
+        # myshopify.com domain (served by _MyshopifyProxy)
+        if path == "/":
+            body = b'<html><a href="https://acme.myshopify.com/cart">cart</a></html>'
+            return self._send(200, body, {"Content-Type": "text/html"})
+        return self._send(404)
+
     def do_GET(self):  # noqa: C901 - one branch per scenario
         path = self.path.split("?")[0]
         count = self.hits[path] = self.hits.get(path, 0) + 1
@@ -142,30 +169,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(403) if count == 1 else self._send(200, b'{"products": []}')
             return self._hang()
         if s in ("products_404_sitemap_hang", "products_429_sitemap_hang"):
-            if path == "/robots.txt":
-                return self._send(404)
-            if path == "/products.json":
-                if s == "products_429_sitemap_hang":
-                    return self._send(429, headers={"Retry-After": "0"})
-                return self._send(404)
-            if path == "/":  # names no myshopify.com domain, so the sitemap comes next
-                return self._send(200, b"<html></html>", {"Content-Type": "text/html"})
-            if path == "/sitemap.xml":
-                index = (
-                    b'<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/'
-                    b'schemas/sitemap/0.9"><sitemap><loc>http://'
-                    + host.encode()
-                    + b"/sitemap_products_1.xml</loc></sitemap></sitemapindex>"
-                )
-                return self._send(200, index, {"Content-Type": "application/xml"})
-            return self._hang()
+            return self._products_fail_sitemap_hang(path, host)
         if s == "headless_myshopify":
-            # A headless storefront: no /products.json, but the homepage names the
-            # shop's myshopify.com domain (served by _MyshopifyProxy)
-            if path == "/":
-                body = b'<html><a href="https://acme.myshopify.com/cart">cart</a></html>'
-                return self._send(200, body, {"Content-Type": "text/html"})
-            return self._send(404)
+            return self._headless_myshopify(path)
         if s in ("rate_limited", "unavailable", "woo_rate_limited", "woo_unavailable"):
             if path == "/robots.txt":
                 return self._send(404)
