@@ -259,6 +259,18 @@ def test_off_site_child_sitemap_not_read():
     assert not result.stores[0].complete
 
 
+def test_unreadable_child_sitemap_is_partial():
+    routes = {
+        SITEMAP: sitemapindex(f"{STORE}/products-1.xml", f"{STORE}/products-2.xml"),
+        f"{STORE}/products-1.xml": urlset(url(0)),
+        f"{STORE}/products-2.xml": (503, ""),
+        url(0): product_page(node(0)),
+    }
+    items, result, _ = scrape_ld(routes)
+    assert len(items) == 1
+    assert result.stores[0].status == "partial"
+
+
 def test_product_preference_across_robots_sitemaps():
     routes = {
         ROBOTS: (200, "Sitemap: /sitemap-pages.xml\nSitemap: /sitemap-products.xml\n"),
