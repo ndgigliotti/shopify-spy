@@ -464,8 +464,8 @@ _SCRAPE_DOC = """
         retries: Retries for 403/429/5xx responses and network errors (default
             {retries}). A 429 also swaps the user agent, and a 429 or 503 pauses and slows
             every request to that host.
-        user_agent: Fixed User-Agent; by default a random browser UA is used and
-            swapped after a 403 or 429.
+        user_agent: Fixed User-Agent, never swapped; by default each store gets a
+            random browser UA, swapped after a 403 or 429.
         respect_robots_txt: Obey robots.txt (default {respect_robots_txt}).
         verify_tls: Verify TLS certificates (default {verify_tls}).
         proxy: A fixed proxy URL for every request: http://, https:// or socks5://.
