@@ -10,8 +10,10 @@ import asyncio
 import base64
 import gzip
 import http.cookiejar
+import ipaddress
 import json
 import logging
+import re
 import ssl
 import urllib.parse
 import urllib.request
@@ -256,28 +258,109 @@ def validate_proxy(url: str) -> str:
     return url
 
 
-def _env_proxies() -> list[str]:
-    """The proxy URLs httpx would take from the environment.
+def _is_ip(host: str, kind: type[ipaddress.IPv4Address | ipaddress.IPv6Address]) -> bool:
+    try:
+        kind(host.split("/")[0])
+    except ValueError:
+        return False
+    return True
+
+
+def _env_proxy_mounts() -> dict[str, str | None]:
+    """The proxy mounts httpx builds from the environment: pattern -> proxy, None to bypass.
 
     Mirrors httpx._utils.get_environment_proxies (private, so not imported);
-    test_fetch's parity test pins this to the installed httpx.
+    test_fetch's parity tests pin this to the installed httpx.
     """
     info = urllib.request.getproxies()
-    if any(host.strip() == "*" for host in info.get("no", "").split(",")):
-        return []
-    values = [info[scheme] for scheme in ("http", "https", "all") if info.get(scheme)]
-    return [v if "://" in v else f"http://{v}" for v in values]
+    mounts: dict[str, str | None] = {}
+    for scheme in ("http", "https", "all"):
+        if value := info.get(scheme):
+            mounts[f"{scheme}://"] = value if "://" in value else f"http://{value}"
+    for host in (h.strip() for h in info.get("no", "").split(",")):
+        if host == "*":
+            return {}
+        if not host:
+            continue
+        if "://" in host:
+            mounts[host] = None
+        elif _is_ip(host, ipaddress.IPv4Address) or host.lower() == "localhost":
+            mounts[f"all://{host}"] = None
+        elif _is_ip(host, ipaddress.IPv6Address):
+            mounts[f"all://[{host}]"] = None
+        else:
+            # Unlike urllib's rule, ".example.com" bypasses subdomains but not example.com
+            mounts[f"all://*{host}"] = None
+    return mounts
+
+
+def _env_proxies() -> list[str]:
+    """The proxy URLs httpx would take from the environment."""
+    return [value for value in _env_proxy_mounts().values() if value is not None]
+
+
+@dataclass(frozen=True)
+class _URLPattern:
+    """Mirrors httpx._utils.URLPattern, which orders and matches proxy mounts."""
+
+    scheme: str
+    host_regex: re.Pattern[str] | None
+    port: int | None
+    priority: tuple[int, int, int]
+
+    @classmethod
+    def parse(cls, pattern: str) -> _URLPattern:
+        import httpx
+
+        url = httpx.URL(pattern)
+        scheme = "" if url.scheme == "all" else url.scheme
+        host = "" if url.host == "*" else url.host
+        if not host:
+            regex = None
+        elif host.startswith("*."):
+            regex = re.compile(rf"^.+\.{re.escape(host[2:])}$")
+        elif host.startswith("*"):
+            regex = re.compile(rf"^(.+\.)?{re.escape(host[1:])}$")
+        else:
+            regex = re.compile(rf"^{re.escape(host)}$")
+        priority = (0 if url.port is not None else 1, -len(host), -len(scheme))
+        return cls(scheme, regex, url.port, priority)
+
+    def matches(self, url: httpx.URL) -> bool:
+        return (
+            (not self.scheme or self.scheme == url.scheme)
+            and (self.host_regex is None or bool(self.host_regex.match(url.host)))
+            and (self.port is None or self.port == url.port)
+        )
+
+
+def env_proxy_for(url: str) -> str | None:
+    """The proxy httpx would use for ``url`` from the environment, or None to go direct.
+
+    A URL httpx can't parse gets None: no request goes anywhere for it.
+    """
+    import httpx
+
+    try:
+        target = httpx.URL(url)
+    except (httpx.InvalidURL, UnicodeError, ValueError):
+        return None
+    mounts = []
+    for key, proxy in _env_proxy_mounts().items():
+        try:
+            mounts.append((_URLPattern.parse(key), proxy))
+        except (httpx.InvalidURL, UnicodeError, ValueError):
+            continue  # httpx itself refuses to build a client for it
+    # Stable, like httpx's sort, so equal priorities keep the environment's order
+    for pattern, proxy in sorted(mounts, key=lambda mount: mount[0].priority):
+        if pattern.matches(target):
+            return proxy
+    return None
 
 
 def uses_proxy(url: str, proxy: str | None) -> bool:
     """Whether a request to ``url`` goes through a proxy, explicit or from the environment."""
-    if proxy is not None:
-        return True
-    parts = urllib.parse.urlsplit(url)
-    env = {scheme: info for scheme, info in urllib.request.getproxies().items() if info}
-    if parts.scheme not in env and "all" not in env:
-        return False
-    return not urllib.request.proxy_bypass_environment(parts.hostname or "")
+    return proxy is not None or env_proxy_for(url) is not None
 
 
 def check_proxy_support(proxy: str | None) -> None:

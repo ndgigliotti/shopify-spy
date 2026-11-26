@@ -34,6 +34,7 @@ from shopify_spy._fetch import (
     check_proxy_support,
     decompress,
     encode_proxy_userinfo,
+    env_proxy_for,
     load_corpus,
     redact_url,
     uses_proxy,
@@ -338,12 +339,84 @@ def test_validate_proxy_error_is_redacted():
         ({"ALL_PROXY": "socks5://gw:1080"}, "http://a.com", True),
         ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "a.com"}, "https://a.com", False),
         ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "*"}, "https://a.com", False),
+        # httpx's rule, not urllib's: a leading dot bypasses subdomains only
+        ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": ".a.com"}, "https://a.com", True),
+        ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": ".a.com"}, "https://www.a.com", False),
     ],
 )
 def test_uses_proxy_from_environment(clean_proxy_env, env, url, expected):
     for name, value in env.items():
         clean_proxy_env.setenv(name, value)
     assert uses_proxy(url, None) is expected
+
+
+GW = "http://gw:8080"
+ENV_PROXY_CASES = [
+    ({}, "https://example.com"),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": ".example.com"}, "https://example.com"),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": ".example.com"}, "https://www.example.com"),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": "example.com"}, "https://www.example.com"),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": "example.com"}, "https://wwwexample.com"),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": "EXAMPLE.com"}, "https://example.com"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "127.0.0.1"}, "http://127.0.0.1:8000/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "127.0.0.1"}, "http://127.0.0.2/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "10.0.0.0/8"}, "http://10.0.0.0/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "::1"}, "http://[::1]:8000/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "localhost"}, "http://localhost:8000/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "localhost"}, "http://www.localhost/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "example.com:8080"}, "http://example.com:8080/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "example.com:8080"}, "http://example.com/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "http://example.com"}, "http://example.com/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "http://example.com"}, "https://example.com/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "other.com, *"}, "http://example.com/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": " , example.com"}, "http://example.com/"),
+    ({"HTTPS_PROXY": GW}, "http://example.com/"),
+    ({"HTTPS_PROXY": GW}, "https://example.com/"),
+    ({"HTTP_PROXY": "gw:3128"}, "http://example.com/"),
+    ({"ALL_PROXY": "socks5://gw:1080"}, "http://example.com/"),
+    ({"ALL_PROXY": "socks5://gw:1080", "HTTPS_PROXY": GW}, "https://example.com/"),
+    ({"ALL_PROXY": "socks5://gw:1080", "HTTPS_PROXY": GW}, "http://example.com/"),
+]
+
+
+def _httpx_env_proxy(url: str) -> str | None:
+    """The environment proxy httpx itself picks for ``url`` (private API, test only)."""
+    from httpx._utils import URLPattern, get_environment_proxies
+
+    mounts = sorted({URLPattern(k): v for k, v in get_environment_proxies().items()}.items())
+    target = httpx.URL(url)
+    return next((proxy for pattern, proxy in mounts if pattern.matches(target)), None)
+
+
+@pytest.mark.parametrize(
+    ("env", "url"),
+    ENV_PROXY_CASES,
+    ids=[",".join([*(f"{k}={v}" for k, v in env.items()), url]) for env, url in ENV_PROXY_CASES],
+)
+def test_env_proxy_for_matches_httpx(clean_proxy_env, env, url):
+    for name, value in env.items():
+        clean_proxy_env.setenv(name, value)
+    assert env_proxy_for(url) == _httpx_env_proxy(url)
+
+
+@pytest.mark.parametrize(
+    ("no_proxy", "url", "expected"),
+    [
+        (".example.com", "https://example.com", GW),
+        (".example.com", "https://www.example.com", None),
+        ("example.com", "https://www.example.com", None),
+        ("example.com", "https://wwwexample.com", GW),
+    ],
+)
+def test_env_proxy_for_no_proxy_names(clean_proxy_env, no_proxy, url, expected):
+    clean_proxy_env.setenv("HTTPS_PROXY", GW)
+    clean_proxy_env.setenv("NO_PROXY", no_proxy)
+    assert env_proxy_for(url) == expected
+
+
+def test_env_proxy_for_unparseable_url_goes_direct(clean_proxy_env):
+    clean_proxy_env.setenv("HTTPS_PROXY", GW)
+    assert env_proxy_for("https://exa\x7fmple.com/") is None
 
 
 def test_explicit_proxy_is_always_used(clean_proxy_env):
