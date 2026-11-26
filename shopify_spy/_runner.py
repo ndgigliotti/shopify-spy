@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from shopify_spy import _address
 from shopify_spy import _shopify as shopify
 from shopify_spy import _woocommerce as woocommerce
 from shopify_spy._fetch import FetcherFactory, HttpxFetcher, redact_url, uses_proxy
@@ -190,6 +191,11 @@ class Runner:
                     concurrent_requests=self.config.concurrent_requests,
                     throttle=self.config.throttle,
                     respect_robots_txt=self.config.respect_robots_txt,
+                    # A custom transport's resolution is unknown, and test transports
+                    # use made-up hosts that must not reach DNS
+                    resolver=None
+                    if self.config.fetcher_factory
+                    else _direct_resolver(self.config.proxy),
                 )
                 registry.shutdown = self.shutdown
                 limit = self.config.max_concurrent_stores
@@ -240,6 +246,7 @@ class Runner:
             retry=retry_policy_for(fetcher.capabilities, config.retries, config.backoff),
             identity=IdentityPool(user_agent=config.user_agent),
             request_timeout=config.request_timeout,
+            store_url=state.url,
         )
         ctx = state.ctx = StoreContext(
             session=session,
@@ -378,3 +385,14 @@ def _unwrap(exc: BaseException) -> BaseException:
     while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
         exc = exc.exceptions[0]
     return exc
+
+
+def _direct_resolver(proxy: str | None) -> _address.Resolver:
+    """Resolve only URLs this machine connects to itself: a proxy resolves the rest."""
+
+    async def resolver(url: str) -> list[_address.IPAddress]:
+        if uses_proxy(url, proxy):
+            return []
+        return await _address.resolve(url)
+
+    return resolver

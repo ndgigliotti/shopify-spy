@@ -1,9 +1,12 @@
 """Tests for StoreSession and HostRegistry against FakeFetcher."""
 
 import asyncio
+import ipaddress
+import urllib.parse
 
 import pytest
 
+from shopify_spy import _address
 from shopify_spy._fetch import (
     FakeFetcher,
     FetchConnectionError,
@@ -12,6 +15,8 @@ from shopify_spy._fetch import (
     Seq,
 )
 from shopify_spy._policy import IdentityPool, RetryPolicy, ThrottleSettings, now
+from shopify_spy._results import StoreStatus, diagnose
+from shopify_spy._runner import _direct_resolver
 from shopify_spy._session import (
     IMAGE,
     MAX_REDIRECTS,
@@ -24,6 +29,7 @@ from shopify_spy._session import (
 )
 from shopify_spy._session import STORE as STORE_KIND
 from shopify_spy._woocommerce import VARIATIONS
+from tests.test_address import NON_PUBLIC_URLS, PUBLIC_URLS
 
 STORE = "https://shop.test"
 DISALLOW_PRIVATE = (200, "User-agent: *\nDisallow: /private\n")
@@ -36,19 +42,24 @@ def make_session(
     retry=None,
     identity=None,
     registry=None,
+    store_url="https://shop.example",
+    resolver=None,
+    request_timeout=5,
 ) -> tuple[StoreSession, FakeFetcher]:
     fetcher = FakeFetcher(routes or {})
     registry = registry or HostRegistry(
         concurrent_requests=16,
         throttle=ThrottleSettings(enabled=False),
         respect_robots_txt=robots,
+        resolver=resolver,
     )
     session = StoreSession(
         fetcher=fetcher,
         registry=registry,
         retry=retry or RetryPolicy(retries=2, backoff=False),
         identity=identity or IdentityPool(),
-        request_timeout=5,
+        request_timeout=request_timeout,
+        store_url=store_url,
     )
     return session, fetcher
 
@@ -149,7 +160,8 @@ async def test_robots_keyed_by_origin_including_port():
             "http://127.0.0.1:8002/robots.txt": (200, "User-agent: *\nDisallow: /y\n"),
             "http://127.0.0.1:8001/y": (200, "ok"),
             "http://127.0.0.1:8002/x": (200, "ok"),
-        }
+        },
+        store_url="http://127.0.0.1:8001",
     )
     assert await get(session, "http://127.0.0.1:8001/x") is None
     assert (await get(session, "http://127.0.0.1:8001/y")).status == 200
@@ -240,6 +252,207 @@ async def test_follow_redirects_false_returns_redirect():
     response = await get(session, f"{STORE}/a", follow_redirects=False)
     assert response.status == 301
     assert fetcher.count(f"{STORE}/b") == 0
+
+
+# --- Non-public destinations ----------------------------------------------------------
+
+PUBLIC_STORE = "https://shop.example"
+METADATA = "http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+
+
+def static_resolver(table, calls=None):
+    """A resolver mapping hostnames to address lists; unknown names fail ([])."""
+
+    async def resolver(url):
+        host = urllib.parse.urlsplit(url).hostname
+        if calls is not None:
+            calls.append(host)
+        return [ipaddress.ip_address(a) for a in table.get(host, [])]
+
+    return resolver
+
+
+def robots_of(url):
+    parts = urllib.parse.urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}/robots.txt"
+
+
+async def test_redirect_to_metadata_address_refused(caplog):
+    session, fetcher = make_session(
+        {f"{PUBLIC_STORE}/products.json": (302, "", {"Location": METADATA})}
+    )
+    with pytest.raises(RequestFailed) as excinfo:
+        await get(session, f"{PUBLIC_STORE}/products.json")
+    assert excinfo.value.cause == "refused: 169.254.169.254 is not a public address"
+    assert not [r.url for r in fetcher.requests if "169.254.169.254" in r.url]
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert warnings == [f"Refused request to {METADATA}: 169.254.169.254 is not a public address"]
+
+
+@pytest.mark.parametrize("url", NON_PUBLIC_URLS)
+async def test_non_public_destination_refused(url):
+    session, fetcher = make_session({url: (200, "secret"), robots_of(url): (200, "")})
+    with pytest.raises(RequestFailed) as excinfo:
+        await get(session, url)
+    assert excinfo.value.cause.startswith("refused:")
+    assert fetcher.count(url) == 0
+    assert fetcher.count(robots_of(url)) == 0
+    assert session.stats.requests == 0
+
+
+@pytest.mark.parametrize("url", PUBLIC_URLS)
+async def test_public_destination_fetched(url):
+    session, fetcher = make_session({url: (200, "ok")})
+    assert (await get(session, url)).status == 200
+    assert fetcher.count(url) == 1
+
+
+@pytest.mark.parametrize(
+    ("store_url", "resolver"),
+    [
+        ("http://127.0.0.1:8001", None),
+        ("http://localhost:8000", None),
+        ("http://lan.test", static_resolver({"lan.test": ["192.168.1.10"]})),
+    ],
+)
+@pytest.mark.parametrize("target", ["http://localhost:8001/", "http://10.0.0.5/"])
+async def test_private_store_may_reach_private_addresses(store_url, resolver, target):
+    session, fetcher = make_session(
+        {f"{store_url}/go": (302, "", {"Location": target}), target: (200, "ok")},
+        store_url=store_url,
+        resolver=resolver,
+    )
+    assert (await get(session, f"{store_url}/go")).status == 200
+    assert fetcher.count(target) == 1
+
+
+async def test_hostname_resolving_to_private_address_refused():
+    calls = []
+    session, fetcher = make_session(
+        {f"{PUBLIC_STORE}/go": (302, "", {"Location": "https://internal.test/x"})},
+        resolver=static_resolver(
+            {"shop.example": ["8.8.8.8"], "internal.test": ["10.0.0.5"]}, calls
+        ),
+    )
+    with pytest.raises(RequestFailed) as excinfo:
+        await get(session, f"{PUBLIC_STORE}/go")
+    assert excinfo.value.cause == (
+        "refused: internal.test resolves to 10.0.0.5, not a public address"
+    )
+    assert not [r.url for r in fetcher.requests if "internal.test" in r.url]
+    # The store origin is checked for private status and requested: one lookup
+    assert calls == ["shop.example", "internal.test"]
+
+
+async def test_hostname_with_mixed_answers_refused():
+    session, fetcher = make_session(
+        resolver=static_resolver({"mixed.test": ["8.8.8.8", "10.0.0.5"]})
+    )
+    with pytest.raises(RequestFailed, match="resolves to 10.0.0.5"):
+        await get(session, "https://mixed.test/x")
+    assert fetcher.requests == []
+
+
+async def test_failed_lookup_not_refused():
+    session, fetcher = make_session(
+        {"https://nowhere.test/x": FetchConnectionError("no such host")},
+        resolver=static_resolver({}),
+    )
+    with pytest.raises(RequestFailed) as excinfo:
+        await get(session, "https://nowhere.test/x")
+    assert isinstance(excinfo.value.cause, FetchConnectionError)
+    assert fetcher.count("https://nowhere.test/x") == 3
+
+
+async def test_origin_resolved_once():
+    calls = []
+    session, fetcher = make_session(
+        {"https://cdn.test/a": (200, "a"), "https://cdn.test/b": (200, "b")},
+        resolver=static_resolver({"cdn.test": ["8.8.8.8"]}, calls),
+    )
+    await get(session, "https://cdn.test/a")
+    await get(session, "https://cdn.test/b")
+    assert calls.count("cdn.test") == 1
+    assert fetcher.count("https://cdn.test/b") == 1
+
+
+async def test_without_resolver_names_are_not_looked_up():
+    session, fetcher = make_session(
+        {
+            f"{PUBLIC_STORE}/go": (302, "", {"Location": "https://internal.test/x"}),
+            "https://internal.test/x": (200, "ok"),
+        }
+    )
+    assert (await get(session, f"{PUBLIC_STORE}/go")).status == 200
+    assert fetcher.count("https://internal.test/x") == 1
+    with pytest.raises(RequestFailed, match="refused"):
+        await get(session, "http://10.0.0.5/")
+    with pytest.raises(RequestFailed, match="refused"):
+        await get(session, "http://localhost/")
+
+
+async def test_store_with_mixed_answers_is_not_private():
+    session, fetcher = make_session(
+        {
+            "https://shop.test/": (200, "home"),
+            "https://shop.test/go": (
+                302,
+                "",
+                {"Location": "http://169.254.169.254/latest/meta-data/"},
+            ),
+        },
+        store_url="https://shop.test",
+        resolver=static_resolver({"shop.test": ["8.8.8.8", "10.0.0.5"]}),
+    )
+    with pytest.raises(RequestFailed, match="refused: shop.test resolves to 10.0.0.5"):
+        await get(session, "https://shop.test/")
+    with pytest.raises(RequestFailed, match="refused"):
+        await get(session, "https://shop.test/go")
+    assert not [r.url for r in fetcher.requests if "169.254.169.254" in r.url]
+    assert fetcher.requests == []
+    status = diagnose(
+        items=0, errored=False, truncated=False, finish_reason="finished", stats=session.stats
+    )
+    assert status is StoreStatus.no_response
+
+
+async def test_stalled_lookup_counts_as_failed():
+    calls = []
+
+    async def slow(url):
+        calls.append(url)
+        await asyncio.sleep(5)
+        return [ipaddress.ip_address("10.0.0.5")]
+
+    session, fetcher = make_session(
+        {"https://slow.test/x": (200, "ok"), "https://slow.test/y": (200, "ok")},
+        resolver=slow,
+        request_timeout=0.2,
+    )
+    async with asyncio.timeout(1):
+        assert (await session.get("https://slow.test/x")).status == 200
+        assert (await session.get("https://slow.test/y")).status == 200
+    assert fetcher.count("https://slow.test/x") == 1
+    # The store's own lookup stalls too; each origin waits once
+    assert calls == ["https://shop.example", "https://slow.test/x"]
+
+
+async def test_direct_resolver_skips_proxied_urls(clean_proxy_env):
+    calls = []
+
+    async def stub(url):
+        calls.append(url)
+        return [ipaddress.ip_address("10.0.0.5")]
+
+    clean_proxy_env.setattr(_address, "resolve", stub)
+    clean_proxy_env.setenv("HTTPS_PROXY", "http://proxy.test:3128")
+    clean_proxy_env.setenv("NO_PROXY", "direct.test")
+
+    assert await _direct_resolver("http://proxy.test:3128")("https://direct.test/") == []
+    resolver = _direct_resolver(None)
+    assert await resolver("https://proxied.test/") == []
+    assert await resolver("https://direct.test/") == [ipaddress.ip_address("10.0.0.5")]
+    assert calls == ["https://direct.test/"]
 
 
 # --- Retries --------------------------------------------------------------------------
