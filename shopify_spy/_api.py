@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import inspect
 import os
 import sys
 import time
@@ -412,47 +413,64 @@ class AsyncScrapeRun(_BaseRun):
         raise ScrapeFailed(self.result, self.result.stores)
 
 
-_SCRAPE_DOC = """
+def _doc_default(value: object) -> str:
+    """A ScrapeOptions default as the docstring shows it."""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return f'"{value}"' if isinstance(value, str) else str(value)
 
+
+# Filled from ScrapeOptions with format_map, so {name} is that option's default
+_SCRAPE_DOC = """
     Args:
         urls: A store URL or an iterable of them. Only the host matters; paths are
             ignored. One platform per call.
-        platform: "shopify" (default) or "woocommerce". When a WooCommerce store's
-            Store API is unavailable, its product pages are read instead: partial
-            items in the Store API's shape with ``source="product_page"``.
-        products: Scrape products (Shopify only; WooCommerce always does).
-        collections: Also scrape collections (Shopify only).
-        images: Download product images into ``images_dir/full/``. Requires
-            ``images_dir``. Each item gains ``scraped_images`` records whose
-            ``path`` is relative to ``images_dir``.
-        max_items_per_store: Stop each store after N items. This is per store; use
-            ``itertools.islice`` for a total cap.
+        platform: "shopify" or "woocommerce" (default {platform}). When a
+            WooCommerce store's Store API is unavailable, its product pages are
+            read instead: partial items in the Store API's shape with
+            ``source="product_page"``.
+        products: Scrape products (default {products}). Shopify only; WooCommerce
+            always does.
+        collections: Also scrape collections (default {collections}). Shopify only.
+        images: Download product images into ``images_dir/full/`` (default {images}).
+            Requires ``images_dir``. Each item gains ``scraped_images`` records
+            whose ``path`` is relative to ``images_dir``.
+        images_dir: Directory for downloaded images, created if needed (default
+            {images_dir}). Required with ``images=True``.
+        max_items_per_store: Stop each store after N items (default
+            {max_items_per_store}: no limit). This is per store; use ``itertools.islice``
+            for a total cap.
         bail: Give up on a store that yields no item within this many seconds
-            (None or 0 disables). Waits a server asks for with Retry-After don't
-            count, for each request, so a rate-limited store can take minutes or
-            hours to fail.
-        concurrent_requests: Max concurrent requests per host across the run.
-        request_timeout: Seconds allowed for one request (not the whole run).
-        retries: Retries for 403/429/5xx responses and network errors. A 429 also
-            swaps the user agent, and a 429 or 503 pauses and slows every request
-            to that host.
+            (default {bail}; None or 0 disables). Waits a server asks for with
+            Retry-After don't count, for each request, so a rate-limited store can
+            take minutes or hours to fail.
+        concurrent_requests: Max concurrent requests per host across the run
+            (default {concurrent_requests}).
+        request_timeout: Seconds allowed for one request, not the whole run
+            (default {request_timeout}).
+        retries: Retries for 403/429/5xx responses and network errors (default
+            {retries}). A 429 also swaps the user agent, and a 429 or 503 pauses and slows
+            every request to that host.
         user_agent: Fixed User-Agent; by default a random browser UA is used and
             swapped after a 403 or 429.
-        respect_robots_txt: Obey robots.txt (default True).
-        verify_tls: Verify TLS certificates (default True).
-        proxy: A fixed proxy URL for every request: http://, https:// or
-            socks5://. It overrides HTTPS_PROXY,
-            HTTP_PROXY and ALL_PROXY, which are otherwise honored (with NO_PROXY);
-            an explicit proxy ignores NO_PROXY. Credentials in it are masked in
-            logs and errors. It gives a fixed egress, not a way around a store's
-            rate limits. Ignored with a custom ``fetcher_factory``.
-        max_concurrent_stores: Stores scraped at once (None = no limit).
+        respect_robots_txt: Obey robots.txt (default {respect_robots_txt}).
+        verify_tls: Verify TLS certificates (default {verify_tls}).
+        proxy: A fixed proxy URL for every request: http://, https:// or socks5://.
+            It overrides HTTPS_PROXY, HTTP_PROXY and ALL_PROXY, which are otherwise
+            honored (with NO_PROXY); an explicit proxy ignores NO_PROXY. Credentials
+            in it are masked in logs and errors. It gives a fixed egress, not a way
+            around a store's rate limits. Ignored with a custom ``fetcher_factory``.
+        max_concurrent_stores: Stores scraped at once (default {max_concurrent_stores};
+            None = no limit).
         throttle, throttle_start_delay, throttle_max_delay,
-        throttle_target_concurrency: AutoThrottle settings (on by default).
+        throttle_target_concurrency: AutoThrottle settings. Defaults: {throttle};
+            {throttle_start_delay}s start and {throttle_max_delay}s max delay; target
+            concurrency {throttle_target_concurrency}.
         on_failure: What to do when stores fail, checked once iteration ends:
             "raise" (default) raises ScrapeFailed if every store failed; "warn"
             issues a ScrapeWarning; "ignore" leaves it to ``run.result``.
-        strict: Count any failed (or partial) store, not only all of them.
+        strict: Count any failed (or partial) store, not only all of them
+            (default {strict}).
         fetcher_factory: Provisional. A callable returning a custom transport.
 
     Failures: a store fails when it is blocked (403, robots.txt), rate limited
@@ -467,7 +485,9 @@ _SCRAPE_DOC = """
     into one row per variant with the same columns on both platforms.
 
     Nothing is written to disk unless ``images=True``, and no config file is read.
-"""
+""".format_map(
+    {name: _doc_default(field.default) for name, field in ScrapeOptions.model_fields.items()}
+)
 
 
 def scrape(urls: str | Iterable[str], **options: Any) -> ScrapeRun:
@@ -496,5 +516,8 @@ def scrape_async(urls: str | Iterable[str], **options: Any) -> AsyncScrapeRun:
     return AsyncScrapeRun(stores, opts, backoff)
 
 
-scrape.__doc__ = (scrape.__doc__ or "") + _SCRAPE_DOC
-scrape_async.__doc__ = (scrape_async.__doc__ or "") + _SCRAPE_DOC
+# Python 3.13+ dedents docstrings at compile time and 3.11-3.12 don't, so clean both
+# pieces before joining them, or "Args" lands a level deeper than the summary
+for _func in (scrape, scrape_async):
+    _func.__doc__ = f"{inspect.cleandoc(_func.__doc__ or '')}\n\n{inspect.cleandoc(_SCRAPE_DOC)}"
+del _func
