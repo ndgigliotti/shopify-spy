@@ -24,7 +24,7 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, Self, get_args
+from typing import TYPE_CHECKING, Any, Protocol, Self
 
 from shopify_spy._utils import canonicalize_url
 
@@ -379,16 +379,20 @@ def require_curl_cffi(message: str) -> Any:
     return curl_cffi
 
 
-def impersonate_targets() -> tuple[str, ...]:
-    """Every browser profile the installed curl_cffi can impersonate."""
-    from curl_cffi.requests.impersonate import BrowserTypeLiteral
-
-    return get_args(BrowserTypeLiteral)
-
-
 def validate_impersonate(target: str) -> str:
-    """Return ``target`` if the installed curl_cffi knows it, else raise ValueError."""
-    if target not in impersonate_targets():
+    """Return ``target`` if the installed curl_cffi can impersonate it, else raise ValueError.
+
+    Mirrors how curl_cffi resolves a target when it builds a request: a native
+    libcurl target (after aliases like "chrome") or a named fingerprint. Its
+    BrowserTypeLiteral lists targets it can't use (safari18_4) and misses some it
+    can (tor).
+    """
+    from curl_cffi.fingerprints import FingerprintManager
+    from curl_cffi.requests.impersonate import resolve_latest_browser_type
+    from curl_cffi.requests.utils import NATIVE_TARGET_NAMES
+
+    native = resolve_latest_browser_type(target) in NATIVE_TARGET_NAMES
+    if not (native or target in FingerprintManager.load_fingerprints()):
         raise ValueError(
             f"unknown impersonate target {target!r}; use a curl_cffi browser such as "
             "chrome, firefox or safari, or a pinned profile such as chrome150"

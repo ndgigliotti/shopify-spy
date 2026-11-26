@@ -36,7 +36,6 @@ from shopify_spy._fetch import (
     decompress,
     encode_proxy_userinfo,
     env_proxy_for,
-    impersonate_targets,
     load_corpus,
     redact_url,
     require_curl_cffi,
@@ -435,17 +434,33 @@ def test_require_curl_cffi_returns_module():
     assert require_curl_cffi("unused") is curl_cffi
 
 
-def test_validate_impersonate_accepts_every_installed_target():
+def test_validate_impersonate_matches_what_curl_cffi_can_use():
     pytest.importorskip("curl_cffi")
     from typing import get_args
 
+    from curl_cffi.requests import Session
+    from curl_cffi.requests.exceptions import ImpersonateError, RequestException
     from curl_cffi.requests.impersonate import BrowserTypeLiteral
 
-    targets = impersonate_targets()
-    assert targets == get_args(BrowserTypeLiteral)
-    assert {"chrome", "firefox", "safari", "edge", "chrome150", "tor145"} <= set(targets)
+    def usable(target: str) -> bool:
+        # Port 1 refuses the connection, after curl_cffi has applied the target
+        with Session() as session:
+            try:
+                session.get("http://127.0.0.1:1/", impersonate=target, timeout=5)
+            except ImpersonateError:
+                return False
+            except RequestException:
+                return True
+        raise AssertionError("port 1 accepted a connection")
+
+    targets = {*get_args(BrowserTypeLiteral), "tor"}
+    assert {"chrome", "firefox", "safari", "edge", "chrome150", "tor145"} <= targets
     for target in targets:
-        assert validate_impersonate(target) == target
+        if usable(target):
+            assert validate_impersonate(target) == target
+        else:
+            with pytest.raises(ValueError, match="unknown impersonate target"):
+                validate_impersonate(target)
 
 
 @pytest.mark.parametrize("target", ["nosuchbrowser", "", "Chrome", "chrome "])
