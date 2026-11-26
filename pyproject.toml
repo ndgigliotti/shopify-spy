@@ -107,4 +107,5 @@ dev = [
     "xlsxwriter>=3.0",
     "openpyxl>=3.1",
     "curl_cffi>=0.16.3,<0.18",
+    "trustme>=1.2.1",
 ]

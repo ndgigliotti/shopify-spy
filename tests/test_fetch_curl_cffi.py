@@ -15,10 +15,10 @@ import socketserver
 import ssl
 import threading
 import time
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import trustme
 
 pytest.importorskip("curl_cffi")
 
@@ -45,9 +45,6 @@ pytestmark = [
     pytest.mark.filterwarnings("error::curl_cffi.utils.CurlCffiWarning"),
 ]
 
-TLS_DIR = Path(__file__).parent / "fixtures" / "tls"
-CERT = str(TLS_DIR / "cert.pem")
-KEY = str(TLS_DIR / "key.pem")
 PAYLOAD = b'{"products": []}' * 20
 BROTLI_HELLO = b"\x0b\x02\x80hello\x03"  # "hello", brotli-encoded
 DEAD_PROXY = "http://127.0.0.1:9"
@@ -170,14 +167,14 @@ STATIC = {
 }
 
 
-def _serve(handler, *, tls: bool = False, **attrs):
+def _serve(handler, *, tls: SimpleNamespace | None = None, **attrs):
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     httpd.daemon_threads = True
     for name, value in attrs.items():
         setattr(httpd, name, value)
     if tls:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(CERT, KEY)
+        context.load_cert_chain(tls.cert, tls.key)
         httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd
@@ -191,9 +188,26 @@ def server():
     httpd.server_close()
 
 
+@pytest.fixture(scope="session")
+def tls(tmp_path_factory):
+    """A throwaway CA and a 127.0.0.1 certificate it signed, as PEM file paths."""
+    ca = trustme.CA()
+    issued = ca.issue_cert("127.0.0.1", "localhost")
+    directory = tmp_path_factory.mktemp("tls")
+    paths = SimpleNamespace(
+        ca=str(directory / "ca.pem"),
+        cert=str(directory / "cert.pem"),
+        key=str(directory / "key.pem"),
+    )
+    ca.cert_pem.write_to_path(paths.ca)
+    issued.cert_chain_pems[0].write_to_path(paths.cert)
+    issued.private_key_pem.write_to_path(paths.key)
+    return paths
+
+
 @pytest.fixture(scope="module")
-def tls_server():
-    httpd = _serve(Handler, tls=True, paths=[])
+def tls_server(tls):
+    httpd = _serve(Handler, tls=tls, paths=[])
     yield f"https://127.0.0.1:{httpd.server_address[1]}"
     httpd.shutdown()
     httpd.server_close()
@@ -512,14 +526,14 @@ async def test_https_with_bypassed_environment_proxy(tls_server, clean_proxy_env
     assert (response.status, response.body) == (200, b"ok")
 
 
-async def test_https_proxy_receives_connect(clean_proxy_env):
-    httpd = _serve(_RecordingProxyHandler, tls=True, records=[])
+async def test_https_proxy_receives_connect(clean_proxy_env, tls):
+    httpd = _serve(_RecordingProxyHandler, tls=tls, records=[])
     proxy = f"https://127.0.0.1:{httpd.server_address[1]}"
     try:
         # The proxy's certificate is checked even with verify=False, as in httpx;
-        # curl_cffi takes a CA bundle path as verify, which trusts the fixture here
+        # curl_cffi takes a CA bundle path as verify, which trusts the test CA here
         with pytest.raises(FetchConnectionError) as info:  # the proxy's 502 to CONNECT
-            await fetch("https://store.example:8443/", proxy=proxy, verify=CERT)
+            await fetch("https://store.example:8443/", proxy=proxy, verify=tls.ca)
         assert not isinstance(info.value, FetchTLSError)
         assert httpd.records[0][:2] == ("CONNECT", "store.example:8443")
     finally:

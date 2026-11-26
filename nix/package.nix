@@ -30,6 +30,7 @@
   pytest-asyncio,
   pytestCheckHook,
   respx,
+  trustme,
   writableTmpDirAsHomeHook,
 }:
 
@@ -62,6 +63,7 @@ buildPythonPackage (finalAttrs: {
     pytest-asyncio
     pytestCheckHook
     respx
+    trustme
     writableTmpDirAsHomeHook
   ]
   ++ lib.concatAttrValues finalAttrs.passthru.optional-dependencies;
