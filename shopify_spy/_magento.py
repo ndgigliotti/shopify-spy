@@ -98,6 +98,9 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
             size = smaller
             continue
         if problem is not None:
+            if not dicts(products["items"]):
+                # Resolver errors null out the items they hit, so this is a failed page
+                return await _failed(ctx, response, where, page, problem)
             logger.warning("Magento GraphQL answered with errors for %s: %s", where, problem)
         done = await _take_page(ctx, emit, response, products, seen, where, page * size)
         if done is not None:

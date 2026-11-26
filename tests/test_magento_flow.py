@@ -312,3 +312,11 @@ def test_limit_stops_exactly():
     assert len(items) == 150
     assert fetcher.count(magento_url(3)) == 0
     assert result.stores[0].finish_reason == "item_limit"
+
+
+def test_first_page_of_errors_and_null_items_is_an_error():
+    body = answer([None, None], 40, errors=[{"message": "Internal server error"}])
+    items, result, _ = scrape_mg({magento_url(1): body})
+    assert items == []
+    assert result.stores[0].status == "error"
+    assert "Internal server error" in result.stores[0].errors[-1]
