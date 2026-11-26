@@ -170,22 +170,21 @@ async def _myshopify_bulk(
     scheme = urllib.parse.urlsplit(ctx.url).scheme
     left = ctx.session.bail_time_left()
     budget = None if left is None else left / 2
-    deadline: asyncio.Timeout | None = None
+    deadline = asyncio.timeout(budget)
 
     def on_first() -> None:
         ctx.products_from = host
-        if deadline is not None:
-            deadline.reschedule(None)  # never cut short a paging that produces items
+        deadline.reschedule(None)  # never cut short a paging that produces items
 
     listing_emit = _rehosted(emit, own_origin, on_first)
     url = get_bulk_products_url(f"{scheme}://{host}")
     try:
-        async with asyncio.timeout(budget) as deadline:
+        async with deadline:
             paged = await _page_products(
                 ctx, listing_emit, seen, url, "myshopify.com bulk", kind=MYSHOPIFY
             )
     except TimeoutError:
-        if deadline is None or not deadline.expired():
+        if not deadline.expired():
             raise
         logger.info("%s: no answer from %s within %.1fs, using the sitemap", ctx.url, host, budget)
         return None
@@ -225,7 +224,7 @@ def _rehosted(emit: Emit, own_origin: str, on_first: Callable[[], None]) -> Emit
     async def rehost(item: dict[str, Any]) -> None:
         nonlocal first
         parts = urllib.parse.urlsplit(item["url"])
-        item["url"] = urllib.parse.urlunsplit((own.scheme, own.netloc, *parts[2:]))
+        item["url"] = urllib.parse.urlunsplit(parts._replace(scheme=own.scheme, netloc=own.netloc))
         item["store"] = own.netloc
         if first:
             first = False

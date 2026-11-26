@@ -163,7 +163,7 @@ class HostRegistry:
         return await self._robots.get(key, lambda: _fetch_robots(key, session, robots_kind))
 
 
-async def _fetch_robots(key: str, session: StoreSession, kind: RequestKind = ROBOTS) -> RobotsRules:
+async def _fetch_robots(key: str, session: StoreSession, kind: RequestKind) -> RobotsRules:
     try:
         response = await session.get(f"{key}/robots.txt", kind=kind)
     except (RequestFailed, FetchError) as exc:
