@@ -39,3 +39,11 @@ def test_magento_store_live():
     assert item["name"]
     assert item["store"] == "www.vitamix.com"
     assert spy.summarize(item).currency
+
+
+def test_bigcommerce_store_live():
+    store = "https://eshopping-industrial-demo.mybigcommerce.com"
+    item = spy.scrape(store, platform="bigcommerce", max_items_per_store=1).first()
+    assert item["name"]
+    assert item["store"] == "eshopping-industrial-demo.mybigcommerce.com"
+    assert spy.summarize(item).currency
