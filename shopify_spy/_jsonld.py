@@ -118,18 +118,18 @@ def text(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _listify(value: Any) -> list[Any]:
+def listify(value: Any) -> list[Any]:
     return value if isinstance(value, list) else [value]
 
 
 def _dicts(value: Any) -> list[dict[str, Any]]:
-    return [v for v in _listify(value) if isinstance(v, dict)]
+    return [v for v in listify(value) if isinstance(v, dict)]
 
 
 def image_urls(value: Any) -> list[str]:
     """URLs from ``image``: a URL, an ImageObject, or a list of either."""
     urls = []
-    for image in _listify(value):
+    for image in listify(value):
         if isinstance(image, dict):
             image = image.get("url") or image.get("contentUrl")
         if isinstance(image, str) and image:

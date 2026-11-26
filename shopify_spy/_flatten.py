@@ -366,7 +366,7 @@ def _jsonld(item: dict[str, Any]) -> list[dict[str, Any]]:
     offers = dicts(item.get("offers"))
     # Without variants, a list of offers is the variants: one per size, say
     per_offer = not variants and len(offers) > 1
-    names = [n for v in _listify(item.get("variesBy")) if (n := _last_segment(v))]
+    names = [n for v in jsonld.listify(item.get("variesBy")) if (n := _last_segment(v))]
     product = {
         "platform": "jsonld",
         "kind": "product",
@@ -451,7 +451,7 @@ def _jsonld_value(value: Any) -> str | None:
 
 def _jsonld_names(value: Any) -> str:
     """``brand`` or ``category``: a string, a dict with a ``name``, or a list of either."""
-    names = (v.get("name") if isinstance(v, dict) else v for v in _listify(value))
+    names = (v.get("name") if isinstance(v, dict) else v for v in jsonld.listify(value))
     return _join(_unescape(jsonld.text(n)) for n in names)
 
 
@@ -467,10 +467,6 @@ def _handle(url: Any) -> str | None:
     if not isinstance(url, str):
         return None
     return urllib.parse.unquote(_last_segment(urllib.parse.urlsplit(url).path) or "") or None
-
-
-def _listify(value: Any) -> list[Any]:
-    return value if isinstance(value, list) else [value]
 
 
 def _html(value: Any) -> Any:
