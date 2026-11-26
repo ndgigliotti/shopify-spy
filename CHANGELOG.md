@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- A Shopify store whose own `/products.json` is a 404, as on headless (Hydrogen)
+  storefronts, is tried on the `myshopify.com` domain its homepage names before the
+  sitemap. Items keep the store's own domain. `StoreResult.products_from`, the
+  status file's new `products_from` key and the CLI's end-of-run summary name that
+  domain. Requests to `*.myshopify.com` go one at a time across the run and never
+  swap the user agent ([#92](https://github.com/ndgigliotti/shopify-spy/issues/92)).
+  `scripts/contract_test.py` reports a DIFF in the status file against 0.5.0 because
+  of the new key.
+
 ### Changed
 
 - `--help` is plain text when stdout isn't a terminal, as when an agent or script

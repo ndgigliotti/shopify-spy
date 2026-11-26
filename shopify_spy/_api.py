@@ -489,8 +489,10 @@ _SCRAPE_DOC = """
     Failures: a store fails when it is blocked (403, robots.txt), rate limited
     (429), not found, unavailable (5xx), times out, can't be reached, or errors;
     ``run.result.failed`` lists them with a status and, sometimes, a ``hint`` (e.g.
-    a likely wrong ``platform``). An empty store is not a failure. Invalid URLs and
-    options raise ValueError at call time.
+    a likely wrong ``platform``). An empty store is not a failure. A store's
+    ``hint`` and ``products_from`` also name the ``myshopify.com`` domain a headless
+    store's products came from. Invalid URLs and options raise ValueError at call
+    time.
 
     Items are each platform's native shape plus ``store``, ``platform``
     ("shopify" or "woocommerce") and ``image_urls`` (see ``ShopifyProductItem``,
