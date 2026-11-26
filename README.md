@@ -84,7 +84,7 @@ An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an i
 - **Coding-agent friendly.** Designed for AI coding agents such as Claude Code and Cursor: plain dicts and `help(spy.scrape)` for scripts, `--peek` for a quick look at an item, a machine-readable status file for each run, and exit codes that say whether any store produced items.
 - **Spreadsheet-ready output.** JSONL, JSON, CSV, Excel and XML, with a unified schema shared by both platforms.
 - **Polite by default.** Robots.txt is honored, requests are auto-throttled, and a store that produces nothing within `--bail` seconds (default 30) is abandoned instead of hanging the run.
-- **Retries.** Timeouts, dropped connections, 5xx errors and 429 rate limits are retried, honoring `Retry-After`. Requests use a common browser user agent, and a refused request retries with another.
+- **Retries.** Timeouts, dropped connections, transient 5xx errors and 429 rate limits are retried, honoring `Retry-After` up to 60 seconds. Requests use a common browser user agent, and a 403 or 429 retries with another.
 
 ## Supported Platforms
 
