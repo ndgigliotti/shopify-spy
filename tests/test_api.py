@@ -2,8 +2,10 @@
 
 import asyncio
 import gc
+import http.server
 import subprocess
 import sys
+import threading
 import time
 import warnings
 
@@ -360,10 +362,40 @@ def test_nothing_printed_to_stdout(capsys):
 
 def test_import_boundary():
     code = (
-        "import shopify_spy, sys; print([m for m in ('typer','yaml','scrapy') if m in sys.modules])"
+        "import shopify_spy, sys; "
+        "print([m for m in ('typer','yaml','scrapy','curl_cffi') if m in sys.modules])"
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "[]"
+
+
+class _NotFound(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):  # noqa: N802
+        self.send_response(404)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+
+def test_plain_run_never_imports_curl_cffi(clean_proxy_env):
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _NotFound)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    store = f"http://127.0.0.1:{httpd.server_address[1]}"
+    code = (
+        "import sys, shopify_spy as spy; "
+        f"run = spy.scrape({store!r}, on_failure='ignore', throttle=False); list(run); "
+        "print(404 in run.result.stores[0].responses_by_status, 'curl_cffi' in sys.modules)"
+    )
+    try:
+        out = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60
+        )
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    assert out.stdout.strip() == "True False"
 
 
 # --- Status diagnosis ---
