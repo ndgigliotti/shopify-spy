@@ -56,6 +56,9 @@ jobs:
       - name: Test
         run: uv run pytest -v
 
+      - name: curl_cffi fetcher tests
+        run: uv run pytest -v -m e2e tests/test_fetch_curl_cffi.py
+
   nix:
     runs-on: ubuntu-latest
 
