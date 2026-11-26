@@ -417,13 +417,17 @@ class StoreSession:
         delay = self.retry.delay(attempt, retry_after, cap, rate_limited)
         return delay, self._excuse_from_bail(delay) if excused else None
 
-    async def _fetch_with_retries(self, url: str, kind: RequestKind) -> Response | None:
+    async def _cleared(self, url: str, kind: RequestKind) -> bool:
+        """Whether the request may be sent; False if robots.txt disallows it."""
         # Before the address lookup, which can wait up to request_timeout
         if self.registry.shutdown.is_set():
             raise ShutdownRequested
         # Before robots.txt, so a refused host isn't sent that request either
         await self._check_destination(url)
-        if not await self._allowed(url, kind):
+        return await self._allowed(url, kind)
+
+    async def _fetch_with_retries(self, url: str, kind: RequestKind) -> Response | None:
+        if not await self._cleared(url, kind):
             return None
         slot = self.registry.slot(url)
         # Whether a 429 is this request's last word: retries used up, or a shutdown (or
