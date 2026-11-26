@@ -720,7 +720,8 @@ streaming `ItemWriter` context manager used by the CLI. Formats per §3.7 with D
 | Dev | `respx` (for `HttpxFetcher` tests only), `pytest-asyncio`, `pytest-cov` | Consolidate dev deps into one place (today split between `[dependency-groups]` and `optional-dependencies.dev`) |
 
 CLI deps stay required so `uv tool install shopify-spy` keeps working.
-Later extras: `[curl]` → `curl_cffi`, `[browser]` → `playwright` (§12 items 3 and 4).
+Later extras: `[impersonate]` → `curl_cffi` (shipped in #95), `[browser]` →
+`playwright` (§12 items 3 and 4).
 
 ## 6. Python and platforms
 
@@ -935,20 +936,29 @@ Guiding principles:
 - Rotating browser UAs stay the default, so requests look like ordinary browser
   traffic (Nick's decision); an honest UA is at most opt-in.
 - Neutral names: no "stealth", "impersonate" or "bypass" in user-facing names.
+  `--impersonate` is Nick's exception (2026-11-26, #95), named after curl_cffi's
+  own parameter; "stealth" and "bypass" stay out.
 - No CAPTCHA solving or "bypass" features.
 - Polite defaults stay on: robots.txt, throttling, bail.
 
 1. **Browser identities (dropped):** matching headers per UA (#54, closed).
    Chrome client hints over httpx's TLS widen the mismatch: the one test,
    recorded in #62, got a 403 where the bare UA got a 429. Revisit only
-   together with item 3.
+   together with item 3. Item 3 now covers it: under `--impersonate` the
+   profile supplies browser-consistent headers together with the matching TLS
+   fingerprint, the combination #54 lacked.
 2. **Platform auto-detect** (`platform="auto"`), in progress: #41, branch
    `feat/platform-autodetect`, no PR yet. On `master`, `platform="auto"` still
    raises (`_api.py:87`).
-3. **libcurl transport:** `transport="curl"`, a `[curl]` extra, and UAs paired
-   with `curl_cffi` impersonation profiles via `Identity.impersonate`. Build it
-   on 403s from Cloudflare-fronted stores, or once Shopify or Cloudflare start
-   checking fingerprints.
+3. **libcurl transport (done, #95):** shipped as `--impersonate BROWSER`,
+   `network.impersonate` and `impersonate=`, with an `[impersonate]` extra
+   (`curl_cffi>=0.16.3,<0.18`), after a smoke test found Cloudflare-fronted
+   stores refusing httpx's fingerprint whatever the UA. `CurlCffiFetcher` holds
+   the profile, and `Identity.impersonate` stays unused as the seam. One profile
+   serves the whole run, with no UA or profile rotation: a 403 or 429 retries
+   with the same profile. Whether rotating profiles is ever worth adding is an
+   open question; it may be too aggressive. Off by default, never automatic, and
+   no hint suggests it.
 4. **Browser renderer:** any engine over CDP, defaulting to Playwright with
    Chromium. Lightpanda 1.0.5 got 0/6 Shopify stores' `/products.json` through
    the edge (challenge pages; the test was muddied by an IP rate limit), and its
