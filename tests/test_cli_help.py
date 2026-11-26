@@ -70,6 +70,7 @@ def test_piped_scrape_help_content():
         "<output>/status/",
         "<output>/images/full/",
         "Exit status: 0",
+        "a missing excel or impersonate extra, --impersonate with --user-agent",
         "./shopify-spy.yaml",
         "~/.config/shopify-spy/config.yaml",
     ):
@@ -84,6 +85,9 @@ def test_piped_help_lists_options_by_task():
     assert out.index("--url-file") < out.index("--platform") < out.index("--limit")
     assert out.index("--limit") < out.index("--output") < out.index("--concurrent")
     assert out.index("--ignore-robots") < out.index("--bail") < out.index("--quiet")
+    network = out[out.index("Network:") : out.index("Run control:")]
+    assert network.index("--user-agent") < network.index("--impersonate BROWSER")
+    assert network.index("--impersonate BROWSER") < network.index("--proxy")
 
 
 def test_terminal_help_renders_rich_panels(monkeypatch):

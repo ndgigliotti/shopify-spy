@@ -414,7 +414,7 @@ def test_invalid_proxy_flag_is_a_clean_redacted_error(cli):
     assert "secret" not in run.stderr + run.stdout
 
 
-def test_proxy_flag_reaches_library(cli, monkeypatch):
+def _seen_kwargs(monkeypatch) -> dict:
     seen = {}
     real = cli_module.scrape_async
 
@@ -423,8 +423,79 @@ def test_proxy_flag_reaches_library(cli, monkeypatch):
         return real(urls, **kwargs)
 
     monkeypatch.setattr(cli_module, "scrape_async", spy_scrape)
+    return seen
+
+
+def test_proxy_flag_reaches_library(cli, monkeypatch):
+    seen = _seen_kwargs(monkeypatch)
     cli(None, "shop.test", "--proxy", "http://u:p@gw:8000")
     assert seen["proxy"] == "http://u:p@gw:8000"
+
+
+def test_impersonate_flag_overrides_config():
+    config = Config(network={"impersonate": "firefox"})
+    assert _overrides(config).to_kwargs()["impersonate"] == "firefox"
+    assert _overrides(config, impersonate="chrome").to_kwargs()["impersonate"] == "chrome"
+    assert _overrides().to_kwargs()["impersonate"] is None
+
+
+def test_impersonate_from_flag_and_config_reaches_library(cli, monkeypatch, tmp_path):
+    seen = _seen_kwargs(monkeypatch)
+    cli(shop("shop.test", 1), "shop.test", "--impersonate", "chrome")
+    assert seen["impersonate"] == "chrome"
+
+    seen.clear()
+    config_file = tmp_path / "spy.yaml"
+    config_file.write_text("network:\n  impersonate: chrome\n")
+    cli(shop("shop.test", 1), "shop.test", "-c", str(config_file))
+    assert seen["impersonate"] == "chrome"
+
+
+def _scrape_without_fake(*args: str):
+    """Run spy scrape on the real transport; these runs must exit before any request."""
+    result = runner.invoke(app, ["scrape", "--peek", *args, "shop.test"])
+    return result.exit_code, " ".join(strip_ansi(result.stderr).split())
+
+
+def test_impersonate_without_the_extra_is_a_clean_error(monkeypatch):
+    monkeypatch.setitem(sys.modules, "curl_cffi", None)
+    code, err = _scrape_without_fake("--impersonate", "chrome")
+    assert code == 1
+    assert (
+        "Error: --impersonate needs the impersonate extra: "
+        "uv tool install 'shopify-spy[impersonate]'" in err
+    )
+
+
+def test_unknown_impersonate_target_is_a_clean_error():
+    pytest.importorskip("curl_cffi")
+    code, err = _scrape_without_fake("--impersonate", "nosuchbrowser")
+    assert code == 1
+    assert "Error: " in err and "'nosuchbrowser'" in err
+    assert all(name in err for name in ("chrome", "firefox", "safari"))
+    assert "Traceback" not in err
+
+
+@pytest.mark.parametrize("from_config", [False, True])
+def test_impersonate_with_user_agent_is_a_clean_error(cli, tmp_path, from_config):
+    if from_config:
+        config_file = tmp_path / "spy.yaml"
+        config_file.write_text("network:\n  user_agent: MyBot/1.0\n")
+        args = ["-c", str(config_file)]
+    else:
+        args = ["--user-agent", "MyBot/1.0"]
+    run = cli(shop("shop.test", 1), "--impersonate", "chrome", *args, "shop.test")
+    assert run.exit_code == 1
+    err = " ".join(run.stderr.split())
+    assert "Error: --impersonate sets the user agent from the browser profile" in err
+    assert not run.requests
+
+
+def test_impersonate_is_not_checked_with_a_test_transport(cli):
+    """FETCHER_FACTORY stands in for the transport, as fetcher_factory does in the library."""
+    run = cli(shop("shop.test", 1), "--impersonate", "nosuchbrowser", "shop.test")
+    assert run.exit_code == 0, run.stderr
+    assert len(run.items()) == 1
 
 
 def test_overrides_map_to_kwargs():
