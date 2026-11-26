@@ -27,6 +27,7 @@ from shopify_spy._utils import is_valid_url
 from shopify_spy.cli import app, apply_cli_overrides, get_urls
 
 from .conftest import runner, strip_ansi
+from .flow_support import magento_url
 from .test_xlsx import read_rows
 
 DISALLOW_ALL = "User-agent: *\nDisallow: /\n"
@@ -225,6 +226,7 @@ def test_cli_scrape_help_platform_values():
     output = strip_ansi(result.stdout)
     assert "shopify" in output
     assert "woocommerce" in output
+    assert "magento" in output
 
 
 def test_cli_scrape_help_new_flags():
@@ -280,6 +282,24 @@ def test_cli_scrape_warns_collections_woocommerce():
 def test_cli_scrape_warns_no_products_woocommerce():
     result = runner.invoke(app, ["scrape", "--platform", "woocommerce", "--no-products"])
     assert "--no-products has no effect with WooCommerce" in strip_ansi(result.stderr)
+
+
+@pytest.mark.parametrize(
+    ("flag", "warning"),
+    [
+        ("--collections", "--collections has no effect with Magento"),
+        ("--no-products", "--no-products has no effect with Magento (Magento always"),
+    ],
+)
+def test_cli_scrape_warns_shopify_only_flags_magento(flag, warning):
+    result = runner.invoke(app, ["scrape", "--platform", "magento", flag])
+    assert warning in strip_ansi(result.stderr)
+
+
+def test_cli_init_lists_magento(tmp_path):
+    config_file = tmp_path / "test-config.yaml"
+    runner.invoke(app, ["init", str(config_file)])
+    assert "# Platform: shopify, woocommerce, magento" in config_file.read_text()
 
 
 def test_cli_scrape_no_warn_shopify_collections():
@@ -599,6 +619,23 @@ def test_limit_passed_to_woocommerce(cli):
     assert len(run.items()) == 3
     assert run.status()["urls"][0]["items"] == 3
     assert run.data_files()[0].name.startswith("woocommerce_spider_")
+
+
+def test_limit_passed_to_magento(cli):
+    items = [{"uid": f"u{i}", "name": f"P{i}", "price_range": {}} for i in range(10)]
+    body = {"data": {"products": {"total_count": 10, "items": items}}}
+    run = cli(
+        {magento_url(1, store="https://store.com"): body},
+        "--platform",
+        "magento",
+        "--limit",
+        "3",
+        "https://store.com",
+    )
+
+    assert run.exit_code == 0
+    assert len(run.items()) == 3
+    assert run.data_files()[0].name.startswith("magento_spider_")
 
 
 def test_limit_passed_to_shopify(cli):
