@@ -319,16 +319,11 @@ def _magento(item: dict[str, Any]) -> list[dict[str, Any]]:
     for variant in variants:
         data = variant.get("product") if isinstance(variant.get("product"), dict) else {}
         labels = {a.get("code"): a.get("label") for a in dicts(variant.get("attributes"))}
-        # option1-3 line up with the options column; codes it lacks come after
-        values = [labels.get(c) for c in codes] + [v for c, v in labels.items() if c not in codes]
         image = data.get("image") if isinstance(data.get("image"), dict) else {}
         rows.append(
             product
-            | {
-                "variant_id": data.get("uid"),
-                "variant_title": " / ".join(str(v) for v in values if v not in (None, "")) or None,
-            }
-            | {f"option{i + 1}": v for i, v in enumerate(values[:3])}
+            | {"variant_id": data.get("uid")}
+            | _variant_options(labels, codes)
             | _magento_offer(data, fallback=product)
             | {"variant_image_url": image.get("url")}
         )
@@ -404,16 +399,9 @@ def _bigcommerce_variant(
     for option in nodes(variant.get("options")):
         values = nodes(option.get("values"))
         labels[option.get("entityId")] = values[0].get("label") if values else None
-    # Options the product's variant options lack come after
-    values = [labels.get(i) for i in option_ids]
-    values += [v for k, v in labels.items() if k not in option_ids]
     return (
-        {
-            "variant_id": variant.get("entityId"),
-            "variant_title": " / ".join(str(v) for v in values if v not in (None, "")) or None,
-            "is_purchasable": variant.get("isPurchasable"),
-        }
-        | {f"option{i + 1}": v for i, v in enumerate(values[:3])}
+        {"variant_id": variant.get("entityId"), "is_purchasable": variant.get("isPurchasable")}
+        | _variant_options(labels, option_ids)
         | _bigcommerce_offer(variant, fallback=item)
         | {"variant_image_url": _field(variant.get("defaultImage"), "urlOriginal")}
     )
@@ -488,6 +476,17 @@ def _below(price: Decimal | None, regular_price: Decimal | None) -> bool:
     if price is None or regular_price is None or price.is_nan() or regular_price.is_nan():
         return False
     return price < regular_price
+
+
+def _variant_options(labels: dict[Any, Any], order: list[Any]) -> dict[str, Any]:
+    """A variant's ``variant_title`` and option1-3 from its option labels by key.
+
+    ``order`` lines option1-3 up with the options column; keys it lacks come after.
+    """
+    values = [labels.get(k) for k in order] + [v for k, v in labels.items() if k not in order]
+    return {"variant_title": " / ".join(str(v) for v in values if v not in (None, "")) or None} | {
+        f"option{i + 1}": v for i, v in enumerate(values[:3])
+    }
 
 
 def _join(values: Iterable[Any]) -> str:
