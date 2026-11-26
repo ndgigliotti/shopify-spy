@@ -28,13 +28,25 @@ MAX_PRICE_DIGITS = 15  # digits before the decimal point
 LIST_PRICES = frozenset({"ListPrice", "StrikethroughPrice"})
 
 
-def _is_product(node: dict[str, Any]) -> bool:
+def _types(node: dict[str, Any]) -> list[Any]:
     kind = node.get("@type")
-    return kind == "Product" or (isinstance(kind, list) and "Product" in kind)
+    return kind if isinstance(kind, list) else [kind]
 
 
-def _products(data: Any) -> list[dict[str, Any]]:
-    """Product nodes at the top level, in lists, or in an ``@graph``."""
+def _is_group(node: dict[str, Any]) -> bool:
+    return "ProductGroup" in _types(node)
+
+
+def _is_product(node: dict[str, Any], *, groups: bool = False) -> bool:
+    kinds = _types(node)
+    return "Product" in kinds or (groups and "ProductGroup" in kinds)
+
+
+def _products(data: Any, *, groups: bool = False) -> list[dict[str, Any]]:
+    """Product nodes at the top level, in lists, or in an ``@graph``.
+
+    A matched node isn't descended into, so a group's ``hasVariant`` Products
+    stay inside it."""
     found: list[dict[str, Any]] = []
     stack = [data]
     seen = 0
@@ -44,7 +56,7 @@ def _products(data: Any) -> list[dict[str, Any]]:
         if isinstance(node, list):
             stack.extend(reversed(node))
         elif isinstance(node, dict):
-            if _is_product(node):
+            if _is_product(node, groups=groups):
                 found.append(node)
             elif isinstance(node.get("@graph"), list):
                 stack.extend(reversed(node["@graph"]))
@@ -55,11 +67,26 @@ def _strip_fragment(url: Any) -> str:
     return url.split("#", 1)[0].rstrip("/") if isinstance(url, str) else ""
 
 
-def parse_product_page(html: str, url: str) -> tuple[dict[str, Any] | None, int | None]:
+def _unmatched(products: list[dict[str, Any]], *, fallback: bool) -> dict[str, Any] | None:
+    """The product for a page none of whose nodes names it.
+
+    Without ``fallback``, several unmatched nodes mean a listing (a category or
+    home page), unless exactly one is a group: a group beside its variants."""
+    if fallback or len(products) == 1:
+        return products[0] if products else None
+    found = [p for p in products if _is_group(p)]
+    return found[0] if len(found) == 1 else None
+
+
+def parse_product_page(
+    html: str, url: str, *, groups: bool = False, fallback: bool = True
+) -> tuple[dict[str, Any] | None, int | None]:
     """Return (the page's schema.org Product, the WordPress post ID).
 
     With several products on the page (related products, say), the one whose
-    ``url`` or ``@id`` is the page wins, else the first.
+    ``url`` or ``@id`` is the page wins, else the first. ``groups`` also matches
+    ``ProductGroup`` nodes. With ``fallback=False``, "else the first" applies only
+    to a page with one candidate, or with exactly one ProductGroup among them.
     """
     products: list[dict[str, Any]] = []
     for attrs, script in _SCRIPT.findall(html):
@@ -67,7 +94,7 @@ def parse_product_page(html: str, url: str) -> tuple[dict[str, Any] | None, int 
             continue
         try:
             # strict=False: hand-written JSON-LD often has raw newlines in strings
-            products += _products(json.loads(script, strict=False))
+            products += _products(json.loads(script, strict=False), groups=groups)
         except (ValueError, RecursionError):
             logger.debug("Unparseable JSON-LD on %s", url)
     body = _BODY_CLASS.search(html)
@@ -80,7 +107,7 @@ def parse_product_page(html: str, url: str) -> tuple[dict[str, Any] | None, int 
             _strip_fragment(product.get("@id")),
         ):
             return product, post_id
-    return (products[0] if products else None), post_id
+    return _unmatched(products, fallback=fallback), post_id
 
 
 def text(value: Any) -> str | None:
