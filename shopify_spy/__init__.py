@@ -29,6 +29,7 @@ from shopify_spy._export import ItemWriter, write_items, write_status
 from shopify_spy._results import RunResult, ScrapeFailed, StoreResult, StoreStatus
 from shopify_spy._summary import ItemSummary, summarize
 from shopify_spy._types import (
+    JsonLdProductItem,
     MagentoProductItem,
     ShopifyCollectionItem,
     ShopifyProductItem,
@@ -43,6 +44,7 @@ __all__ = [
     "AsyncScrapeRun",
     "ItemSummary",
     "ItemWriter",
+    "JsonLdProductItem",
     "MagentoProductItem",
     "RunResult",
     "ScrapeFailed",

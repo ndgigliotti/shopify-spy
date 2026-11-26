@@ -20,6 +20,7 @@ class Platform(StrEnum):
     shopify = "shopify"
     woocommerce = "woocommerce"
     magento = "magento"
+    jsonld = "jsonld"
 
 
 class ScrapeConfig(BaseModel):

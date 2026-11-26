@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from shopify_spy import _generic as generic
 from shopify_spy import _magento as magento
 from shopify_spy import _shopify as shopify
 from shopify_spy import _woocommerce as woocommerce
@@ -46,6 +47,7 @@ ADAPTERS: dict[str, Callable[[StoreContext, Emit], Awaitable[bool]]] = {
     "shopify": shopify.run,
     "woocommerce": woocommerce.run,
     "magento": magento.run,
+    "jsonld": generic.run,
 }
 
 
