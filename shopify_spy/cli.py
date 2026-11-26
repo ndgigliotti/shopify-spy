@@ -160,7 +160,7 @@ def _dir_text(path: Path) -> str:
 
 
 _OUTPUT_DIR = _dir_text(_DEFAULTS.output.dir)
-_IMAGES_DIR = f"<output>/{_DEFAULTS.output.images_subdir}/"
+_IMAGES_DIR = f"<output>/{_DEFAULTS.output.images_subdir}/full/"
 
 SCRAPE_EPILOG = "\n\n".join(
     [

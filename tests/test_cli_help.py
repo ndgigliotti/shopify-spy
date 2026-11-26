@@ -70,7 +70,7 @@ def test_piped_scrape_help_content():
         "spy scrape --limit 10",
         "<output>/data/",
         "<output>/status/",
-        "<output>/images/",
+        "<output>/images/full/",
         "Exit status: 0",
         "./shopify-spy.yaml",
         "~/.config/shopify-spy/config.yaml",

@@ -186,7 +186,7 @@ spy scrape [URL] [OPTIONS]
 - `--platform, -p PLATFORM` - Ecommerce platform: `shopify`, `woocommerce` (default: `shopify`)
 - `--products / --no-products` - Scrape products (default: yes; Shopify only)
 - `--collections / --no-collections` - Scrape collections (default: no; Shopify only)
-- `--images / --no-images` - Download images into `<output>/images/` (default: no)
+- `--images / --no-images` - Download images into `<output>/images/full/` (default: no)
 - `--limit, -n INT` - Stop each store after N items (per store; useful for sampling or testing)
 
 *Output*
