@@ -186,16 +186,15 @@ class Runner:
             )
             if self.config.fetcher_factory is None and self.config.proxy:
                 logger.info("Using proxy %s", redact_url(self.config.proxy))
+            # A custom transport's resolution is unknown, and test transports use
+            # made-up hosts that must not reach DNS
+            resolver = None if self.config.fetcher_factory else _direct_resolver(self.config.proxy)
             async with factory() as fetcher:
                 registry = HostRegistry(
                     concurrent_requests=self.config.concurrent_requests,
                     throttle=self.config.throttle,
                     respect_robots_txt=self.config.respect_robots_txt,
-                    # A custom transport's resolution is unknown, and test transports
-                    # use made-up hosts that must not reach DNS
-                    resolver=None
-                    if self.config.fetcher_factory
-                    else _direct_resolver(self.config.proxy),
+                    resolver=resolver,
                 )
                 registry.shutdown = self.shutdown
                 limit = self.config.max_concurrent_stores
