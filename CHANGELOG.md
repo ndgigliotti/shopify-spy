@@ -11,6 +11,14 @@
   schema has a row per configurable variant. A store whose `/graphql` answers
   without products reports `failed` with Magento's message
   ([#89](https://github.com/ndgigliotti/shopify-spy/issues/89)).
+- A `bigcommerce` platform (`--platform bigcommerce`, `platform="bigcommerce"`) for
+  BigCommerce Stencil storefronts, read through the Storefront GraphQL API at
+  `/graphql` with the public API token the storefront's homepage carries. Items are
+  the GraphQL product nodes plus `store`, `platform`, `html_url` and `image_urls`
+  (`BigCommerceProductItem`), and the unified schema has a row per variant. A store
+  whose homepage has no token (such as the default Cornerstone theme, or a headless
+  storefront) reports `failed` with that reason
+  ([#90](https://github.com/ndgigliotti/shopify-spy/issues/90)).
 
 ## 0.5.1
 
