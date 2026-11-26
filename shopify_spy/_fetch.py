@@ -141,11 +141,13 @@ class Fetcher(Protocol):
 FetcherFactory = Callable[[], Fetcher]
 
 
-def decompress(body: bytes, wbits: int, max_size: int = MAX_SIZE) -> bytes:
-    """Inflate zlib/gzip/raw-deflate data, refusing output larger than max_size.
+def decompress(body: bytes, wbits: int, max_size: int | None = None) -> bytes:
+    """Inflate zlib/gzip/raw-deflate data, refusing output larger than max_size (MAX_SIZE).
 
     Concatenated gzip members (allowed by RFC 1952) are all decoded.
     """
+    if max_size is None:
+        max_size = MAX_SIZE
     out = bytearray()
     data = body
     while True:
