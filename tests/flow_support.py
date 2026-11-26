@@ -6,6 +6,7 @@ from typing import Any
 
 import shopify_spy as spy
 from shopify_spy._fetch import FakeFetcher
+from shopify_spy._magento import get_api_url
 
 STORE = "https://shop.test"
 WOO_API = "/wp-json/wc/store/v1/products"
@@ -24,6 +25,10 @@ def collection_url(handle: str, page: int, store: str = STORE) -> str:
 
 def woo_url(page: int, store: str = STORE) -> str:
     return f"{store}{WOO_API}?per_page=100&page={page}&orderby=id&order=asc"
+
+
+def magento_url(page: int, page_size: int = 100, store: str = STORE) -> str:
+    return get_api_url(store, page, page_size)
 
 
 def product(i: int | str, **extra: Any) -> dict[str, Any]:

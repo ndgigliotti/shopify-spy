@@ -95,44 +95,62 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
             return False
         if response is None:
             return False
+        where = f"{_endpoint(response.url)} page {page}"
         products, problem = _read(response)
         if products is None:
-            if problem is None:  # an HTTP failure for diagnose() to report
-                logger.info("Magento GraphQL returned %d for %s", response.status, response.url)
-                if page == 1 and response.status == 404:
-                    await _probe_others(ctx)
-                return False
-            if page == 1 and size > 1 and _PAGE_SIZE_ERROR.search(problem):
-                size = _smaller_page_size(size, problem)
-                logger.info("Magento page size limit (%s); retrying with %d", problem, size)
+            smaller = _smaller_page_size(page, size, problem)
+            if smaller is not None:
+                logger.info("Magento page size limit (%s); retrying with %d", problem, smaller)
+                size = smaller
                 continue
-            if _PAST_END_ERROR.search(problem):
-                return True
-            if page > 1:
-                logger.warning("Magento GraphQL failed for %s: %s", response.url, problem)
-                return False
-            await _probe_others(ctx)
-            raise MagentoError(f"{response.url}: {problem}")
+            return await _failed(ctx, response, where, page, problem)
         if problem is not None:
-            logger.warning("Magento GraphQL answered with errors for %s: %s", response.url, problem)
+            logger.warning("Magento GraphQL answered with errors for %s: %s", where, problem)
         total = products.get("total_count")
         total = total if isinstance(total, int) and not isinstance(total, bool) else None
         batch = dicts(products["items"])
         if not batch:
-            return seen.finish(total, response.url)
-        logger.info("Magento: %d products from %s", len(batch), response.url)
+            return seen.finish(total, where)
+        logger.info("Magento: %d products from %s", len(batch), where)
         fresh = seen.fresh(batch)
         if fresh is None:
             # A server ignoring currentPage would otherwise repeat this page forever
-            logger.warning("Page repeated earlier products; stopping at %s", response.url)
+            logger.warning("Page repeated earlier products; stopping at %s", where)
             return False
         for product in fresh:
             await emit(_item(product, response, ctx.images))
         if total is not None and page * size >= total:
-            return seen.finish(total, response.url)
+            return seen.finish(total, where)
         page += 1
         # Past a redirect (http to https, apex to www), not through it on every page
         base = origin(response.url)
+
+
+async def _failed(
+    ctx: StoreContext, response: Response, where: str, page: int, problem: str | None
+) -> bool:
+    """Whether the store got to the end, given an answer without products.
+
+    Raises MagentoError for a first page that isn't an HTTP failure, which
+    diagnose() would otherwise call ``empty``.
+    """
+    if problem is None:  # an HTTP failure for diagnose() to report
+        logger.info("Magento GraphQL returned %d for %s", response.status, where)
+        if page == 1 and response.status == 404:
+            await _probe_others(ctx)
+        return False
+    if _PAST_END_ERROR.search(problem):
+        return True
+    if page > 1:
+        logger.warning("Magento GraphQL failed for %s: %s", where, problem)
+        return False
+    await _probe_others(ctx)
+    raise MagentoError(f"{_endpoint(response.url)}: {problem}")
+
+
+def _endpoint(url: str) -> str:
+    """A GraphQL URL without its query string, which is most of it."""
+    return url.split("?", 1)[0]
 
 
 class _Seen:
@@ -160,7 +178,7 @@ class _Seen:
             fresh.append(product)
         return fresh
 
-    def finish(self, total: int | None, url: str) -> bool:
+    def finish(self, total: int | None, where: str) -> bool:
         """Whether the store got to the end, now that paging has.
 
         Fewer products than ``total_count`` can be ones the storefront hides (such
@@ -174,7 +192,7 @@ class _Seen:
             "Magento: %d products, fewer than total_count %d, from %s%s",
             unique,
             total,
-            url,
+            where,
             "; some repeated, so the page order shifted" if self.repeats else "",
         )
         return not self.repeats
@@ -226,9 +244,16 @@ def _first_error(data: Any) -> str | None:
     return message if isinstance(message, str) and message else str(first)
 
 
-def _smaller_page_size(size: int, message: str) -> int:
-    """The largest number in the error if it's below ``size``, else half; at least 1."""
-    named = max((int(n) for n in re.findall(r"\d+", message)), default=None)
+def _smaller_page_size(page: int, size: int, problem: str | None) -> int | None:
+    """The page size to retry the first page with after a page-size error: the
+    largest number in the error if it's below ``size``, else half, at least 1.
+
+    None when this isn't one, or it's too late: changing the page size after the
+    first page would shift every later offset.
+    """
+    if problem is None or page > 1 or size <= 1 or not _PAGE_SIZE_ERROR.search(problem):
+        return None
+    named = max((int(n) for n in re.findall(r"\d+", problem)), default=None)
     smaller = named if named is not None and named < size else size // 2
     return max(1, smaller)
 
