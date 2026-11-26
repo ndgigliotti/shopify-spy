@@ -750,6 +750,8 @@ def run_scrape(
                 console.print("[green]Done![/green]")
             else:
                 console.print(f"[green]Done! Scraped {total} item(s).[/green]")
+            if not multi and stores and stores[0].products_from:
+                console.print(f"  Products came from {escape(stores[0].products_from)}.")
             if log_file:
                 console.print(f"  Log: {log_file}")
             if multi:
@@ -881,7 +883,8 @@ def _display_status(store: StoreResult) -> str:
     if store.status == StoreStatus.error:
         return "failed"
     if store.items > 0:
-        return f"{store.items} items"
+        source = f" (from {store.products_from})" if store.products_from else ""
+        return f"{store.items} items{escape(source)}"
     return store.status.label
 
 
