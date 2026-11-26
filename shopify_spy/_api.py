@@ -518,6 +518,6 @@ def scrape_async(urls: str | Iterable[str], **options: Any) -> AsyncScrapeRun:
 
 # Python 3.13+ dedents docstrings at compile time and 3.11-3.12 don't, so clean both
 # pieces before joining them, or "Args" lands a level deeper than the summary
-for _func in (scrape, scrape_async):
-    _func.__doc__ = f"{inspect.cleandoc(_func.__doc__ or '')}\n\n{inspect.cleandoc(_SCRAPE_DOC)}"
-del _func
+_ARGS_DOC = inspect.cleandoc(_SCRAPE_DOC)
+scrape.__doc__ = f"{inspect.cleandoc(scrape.__doc__ or '')}\n\n{_ARGS_DOC}"
+scrape_async.__doc__ = f"{inspect.cleandoc(scrape_async.__doc__ or '')}\n\n{_ARGS_DOC}"
