@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from shopify_spy import StoreStatus
+import shopify_spy as spy
+from shopify_spy import StoreStatus, cli
 
 ROOT = Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
@@ -60,6 +61,19 @@ def test_links_resolve(page):
         if not target.is_file() or (anchor and anchor not in _anchors(target)):
             broken.append(link)
     assert not broken
+
+
+@pytest.mark.parametrize(
+    "text",
+    [cli.DOCS_EPILOG, spy.scrape.__doc__, spy.scrape_async.__doc__],
+    ids=["cli", "scrape", "scrape_async"],
+)
+def test_help_links_name_installed_docs(text):
+    links = list(DOCS_URL.finditer(text))
+    assert links
+    for m in links:
+        assert m.group(1) == f"v{_version()}"
+        assert (DOCS / m.group(2)).is_file()
 
 
 def test_troubleshooting_covers_every_status():

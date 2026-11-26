@@ -17,6 +17,7 @@ import time
 import warnings
 import weakref
 from collections.abc import AsyncIterator, Callable, Generator, Iterable, Iterator
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Literal
 
@@ -27,6 +28,18 @@ from shopify_spy._policy import ThrottleSettings
 from shopify_spy._results import RunResult, ScrapeFailed, StoreResult, run_finish_reason
 from shopify_spy._runner import RunConfig, Runner
 from shopify_spy._utils import is_valid_url, normalize_url, origin
+
+
+def _docs_url() -> str:
+    """The docs/ folder for the installed release, so help links match the code."""
+    try:
+        ref = f"v{version('shopify-spy')}"
+    except PackageNotFoundError:
+        ref = "master"
+    return f"https://github.com/ndgigliotti/shopify-spy/blob/{ref}/docs"
+
+
+DOCS_URL = _docs_url()
 
 RUNNING_LOOP_ERROR = (
     "An event loop is already running (e.g. Jupyter or async code). "
@@ -518,6 +531,11 @@ def scrape_async(urls: str | Iterable[str], **options: Any) -> AsyncScrapeRun:
 
 # Python 3.13+ dedents docstrings at compile time and 3.11-3.12 don't, so clean both
 # pieces before joining them, or "Args" lands a level deeper than the summary
-_ARGS_DOC = inspect.cleandoc(_SCRAPE_DOC)
+_ARGS_DOC = (
+    f"{inspect.cleandoc(_SCRAPE_DOC)}\n\n"
+    "Docs:\n"
+    f"    {DOCS_URL}/library.md (the full guide)\n"
+    f"    {DOCS_URL}/output.md (item shapes and the unified schema)"
+)
 scrape.__doc__ = f"{inspect.cleandoc(scrape.__doc__ or '')}\n\n{_ARGS_DOC}"
 scrape_async.__doc__ = f"{inspect.cleandoc(scrape_async.__doc__ or '')}\n\n{_ARGS_DOC}"
