@@ -56,7 +56,7 @@ class ScrapeOptions(BaseModel):
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
-    platform: Literal["shopify", "woocommerce"] = "shopify"
+    platform: Literal["shopify", "woocommerce", "magento"] = "shopify"
     products: bool = True
     collections: bool = False
     images: bool = False
@@ -85,7 +85,9 @@ def _prepare(
 ) -> tuple[list[tuple[str, str]], ScrapeOptions, bool]:
     backoff = options.pop("_backoff", True)
     if options.get("platform") == "auto":
-        raise ValueError("auto-detection isn't supported yet; use 'shopify' or 'woocommerce'")
+        raise ValueError(
+            "auto-detection isn't supported yet; use 'shopify', 'woocommerce' or 'magento'"
+        )
     proxy = options.get("proxy")
     if proxy is not None and not isinstance(proxy, str):
         # Checked here so pydantic never echoes the value, which may hold credentials

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from shopify_spy import _magento as magento
 from shopify_spy import _shopify as shopify
 from shopify_spy import _woocommerce as woocommerce
 from shopify_spy._fetch import FetcherFactory, HttpxFetcher, redact_url, uses_proxy
@@ -44,6 +45,7 @@ SHUTDOWN_GRACE = 10.0  # seconds in-flight requests get after a graceful shutdow
 ADAPTERS: dict[str, Callable[[StoreContext, Emit], Awaitable[bool]]] = {
     "shopify": shopify.run,
     "woocommerce": woocommerce.run,
+    "magento": magento.run,
 }
 
 
