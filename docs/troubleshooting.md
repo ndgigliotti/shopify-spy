@@ -19,7 +19,7 @@ Every store ends with a status, which the CLI lists when a store fails and the [
 | `unavailable (5xx)` | `unavailable` | The store answered 5xx server errors (often an outage or maintenance) and no successful response; retry later |
 | `TLS error` | `tls_error` | The certificate failed verification; try `--insecure` |
 | `no response` | `no_response` | The store never answered (DNS, connection or network failure), or a proxy refused the request (407); with a proxy in use, the library's `StoreResult.hint` says to check it (see [Proxies](cli.md#proxies)) |
-| `failed` | `error` | An unexpected error, or a Magento store whose `/graphql` answered without products (the reason is in the [log file](#log-files) and `StoreResult.errors`; see [Magento stores](#magento-stores)) |
+| `failed` | `error` | An unexpected error, a Magento store whose `/graphql` answered without products, or a JSON-LD store whose pages had no Product data or whose sitemap wasn't found (the reason is in the [log file](#log-files) and `StoreResult.errors`; see [Magento stores](#magento-stores) and [JSON-LD stores](#json-ld-stores)) |
 | `stopped` | `stopped` | Interrupted (Ctrl-C) before producing anything |
 | `invalid URL` | `invalid_url` | The URL was malformed and skipped before scraping |
 
@@ -49,7 +49,7 @@ Each run except `--peek` writes a status file to `<output>/status/`, with each U
 }
 ```
 
-`finish_reason` summarizes the run: `finished`, `item_limit` (a store reached `--limit`), `bail` (a store hit the `--bail` timeout), `crawler_failed` (a store failed with an error: unexpected, or a Magento answer without products), or `shutdown` (interrupted). `items_written` is how many items the data file holds. A crash or a killed process writes no status file.
+`finish_reason` summarizes the run: `finished`, `item_limit` (a store reached `--limit`), `bail` (a store hit the `--bail` timeout; a JSON-LD store stopped there after checking pages reports `failed` with the pages checked), `crawler_failed` (a store failed with an error: unexpected, a Magento answer without products, or a JSON-LD store without Product data), or `shutdown` (interrupted). `items_written` is how many items the data file holds. A crash or a killed process writes no status file.
 
 `output_error` is `null` unless writing the data file failed, in any format (such as a full disk or an unwritable directory). Then it holds the error, and the command exits with status 1.
 
@@ -91,3 +91,17 @@ Magento scraping uses the storefront GraphQL API at `/graphql`, which Magento Op
 - **`blocked by robots.txt`:** robots.txt rules that match query strings, such as `Disallow: /*?`, also match the GraphQL URLs, since the query is in the URL; see the `robots_blocked` status above.
 - **`ok` with a warning about fewer products than `total_count`:** `total_count` can include products the storefront hides, such as out-of-stock ones. If some products also came back twice, the result order shifted between pages and products were likely missed; the store is then `partial`. Scraping it again may give a complete result.
 - **`403 Forbidden`:** sites behind a bot challenge (such as Cloudflare's) answer 403 to scripted requests, on `/graphql` as on every other page.
+
+## JSON-LD stores
+
+`--platform jsonld` (`platform="jsonld"`) is a best-effort fallback for stores on platforms without their own adapter, such as BigCommerce, Squarespace, Wix, PrestaShop or a custom site. It reads the product pages the store's sitemaps list and keeps the schema.org `Product` data (JSON-LD) each page publishes for search engines (see [JSON-LD items](output.md#json-ld-items)). It doesn't match the native adapters: prefer `shopify`, `woocommerce` or `magento` when the store runs on one of them, and the hint names one when `/products.json` or `/wp-json/` answers like it.
+
+- **Cost:** one request per product, where Shopify's bulk endpoint returns 250 products a request. A 10,000-product catalog takes over 10,000 requests. Use `--limit` (`max_items_per_store`) for a sample, and keep throttling on so the store isn't overloaded or provoked into rate limiting.
+- **`failed` with "no schema.org Product JSON-LD on N of N product pages checked":** the pages had no Product data the scraper could use. After 50 pages without one, and before the first item, the store stops. The message counts the pages that answered with an error status, failed to respond or were disallowed by robots.txt. Common causes:
+  - **Client-rendered stores** (Ecwid's embeddable widget, some headless sites) build product pages in the browser, so the HTML the server sends has no Product.
+  - **Microdata only:** some themes mark products up with `itemscope`/`itemprop` microdata rather than JSON-LD (Magento's default Luma theme, some BigCommerce themes); only JSON-LD is read. For Magento, use `--platform magento`.
+  - **A flat sitemap that lists other pages first:** a store with one sitemap of categories, blog posts and products can use up the 50 pages before reaching a product. There is no option to check more pages yet.
+  - **Bot challenges** that answer pages with a challenge instead of the product.
+- **`failed` with "stopped at --bail":** the store had checked some pages without finding a Product when `--bail` (30 seconds by default) fired. Throttling gives a host about one request per response time, so a slow store may check fewer than 50 pages in that time. Raise `--bail` to check more.
+- **`failed` with "no sitemap found":** the sitemap URLs answered, but not with a sitemap (an HTML catch-all page, say). The scraper reads the robots.txt `Sitemap:` lines, then `/sitemap.xml`, `/sitemap_index.xml` and `/xmlsitemap.php`. A store whose sitemap is elsewhere, and not named in robots.txt, can't be read. When every sitemap URL answers 404, 403 or is disallowed, the store ends `404 Not Found`, `403 Forbidden` or `blocked by robots.txt`.
+- **Lower fidelity:** variants are often missing (many stores publish one Product with a single offer or a price range), prices may be a range (`AggregateOffer`), and fields the native platforms have, such as tags or stock counts, usually aren't there.
