@@ -36,13 +36,20 @@
             };
           })
         ];
-        shopify-spy = final.python3Packages.toPythonApplication final.python3Packages.shopify-spy;
+        # The CLI includes the excel extra, so --format xlsx works (as in nixpkgs)
+        shopify-spy = final.python3Packages.toPythonApplication (
+          final.python3Packages.shopify-spy.overridePythonAttrs (old: {
+            dependencies = old.dependencies ++ old.optional-dependencies.excel;
+          })
+        );
       };
 
       packages = forAllSystems (pkgs: {
         default = pkgs.shopify-spy;
         shopify-spy = pkgs.shopify-spy;
-        python = pkgs.python3.withPackages (ps: [ ps.shopify-spy ]);
+        python = pkgs.python3.withPackages (
+          ps: [ ps.shopify-spy ] ++ ps.shopify-spy.optional-dependencies.excel
+        );
       });
 
       checks = forAllSystems (pkgs: {
