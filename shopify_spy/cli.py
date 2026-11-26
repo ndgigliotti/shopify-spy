@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import signal
@@ -11,12 +12,13 @@ import time
 from collections.abc import Callable, Container
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import platformdirs
 import typer
 from rich.console import Console
 from rich.markup import escape
+from typer.core import MarkupMode, TyperCommand, TyperGroup
 
 from shopify_spy._api import AsyncScrapeRun, scrape_async
 from shopify_spy._config import (
@@ -41,19 +43,103 @@ from shopify_spy._results import _PLATFORM_NAMES, RunResult, StoreResult, StoreS
 from shopify_spy._utils import normalize_url, read_url_file, split_valid_urls
 from shopify_spy._xlsx import require_xlsxwriter
 
-# Shown under --help so agents find the Python API, not just the CLI
+if TYPE_CHECKING:
+    # Typer 0.27 vendors Click as typer._click and no longer installs it
+    import click
+
+# Shown under --help so agents find the Python API, not just the CLI. Help text is
+# plain: Rich mode escapes it, so it reads the same in both renderers.
 LIBRARY_EPILOG = (
-    "Also a Python library: [bold]import shopify_spy as spy[/bold]; "
+    "Also a Python library: import shopify_spy as spy; "
     "spy.scrape(urls) yields items as dicts (options: help(spy.scrape)). "
     "Run a script without installing anything: "
-    "[bold]uv run --with 'shopify-spy>=0.4' python script.py[/bold]"
+    "uv run --with 'shopify-spy>=0.4' python script.py"
 )
+
+# Wide enough that piped help never wraps; an agent reads whole lines better than a
+# 78-column reflow
+_PLAIN_HELP_WIDTH = 10_000
+CONTEXT_SETTINGS: dict[str, Any] = {
+    "help_option_names": ["-h", "--help"],
+    "max_content_width": _PLAIN_HELP_WIDTH,
+    "terminal_width": _PLAIN_HELP_WIDTH,
+}
+
+SCRAPE_PANEL = "What to scrape"
+OUTPUT_PANEL = "Output"
+NETWORK_PANEL = "Network"
+RUN_PANEL = "Run control"
+
+
+def use_rich_help() -> bool:
+    """Whether help and usage errors render with Rich: only when stdout is a terminal.
+
+    Decided at render time, not import. Typer forces Rich when FORCE_COLOR, PY_COLORS
+    or GITHUB_ACTIONS is set, which gives CI and agent harnesses boxed help truncated
+    at 80 columns; this ignores them. Tests patch it to force either mode.
+    """
+    return sys.stdout.isatty()
+
+
+def _escaped(obj: Any, *attrs: str) -> Any:
+    shown = copy.copy(obj)
+    for attr in attrs:
+        if getattr(shown, attr, None):
+            setattr(shown, attr, escape(getattr(shown, attr)))
+    return shown
+
+
+class _AdaptiveHelp:
+    """Rich help in a terminal, plain Click help otherwise (see ``use_rich_help``)."""
+
+    @property
+    def rich_markup_mode(self) -> MarkupMode:
+        # TYPER_USE_RICH=0 clears HAS_RICH and Typer then renders plain Click help,
+        # which must not get the Rich-escaped text
+        return "rich" if typer.core.HAS_RICH and use_rich_help() else None
+
+    @rich_markup_mode.setter
+    def rich_markup_mode(self, value: MarkupMode) -> None:
+        """Ignored: Typer sets the mode at construction; it's decided per render."""
+
+    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        if self.rich_markup_mode is None:
+            return super().format_help(ctx, formatter)  # type: ignore[misc]
+        # Rich would read shopify-spy[excel] as a style tag and drop it
+        shown = _escaped(self, "help", "epilog")
+        shown.params = [_escaped(param, "help") for param in shown.params]
+        return super(_AdaptiveHelp, shown).format_help(ctx, formatter)
+
+
+class _HelpGroup(_AdaptiveHelp, TyperGroup):
+    pass
+
+
+class _HelpCommand(_AdaptiveHelp, TyperCommand):
+    def format_options(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        """List options under their Rich panel names, in the order Rich shows them."""
+        sections: dict[str, list[tuple[str, str]]] = {"Arguments": [], "Options": []}
+        for param in self.get_params(ctx):
+            record = param.get_help_record(ctx)
+            if record is None:
+                continue
+            # not isinstance(click.Argument): Typer 0.27 has its own vendored Click
+            default = "Arguments" if param.param_type_name == "argument" else "Options"
+            panel = getattr(param, "rich_help_panel", None) or default
+            sections.setdefault(panel, []).append(record)
+        for name, records in sections.items():
+            if records:
+                with formatter.section(name):
+                    formatter.write_dl(records)
+
 
 app = typer.Typer(
     name="shopify-spy",
+    cls=_HelpGroup,
     help="Scrape product and collection data from Shopify and WooCommerce stores.",
     epilog=LIBRARY_EPILOG,
     no_args_is_help=True,
+    context_settings=CONTEXT_SETTINGS,
 )
 console = Console()
 # Warnings go to stderr so they don't mix with --peek's JSONL on stdout
@@ -62,6 +148,45 @@ logger = logging.getLogger("shopify_spy")
 
 # Test hook: a transport factory to use instead of HTTP
 FETCHER_FACTORY: FetcherFactory | None = None
+
+# Help shows the built-in defaults; CLI options default to None so a config can
+# override them
+_DEFAULTS = Config()
+
+
+def _on_off(value: bool) -> str:
+    return "on" if value else "off"
+
+
+def _dir_text(path: Path) -> str:
+    text = path.as_posix()
+    return text if path.is_absolute() or text.startswith((".", "~")) else f"./{text}"
+
+
+_OUTPUT_DIR = _dir_text(_DEFAULTS.output.dir)
+_IMAGES_DIR = f"<output>/{_DEFAULTS.output.images_subdir}/full/"
+
+SCRAPE_EPILOG = "\n\n".join(
+    [
+        "Examples:",
+        "spy scrape --peek https://example.com  (print one item as JSONL to learn its "
+        "shape; writes nothing)",
+        f"spy scrape --limit 10 https://example.com  (10 items into {_OUTPUT_DIR}/data/)",
+        "spy scrape --output ./shops --format csv https://a.com https://b.com  "
+        "(every item of two stores, as CSV)",
+        "Results: items go to <output>/data/; each run also writes a status file (every "
+        f"store's status and item count) to <output>/status/, and images to {_IMAGES_DIR}. "
+        "--peek writes nothing.",
+        "Exit status: 0 when any store produced items (failed stores are listed); 1 when "
+        "none did, the output couldn't be written, or the input was invalid (no or "
+        "invalid URLs, a bad --proxy, --verbose with --quiet, a missing excel extra); 2 "
+        "for a usage error such as an unknown option.",
+        "Config: without --config, ./shopify-spy.yaml or else "
+        "~/.config/shopify-spy/config.yaml is read if it exists, and its values replace "
+        "the defaults shown above.",
+        LIBRARY_EPILOG,
+    ]
+)
 
 
 def version_callback(value: bool) -> None:
@@ -89,7 +214,7 @@ def main(
     """Shopify Spy - Scrape product data from Shopify and WooCommerce stores."""
 
 
-@app.command(epilog=LIBRARY_EPILOG)
+@app.command(cls=_HelpCommand, epilog=SCRAPE_EPILOG)
 def scrape(
     urls: Annotated[
         list[str] | None,
@@ -103,38 +228,164 @@ def scrape(
             help="File containing URLs to scrape (one per line; # starts a comment).",
             exists=True,
             dir_okay=False,
+            rich_help_panel=SCRAPE_PANEL,
+        ),
+    ] = None,
+    platform: Annotated[
+        Platform | None,
+        typer.Option(
+            "--platform",
+            "-p",
+            help="Ecommerce platform: shopify or woocommerce "
+            f"(default: {_DEFAULTS.scrape.platform.value}).",
+            rich_help_panel=SCRAPE_PANEL,
         ),
     ] = None,
     products: Annotated[
         bool | None,
-        typer.Option("--products/--no-products", help="Scrape products."),
+        typer.Option(
+            "--products/--no-products",
+            help="Scrape products. Shopify only; WooCommerce always does "
+            f"(default: {_on_off(_DEFAULTS.scrape.products)}).",
+            rich_help_panel=SCRAPE_PANEL,
+        ),
     ] = None,
     collections: Annotated[
         bool | None,
-        typer.Option("--collections/--no-collections", help="Scrape collections."),
+        typer.Option(
+            "--collections/--no-collections",
+            help="Scrape collections. Shopify only "
+            f"(default: {_on_off(_DEFAULTS.scrape.collections)}).",
+            rich_help_panel=SCRAPE_PANEL,
+        ),
     ] = None,
     images: Annotated[
         bool | None,
-        typer.Option("--images/--no-images", help="Download product images."),
+        typer.Option(
+            "--images/--no-images",
+            help=f"Download product images into {_IMAGES_DIR} "
+            f"(default: {_on_off(_DEFAULTS.scrape.images)}).",
+            rich_help_panel=SCRAPE_PANEL,
+        ),
+    ] = None,
+    limit: Annotated[
+        int | None,
+        typer.Option(
+            "--limit",
+            "-n",
+            help="Stop each store after N items (per store). Useful for sampling or testing "
+            "(default: no limit).",
+            rich_help_panel=SCRAPE_PANEL,
+        ),
     ] = None,
     output: Annotated[
         Path | None,
-        typer.Option("--output", "-o", help="Output directory for results."),
+        typer.Option(
+            "--output",
+            "-o",
+            help=f"Output directory for results (default: {_OUTPUT_DIR}).",
+            rich_help_panel=OUTPUT_PANEL,
+        ),
     ] = None,
     format: Annotated[
         OutputFormat | None,
         typer.Option(
             "--format",
             "-F",
-            help="Output format: json, jsonl, csv, xlsx (needs shopify-spy\\[excel]), xml.",
+            help="Output format: json, jsonl, csv, xlsx or xml "
+            f"(default: {_DEFAULTS.output.format}). xlsx needs the shopify-spy[excel] extra.",
+            rich_help_panel=OUTPUT_PANEL,
         ),
     ] = None,
     schema: Annotated[
         OutputSchema | None,
         typer.Option(
             "--schema",
-            help="Item shape: native (as scraped; default) or unified (a row per variant, "
-            "same columns on both platforms). CSV and XLSX are always unified.",
+            help="Item shape (default: "
+            f"{schema_for(_DEFAULTS.output.format, _DEFAULTS.output.schema_)}): native (as "
+            "scraped) or unified (a row per variant, same columns on both platforms). "
+            "CSV and XLSX are always unified.",
+            rich_help_panel=OUTPUT_PANEL,
+        ),
+    ] = None,
+    peek: Annotated[
+        bool,
+        typer.Option(
+            "--peek",
+            help="Print 1 item to stdout as JSONL (its rows with --schema unified) and exit. "
+            "No file output.",
+            rich_help_panel=OUTPUT_PANEL,
+        ),
+    ] = False,
+    concurrent: Annotated[
+        int | None,
+        typer.Option(
+            "--concurrent",
+            help="Concurrent requests per host "
+            f"(default: {_DEFAULTS.network.concurrent_requests}).",
+            rich_help_panel=NETWORK_PANEL,
+        ),
+    ] = None,
+    max_stores: Annotated[
+        int | None,
+        typer.Option(
+            "--max-stores",
+            help=f"Stores scraped at once (default: {_DEFAULTS.network.max_concurrent_stores}).",
+            rich_help_panel=NETWORK_PANEL,
+        ),
+    ] = None,
+    throttle: Annotated[
+        bool | None,
+        typer.Option(
+            "--throttle/--no-throttle",
+            help=f"Auto-throttle requests (default: {_on_off(_DEFAULTS.throttle.enabled)}).",
+            rich_help_panel=NETWORK_PANEL,
+        ),
+    ] = None,
+    user_agent: Annotated[
+        str | None,
+        typer.Option(
+            "--user-agent",
+            "-A",
+            help="Fixed User-Agent header (default: a random browser UA, swapped after a "
+            "403 or 429).",
+            rich_help_panel=NETWORK_PANEL,
+        ),
+    ] = None,
+    proxy: Annotated[
+        str | None,
+        typer.Option(
+            "--proxy",
+            help="Proxy URL for every request (http://, https:// or socks5://); "
+            "overrides HTTPS_PROXY/HTTP_PROXY.",
+            rich_help_panel=NETWORK_PANEL,
+        ),
+    ] = None,
+    insecure: Annotated[
+        bool,
+        typer.Option(
+            "--insecure", help="Don't verify TLS certificates.", rich_help_panel=NETWORK_PANEL
+        ),
+    ] = False,
+    ignore_robots: Annotated[
+        bool,
+        typer.Option(
+            "--ignore-robots",
+            "-i",
+            help="Ignore robots.txt restrictions.",
+            rich_help_panel=NETWORK_PANEL,
+        ),
+    ] = False,
+    bail: Annotated[
+        int | None,
+        typer.Option(
+            "--bail",
+            help=(
+                "Abort a store with no items within N seconds, not counting Retry-After "
+                "waits, so a rate-limited store can take minutes "
+                f"(default: {_DEFAULTS.scrape.bail}; 0 = off)."
+            ),
+            rich_help_panel=RUN_PANEL,
         ),
     ] = None,
     config_path: Annotated[
@@ -145,85 +396,18 @@ def scrape(
             help="Path to YAML configuration file.",
             exists=True,
             dir_okay=False,
+            rich_help_panel=RUN_PANEL,
         ),
     ] = None,
-    concurrent: Annotated[
-        int | None,
-        typer.Option("--concurrent", help="Concurrent requests per host."),
-    ] = None,
-    max_stores: Annotated[
-        int | None,
-        typer.Option("--max-stores", help="Stores scraped at once (default 16)."),
-    ] = None,
-    throttle: Annotated[
-        bool | None,
-        typer.Option("--throttle/--no-throttle", help="Auto-throttle requests."),
-    ] = None,
-    limit: Annotated[
-        int | None,
-        typer.Option(
-            "--limit",
-            "-n",
-            help="Stop each store after N items (per store). Useful for sampling or testing.",
-        ),
-    ] = None,
-    user_agent: Annotated[
-        str | None,
-        typer.Option("--user-agent", "-A", help="Custom User-Agent header."),
-    ] = None,
-    platform: Annotated[
-        Platform | None,
-        typer.Option(
-            "--platform",
-            "-p",
-            help="Ecommerce platform: shopify, woocommerce (default: shopify, or the config's).",
-        ),
-    ] = None,
-    bail: Annotated[
-        int | None,
-        typer.Option(
-            "--bail",
-            help=(
-                "Abort a store with no items within N seconds, not counting Retry-After "
-                "waits, so a rate-limited store can take minutes (0 = off)."
-            ),
-        ),
-    ] = None,
-    ignore_robots: Annotated[
-        bool,
-        typer.Option(
-            "--ignore-robots",
-            "-i",
-            help="Ignore robots.txt restrictions.",
-        ),
-    ] = False,
-    insecure: Annotated[
-        bool,
-        typer.Option("--insecure", help="Don't verify TLS certificates."),
-    ] = False,
-    proxy: Annotated[
-        str | None,
-        typer.Option(
-            "--proxy",
-            help="Proxy URL for every request (http://, https:// or socks5://); "
-            "overrides HTTPS_PROXY/HTTP_PROXY.",
-        ),
-    ] = None,
-    peek: Annotated[
-        bool,
-        typer.Option(
-            "--peek",
-            help="Print 1 item to stdout as JSONL (its rows with --schema unified) and exit. "
-            "No file output.",
-        ),
-    ] = False,
     verbose: Annotated[
         bool,
-        typer.Option("--verbose", "-v", help="Show debug output."),
+        typer.Option("--verbose", "-v", help="Show debug output.", rich_help_panel=RUN_PANEL),
     ] = False,
     quiet: Annotated[
         bool,
-        typer.Option("--quiet", "-q", help="Show only warnings and errors."),
+        typer.Option(
+            "--quiet", "-q", help="Show only warnings and errors.", rich_help_panel=RUN_PANEL
+        ),
     ] = False,
 ) -> None:
     """Scrape products and collections from Shopify and WooCommerce stores."""
@@ -320,7 +504,7 @@ def _check_options(config: Config, peek: bool) -> None:
         check_proxy_support(config.network.proxy)
 
 
-@app.command()
+@app.command(cls=_HelpCommand)
 def init(
     path: Annotated[
         Path | None,

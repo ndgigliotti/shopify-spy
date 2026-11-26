@@ -179,30 +179,40 @@ spy scrape [URL] [OPTIONS]
 **Arguments:**
 - `URL...` - One or more store URLs (optional if using `--url-file`)
 
-**Options:**
-- `--platform, -p PLATFORM` - Ecommerce platform: `shopify`, `woocommerce` (default: `shopify`)
-- `--limit, -n INT` - Stop each store after N items (per store; useful for sampling or testing)
+**Options**, grouped as `spy scrape --help` lists them:
+
+*What to scrape*
 - `--url-file, -f FILE` - File containing URLs (one per line; lines starting with `#` are comments)
+- `--platform, -p PLATFORM` - Ecommerce platform: `shopify`, `woocommerce` (default: `shopify`)
 - `--products / --no-products` - Scrape products (default: yes; Shopify only)
 - `--collections / --no-collections` - Scrape collections (default: no; Shopify only)
-- `--images / --no-images` - Download images (default: no)
+- `--images / --no-images` - Download images into `<output>/images/full/` (default: no)
+- `--limit, -n INT` - Stop each store after N items (per store; useful for sampling or testing)
+
+*Output*
 - `--output, -o PATH` - Output directory (default: `./output`)
 - `--format, -F FORMAT` - Output format: `json`, `jsonl`, `csv`, `xlsx`, `xml` (default: `jsonl`; `xlsx` needs the `excel` extra, see [Excel output](#excel-output))
 - `--schema SCHEMA` - Item shape: `native` (as scraped) or `unified` (a row per variant; see [Unified schema](#unified-schema)). Default: `native`, except CSV and XLSX, which are always `unified`
-- `--config, -c FILE` - Path to YAML config file
+- `--peek` - Print 1 item to stdout as JSONL and exit (no files or directories created); with `--schema unified`, its unified rows
+
+*Network*
 - `--concurrent INT` - Concurrent requests per host (default: 16)
 - `--max-stores INT` - Stores scraped at once (default: 16)
 - `--throttle / --no-throttle` - Auto-throttle requests (default: yes)
-- `--user-agent, -A TEXT` - Custom User-Agent header
-- `--ignore-robots, -i` - Ignore robots.txt restrictions
-- `--insecure` - Don't verify TLS certificates
+- `--user-agent, -A TEXT` - Fixed User-Agent header (default: a random browser UA, swapped after a 403 or 429)
 - `--proxy URL` - Send every request through this proxy (`http://`, `https://` or `socks5://`); overrides `HTTPS_PROXY`/`HTTP_PROXY`, see [Limitations](#limitations)
+- `--insecure` - Don't verify TLS certificates
+- `--ignore-robots, -i` - Ignore robots.txt restrictions
+
+*Run control*
 - `--bail INT` - Abort if no items scraped within N seconds (default: 30, 0 to disable). Time spent waiting out a server's `Retry-After` doesn't count, so a rate-limited store can wait (retries + 1) × up to 60 seconds for each request before its first item, with no fixed bound across requests
-- `--peek` - Print 1 item to stdout as JSONL and exit (no files or directories created); with `--schema unified`, its unified rows
+- `--config, -c FILE` - Path to YAML config file (without it, `./shopify-spy.yaml` or `~/.config/shopify-spy/config.yaml` is read if present)
 - `--verbose, -v` - Show debug output (logs to both file and terminal)
 - `--quiet, -q` - Show only warnings and errors (no live item counter)
 
-`spy --version` (`-V`) prints the installed version.
+**Results and exit status.** Items go to `<output>/data/` and each run writes a status file (every store's status and item count) to `<output>/status/`; `--peek` writes neither. The exit status is 0 when any store produced items, even if others failed (they're listed); 1 when none did, the output couldn't be written, or the input was invalid (no or invalid URLs, a bad `--proxy`, `--verbose` with `--quiet`, a missing excel extra); and 2 for a usage error such as an unknown option.
+
+`spy --version` (`-V`) prints the installed version, and `-h` is short for `--help`. Piped, as coding agents run it, `--help` is plain unwrapped text; in a terminal it renders in panels.
 
 ### `init`
 
