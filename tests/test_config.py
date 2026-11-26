@@ -62,6 +62,14 @@ def test_load_config_magento(tmp_path):
     assert config.to_kwargs()["platform"] == "magento"
 
 
+def test_load_config_bigcommerce(tmp_path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("scrape:\n  platform: bigcommerce\n")
+    config = load_config_from_file(config_file)
+    assert config.scrape.platform == "bigcommerce"
+    assert config.to_kwargs()["platform"] == "bigcommerce"
+
+
 def test_load_config_is_utf8_whatever_the_locale(tmp_path):
     # Windows' default encoding is cp1252, and Notepad may add a byte-order mark
     config_file = tmp_path / "config.yaml"
