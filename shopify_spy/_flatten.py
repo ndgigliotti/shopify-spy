@@ -318,24 +318,32 @@ def _magento(item: dict[str, Any]) -> list[dict[str, Any]]:
                 "variant_title": " / ".join(str(v) for v in values if v not in (None, "")) or None,
             }
             | {f"option{i + 1}": v for i, v in enumerate(values[:3])}
-            | _magento_offer(data)
+            | _magento_offer(data, fallback=product)
             | {"variant_image_url": image.get("url")}
         )
     return rows or [product]
 
 
-def _magento_offer(item: dict[str, Any]) -> dict[str, Any]:
-    """The price, SKU and stock columns of a Magento product or variant."""
+def _magento_offer(item: dict[str, Any], fallback: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The price, SKU and stock columns of a Magento product or variant.
+
+    A variant without a price keeps the product's ``fallback`` price and compare-at price,
+    so its row still shows what the product costs.
+    """
     prices = item.get("price_range")
     price, _ = magento_price(prices)
     regular_price, _ = magento_price(prices, kind="regular_price")
     stock = item.get("stock_status")
-    return {
+    offer = {
         "sku": item.get("sku"),
         "price": price,
         "compare_at_price": regular_price if _below(price, regular_price) else None,
         "available": stock == "IN_STOCK" if isinstance(stock, str) else None,
     }
+    if price is None and fallback is not None:
+        offer["price"] = fallback.get("price")
+        offer["compare_at_price"] = fallback.get("compare_at_price")
+    return offer
 
 
 def _html(value: Any) -> Any:

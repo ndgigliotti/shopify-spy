@@ -769,6 +769,15 @@ def test_csv_magento_configurable_rows(tmp_path):
     assert (row["vendor"], row["url"], row["source"]) == ("", "", "")
 
 
+def test_csv_magento_variant_without_price_keeps_product_price(tmp_path):
+    variant = _mg_variant("MTE=", "TEE-R-S", "Red", "S", 20)
+    del variant["product"]["price_range"]
+    path = tmp_path / "out.csv"
+    write_items([MAGENTO_CONFIGURABLE | {"variants": [variant]}], path)
+    (row,) = read_csv(path)
+    assert (row["sku"], row["price"], row["compare_at_price"]) == ("TEE-R-S", "20", "30")
+
+
 def test_csv_magento_simple_product_row(tmp_path):
     path = tmp_path / "out.csv"
     write_items([MAGENTO_SIMPLE], path)
