@@ -418,6 +418,14 @@ def check_proxy_support(proxy: str | None) -> None:
             raise ValueError(f"{_ENV_PROXY_PREFIX}{exc}") from None
         if scheme not in PROXY_SCHEMES:
             raise ValueError(f"{_ENV_PROXY_PREFIX}unknown scheme in {redact_url(value)!r}")
+    # httpx fails to build its client on these; env_proxy_for would skip them, so
+    # CurlCffiFetcher would proxy what the user meant to send direct
+    for pattern in _env_proxy_mounts():
+        try:
+            _URLPattern.parse(pattern)
+        except (httpx.InvalidURL, UnicodeError, ValueError) as exc:
+            host = pattern.removeprefix("all://").removeprefix("*")
+            raise ValueError(f"NO_PROXY in the environment: bad entry {host!r} ({exc})") from None
 
 
 class HttpxFetcher:

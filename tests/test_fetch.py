@@ -493,6 +493,8 @@ ENV_CASES = [
     {"HTTPS_PROXY": "socks4://h:1"},
     {"HTTPS_PROXY": "http://h:99999"},
     {"ALL_PROXY": "socks5h://h:1080"},
+    {"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "[::1"},
+    {"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "::1, 10.0.0.0/8, .example.com"},
 ]
 
 
