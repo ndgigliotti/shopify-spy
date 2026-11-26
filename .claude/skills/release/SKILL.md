@@ -84,8 +84,8 @@ can't merge them; a nixpkgs committer has to.
   A new top-level dependency fails nixpkgs' runtime-deps check; a new extra on an
   existing dependency isn't checked, so only our tests catch it.
 - No changes: wait for the bot's PR
-  (`gh pr list -R NixOS/nixpkgs --search shopify-spy`) and approve it as
-  maintainer. If none appears within a few days, read the newest log under
+  (`gh pr list -R NixOS/nixpkgs --search shopify-spy`) and **(ask)** approve it
+  as maintainer. If none appears within a few days, read the newest log under
   https://nixpkgs-update-logs.nixos.org/python3Packages.shopify-spy/
 - Changes: **(ask)** open the bump PR yourself with the dependency changes in
   `default.nix`, after checking no bot PR is open for the same version. It
