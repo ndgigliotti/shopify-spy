@@ -7,7 +7,7 @@ import time
 import pytest
 
 from shopify_spy import _policy as policy
-from shopify_spy._fetch import FetcherCapabilities
+from shopify_spy._fetch import CurlCffiFetcher, FetcherCapabilities
 from shopify_spy._policy import (
     RETRY_MAX_DELAY,
     HostSlot,
@@ -349,6 +349,13 @@ def test_retry_policy_for_browser_does_not_rotate():
     retry = retry_policy_for(caps, retries=2, backoff=True)
     assert retry.rotate_on == frozenset()
     assert 403 in retry.statuses  # still retried, just without rotation
+
+
+def test_retry_policy_for_impersonating_transport_keeps_retries_without_rotation():
+    retry = retry_policy_for(CurlCffiFetcher.capabilities, retries=3, backoff=True)
+    assert retry.rotate_on == frozenset()
+    assert (retry.retries, retry.backoff) == (3, True)
+    assert {403, 429} <= retry.statuses
 
 
 # --- IdentityPool ---------------------------------------------------------------------
