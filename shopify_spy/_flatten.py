@@ -447,10 +447,8 @@ def _bigcommerce_reviews(summary: Any) -> tuple[Decimal | None, Any]:
     """The average rating (None without reviews) and the review count."""
     count = _field(summary, "numberOfReviews")
     total = _field(summary, "summationOfRatings")
-    numbers = (int, float)
-    if not isinstance(count, numbers) or isinstance(count, bool) or count <= 0:
-        return None, count
-    if not isinstance(total, numbers) or isinstance(total, bool):
+    numeric = all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in (count, total))
+    if not numeric or count <= 0:
         return None, count
     return (Decimal(str(total)) / Decimal(str(count))).quantize(Decimal("0.01")), count
 
