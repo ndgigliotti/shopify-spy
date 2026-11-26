@@ -23,7 +23,7 @@ from decimal import Decimal
 from html.parser import HTMLParser
 from typing import Any
 
-from shopify_spy._bigcommerce import image_list
+from shopify_spy._bigcommerce import image_list, nodes
 from shopify_spy._magento import gallery_urls
 from shopify_spy._summary import (
     bigcommerce_price,
@@ -365,8 +365,8 @@ def _html(value: Any) -> Any:
 def _bigcommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
     summary = summarize(item)
     images = image_list(item)
-    variants = _nodes(item.get("variants"))
-    options = [o for o in _nodes(item.get("productOptions")) if o.get("isVariantOption") is True]
+    variants = nodes(item.get("variants"))
+    options = [o for o in nodes(item.get("productOptions")) if o.get("isVariantOption") is True]
     path = item.get("path")
     rating, reviews = _bigcommerce_reviews(item.get("reviewSummary"))
     product = {
@@ -377,7 +377,7 @@ def _bigcommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
         "handle": path.strip("/") or None if isinstance(path, str) else None,
         "title": summary.title,
         "vendor": _field(item.get("brand"), "name"),
-        "categories": _names(_nodes(item.get("categories"))),
+        "categories": _names(nodes(item.get("categories"))),
         "options": _join(o.get("displayName") for o in options),
         "created_at": _field(item.get("createdAt"), "utc"),
         "description": _text(item.get("description")),
@@ -401,8 +401,8 @@ def _bigcommerce_variant(
 ) -> dict[str, Any]:
     """A variant's own columns; ``option_ids`` order option1-3 like the options column."""
     labels = {}
-    for option in _nodes(variant.get("options")):
-        values = _nodes(option.get("values"))
+    for option in nodes(variant.get("options")):
+        values = nodes(option.get("values"))
         labels[option.get("entityId")] = values[0].get("label") if values else None
     # Options the product's variant options lack come after
     values = [labels.get(i) for i in option_ids]
@@ -451,12 +451,6 @@ def _bigcommerce_reviews(summary: Any) -> tuple[Decimal | None, Any]:
     if not numeric or count <= 0:
         return None, count
     return (Decimal(str(total)) / Decimal(str(count))).quantize(Decimal("0.01")), count
-
-
-def _nodes(connection: Any) -> list[dict[str, Any]]:
-    """The node dicts of a GraphQL connection (``{"edges": [{"node": ...}]}``)."""
-    edges = connection.get("edges") if isinstance(connection, dict) else None
-    return [n for e in dicts(edges) if isinstance(n := e.get("node"), dict)]
 
 
 def _field(value: Any, key: str) -> Any:

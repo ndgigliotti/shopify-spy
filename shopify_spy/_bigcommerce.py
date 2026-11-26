@@ -27,7 +27,7 @@ from shopify_spy._magento import _dig, _first_error, _probe_others
 from shopify_spy._session import Emit, RequestFailed, RequestKind, StoreContext
 from shopify_spy._utils import dicts, normalize_url, origin
 
-__all__ = ["get_api_url", "run", "image_list"]
+__all__ = ["get_api_url", "run", "image_list", "nodes"]
 
 logger = logging.getLogger("shopify_spy")
 
@@ -266,15 +266,15 @@ class _Pager:
         return False
 
     async def _take(self, products: dict[str, Any], problem: str | None) -> bool | None:
-        nodes = [e["node"] for e in dicts(products["edges"]) if isinstance(e.get("node"), dict)]
+        found = nodes(products)
         if problem is not None:
-            if not nodes:
+            if not found:
                 return self._failed(f"{self.api}: {problem}")
             logger.warning(
                 "BigCommerce GraphQL answered with errors for %s: %s", self.where, problem
             )
-        logger.info("BigCommerce: %d products from %s", len(nodes), self.where)
-        for node in nodes:
+        logger.info("BigCommerce: %d products from %s", len(found), self.where)
+        for node in found:
             if _dig(node, "variants", "pageInfo", "hasNextPage") is True:
                 logger.warning(
                     "BigCommerce product %s: only the first 250 variants", node.get("entityId")
@@ -327,10 +327,14 @@ def image_list(node: dict[str, Any]) -> list[str]:
     """The product's ``images`` ``urlOriginal`` values, the default image first."""
     entries = [
         n
-        for e in dicts(_dig(node, "images", "edges"))
-        if isinstance(n := e.get("node"), dict)
-        and isinstance(n.get("urlOriginal"), str)
-        and n["urlOriginal"]
+        for n in nodes(node.get("images"))
+        if isinstance(n.get("urlOriginal"), str) and n["urlOriginal"]
     ]
     entries.sort(key=lambda n: n.get("isDefault") is not True)
     return [n["urlOriginal"] for n in entries]
+
+
+def nodes(connection: Any) -> list[dict[str, Any]]:
+    """The node dicts of a GraphQL connection (``{"edges": [{"node": ...}]}``)."""
+    edges = connection.get("edges") if isinstance(connection, dict) else None
+    return [n for e in dicts(edges) if isinstance(n := e.get("node"), dict)]
