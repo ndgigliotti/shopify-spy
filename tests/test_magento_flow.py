@@ -325,3 +325,12 @@ def test_first_page_of_errors_and_null_items_is_an_error():
     assert items == []
     assert result.stores[0].status == "error"
     assert "Internal server error" in result.stores[0].errors[-1]
+
+
+@pytest.mark.parametrize("retry", [(429, ""), FetchConnectionError("reset")], ids=["429", "failed"])
+def test_failed_page_size_retry_is_an_error(retry):
+    routes = {magento_url(1): errors("Maximum pageSize is 30"), magento_url(1, 30): retry}
+    items, result, _ = scrape_mg(routes, retries=0)
+    assert items == []
+    assert result.stores[0].status == "error"
+    assert "after a page-size retry" in result.stores[0].errors[-1]

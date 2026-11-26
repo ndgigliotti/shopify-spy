@@ -94,7 +94,7 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
         if products is None:
             smaller = _smaller_page_size(page, size, problem)
             if smaller is None:
-                return await _failed(ctx, response, where, page, problem)
+                return await _failed(ctx, response, where, page, problem, size != PAGE_SIZE)
             logger.info("Magento page size limit (%s); retrying with %d", problem, smaller)
             size = smaller
             continue
@@ -109,6 +109,10 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
         page += 1
         # Past a redirect (http to https, apex to www), not through it on every page
         base = origin(response.url)
+    if page == 1 and size != PAGE_SIZE:
+        raise MagentoError(
+            f"{_endpoint(get_api_url(base))}: request failed after a page-size retry"
+        )
     return False
 
 
@@ -151,15 +155,25 @@ async def _take_page(
 
 
 async def _failed(
-    ctx: StoreContext, response: Response, where: str, page: int, problem: str | None
+    ctx: StoreContext,
+    response: Response,
+    where: str,
+    page: int,
+    problem: str | None,
+    resized: bool = False,
 ) -> bool:
     """Whether the store got to the end, given an answer without products.
 
     Raises MagentoError for a first page that isn't an HTTP failure, which
-    diagnose() would otherwise call ``empty``.
+    diagnose() would otherwise call ``empty``. So does an HTTP failure after a
+    ``resized`` first page: the page-size error's 200 already counted as a success.
     """
     if problem is None:  # an HTTP failure for diagnose() to report
         logger.info("Magento GraphQL returned %d for %s", response.status, where)
+        if page == 1 and resized:
+            raise MagentoError(
+                f"{_endpoint(response.url)}: HTTP {response.status} after a page-size retry"
+            )
         if page == 1 and response.status == 404:
             await _probe_others(ctx)
         return False
