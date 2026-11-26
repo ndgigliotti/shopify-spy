@@ -12,7 +12,7 @@ Every store ends with a status, which the CLI lists when a store fails and the [
 | `ok` | `partial` | Items were scraped, but part of the catalog couldn't be reached |
 | `0 items` | `empty` | The store answered but had no products |
 | `timed out` | `timed_out` | No items within `--bail` seconds, not counting `Retry-After` waits |
-| `403 Forbidden` | `forbidden` | The store returned 403s and no successful response |
+| `403 Forbidden` | `forbidden` | The store returned 403s and no successful response. Some sites refuse every client that doesn't look like a browser; see [Impersonation](cli.md#impersonation) |
 | `404 Not Found` | `not_found` | The store returned 404s and no successful response; check the URL and `--platform` |
 | `blocked by robots.txt` | `robots_blocked` | robots.txt forbade the store's requests; try `--ignore-robots` |
 | `rate limited (429)` | `rate_limited` | The store answered 429 (Too Many Requests) after retries and no successful response, or a 429 its retries didn't get past held it until `--bail` fired with no items; retry later with a lower `--concurrent` (see [Rate limiting](#rate-limiting)) |
@@ -28,7 +28,7 @@ Every store ends with a status, which the CLI lists when a store fails and the [
 ## Exit status
 
 - **0:** at least one store produced items. Stores that failed are listed with their statuses.
-- **1:** no store produced items, the output couldn't be written, or the input was invalid (no URLs or no valid ones, `--verbose` with `--quiet`, an option value the CLI rejects, such as a bad `--proxy`, or `--format xlsx` without the `excel` extra, which `--peek` doesn't check). The CLI prints the reason.
+- **1:** no store produced items, the output couldn't be written, or the input was invalid (no URLs or no valid ones, `--verbose` with `--quiet`, an option value the CLI rejects, such as a bad `--proxy` or an unknown `--impersonate` browser, `--impersonate` with `--user-agent`, `--impersonate` without the `impersonate` extra, or `--format xlsx` without the `excel` extra, which `--peek` doesn't check). The CLI prints the reason.
 - **2:** a usage error, such as an unknown option.
 
 ## The status file
@@ -65,7 +65,7 @@ Detailed logs go to a log file rather than the terminal, in the platform's state
 Stores usually rate-limit by IP address: past some request rate they answer 429 (Too Many Requests). A store that stays rate-limited ends as `rate_limited`; retry it later, with a lower `--concurrent` and throttling on.
 
 - **Throttling:** auto-throttling is on by default. Each host is slowed to match its response times, and a 429 or 503 pauses that host for its `Retry-After` time (at most 60 seconds), even with `--no-throttle`. `--no-throttle` is faster but riskier, and the [config file](cli.md#configuration)'s `throttle` settings adjust it.
-- **User agents:** requests use a random browser user agent, and a 403 or 429 swaps it before the retry. Some stores rate-limit by user agent: Shopify answers 429 to every request from a plain Linux browser user agent (`X11; Linux x86_64`, as Chrome on Linux and headless Chrome send), so the built-in pool leaves those out. Avoid that token in a custom `--user-agent`.
+- **User agents:** requests use a random browser user agent, and a 403 or 429 swaps it before the retry. Some stores rate-limit by user agent: Shopify answers 429 to every request from a plain Linux browser user agent (`X11; Linux x86_64`, as Chrome on Linux and headless Chrome send), so the built-in pool leaves those out. Avoid that token in a custom `--user-agent`. With `--impersonate`, the browser profile sets the user agent, and a 403 or 429 retries with the same one.
 - **Bail and waits:** waiting out `Retry-After` doesn't count against `--bail`, and waits are excused for each request. So a store limited by IP can wait (retries + 1) × up to 60 seconds for every request it makes before its first item. That has no fixed bound: a Shopify store that answers 429 with `Retry-After` to each of the thousands of products its sitemap lists can run for hours before it fails.
 - **Proxies** don't get around rate limits; see [Proxies](cli.md#proxies).
 

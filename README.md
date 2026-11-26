@@ -113,7 +113,7 @@ An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an i
 
 ## Responsible use
 
-Shopify Spy reads public catalog data, follows robots.txt and throttles itself by default. You are responsible for how you use it, including following each site's terms and the laws that apply to you. Options that change how requests reach a site, such as `--proxy`, are opt-in for that reason. Product descriptions and images are often copyrighted; collecting them doesn't give you the right to republish them.
+Shopify Spy reads public catalog data, follows robots.txt and throttles itself by default. You are responsible for how you use it, including following each site's terms and the laws that apply to you. Options that change how requests reach a site, such as `--proxy` and `--impersonate`, are opt-in for that reason. Product descriptions and images are often copyrighted; collecting them doesn't give you the right to republish them.
 
 Shopify Spy is not affiliated with or endorsed by Shopify or any other platform it supports. If a site asks you to stop collecting data, please do. The software is provided as is under the MIT License.
 

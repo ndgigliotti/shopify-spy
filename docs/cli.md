@@ -53,7 +53,8 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 - `--concurrent INT`: concurrent requests per host (default: 16).
 - `--max-stores INT`: stores scraped at once (default: 16).
 - `--throttle / --no-throttle`: auto-throttle requests (default: yes). See [Rate limiting](troubleshooting.md#rate-limiting).
-- `--user-agent, -A TEXT`: a fixed User-Agent header, never swapped (default: a random browser user agent per store, swapped after a 403 or 429).
+- `--user-agent, -A TEXT`: a fixed User-Agent header, never swapped (default: a random browser user agent per store, swapped after a 403 or 429). Can't be combined with `--impersonate`.
+- `--impersonate BROWSER`: send requests with a browser's TLS fingerprint and headers (default: off; needs the `impersonate` extra). See [Impersonation](#impersonation).
 - `--proxy URL`: send every request through this proxy; see [Proxies](#proxies).
 - `--insecure`: don't verify TLS certificates.
 - `--ignore-robots, -i`: ignore robots.txt restrictions.
@@ -106,6 +107,7 @@ network:
   retries: 2               # Retry failed requests
   # user_agent: MyBot/1.0 (+https://example.com)  # Custom user agent
   # proxy: http://proxy.example.com:8080  # Fixed proxy (overrides HTTPS_PROXY)
+  # impersonate: chrome  # Browser TLS fingerprint and headers (needs the impersonate extra)
   respect_robots_txt: true
   verify_tls: true         # Verify TLS certificates (false = --insecure)
   max_concurrent_stores: 16  # Stores scraped at once
@@ -129,3 +131,16 @@ Requests honor the `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` envir
 - A proxy is for a fixed egress, such as a company network or another region. It is not a way around a store's rate limits, which in practice key on user agent or endpoint as much as on IP.
 
 A proxy's 407 (refused credentials) counts as [`no_response`](troubleshooting.md#store-statuses). In the library, a store that never answers while a proxy is in use gets a `hint` saying to check the proxy.
+
+## Impersonation
+
+`--impersonate BROWSER` (`network.impersonate` in the config file, `impersonate=` in the library) sends requests through [curl_cffi](https://github.com/lexiforest/curl_cffi) with a real browser's TLS and HTTP/2 fingerprint and headers. Some sites, often those behind Cloudflare, refuse clients that don't look like a browser, whatever their user agent says, and answer them with a 403. It needs the `impersonate` extra; see [Installation](install.md#impersonation).
+
+```bash
+spy scrape --impersonate chrome https://www.example.com
+```
+
+- It is off by default and never turns itself on: a store that answers 403 ends as [`forbidden`](troubleshooting.md#store-statuses), and no hint suggests this option.
+- `BROWSER` is any target the installed curl_cffi accepts, such as `chrome`, `firefox` or `safari`, which pick its newest profile for that browser, or a pinned profile such as `chrome150`. An unknown value is rejected before the run starts.
+- One profile serves the whole run. The profile sets the user agent, so `--user-agent` can't be combined with it, and a 403 or 429 retries with the same profile instead of swapping the user agent.
+- robots.txt, throttling, `Retry-After`, `--concurrent`, `--proxy` and `--insecure` work as they do without it.
