@@ -271,6 +271,39 @@ def test_unreadable_child_sitemap_is_partial():
     assert result.stores[0].status == "partial"
 
 
+def test_off_site_non_product_child_sitemap_keeps_the_listing_complete():
+    routes = {
+        SITEMAP: sitemapindex(f"{STORE}/product-sitemap.xml", "https://blog.test/post-sitemap.xml"),
+        **store(1, sitemap_url=f"{STORE}/product-sitemap.xml"),
+    }
+    items, result, _ = scrape_ld(routes)
+    assert len(items) == 1
+    assert result.stores[0].complete
+
+
+def test_unreadable_non_product_robots_sitemap_keeps_the_listing_complete():
+    routes = {
+        ROBOTS: (200, "Sitemap: /product-sitemap.xml\nSitemap: /news-sitemap.xml\n"),
+        f"{STORE}/news-sitemap.xml": (404, ""),
+        **store(1, sitemap_url=f"{STORE}/product-sitemap.xml"),
+    }
+    items, result, _ = scrape_ld(routes)
+    assert len(items) == 1
+    assert result.stores[0].status == "ok"
+    assert result.stores[0].complete
+
+
+def test_unreadable_product_robots_sitemap_is_partial():
+    routes = {
+        ROBOTS: (200, "Sitemap: /product-sitemap-1.xml\nSitemap: /product-sitemap-2.xml\n"),
+        f"{STORE}/product-sitemap-2.xml": (503, ""),
+        **store(1, sitemap_url=f"{STORE}/product-sitemap-1.xml"),
+    }
+    items, result, _ = scrape_ld(routes)
+    assert len(items) == 1
+    assert result.stores[0].status == "partial"
+
+
 def test_product_preference_across_robots_sitemaps():
     routes = {
         ROBOTS: (200, "Sitemap: /sitemap-pages.xml\nSitemap: /sitemap-products.xml\n"),

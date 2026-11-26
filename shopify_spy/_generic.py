@@ -108,8 +108,8 @@ class _Listing:
     """Page URLs from the store's sitemaps, on the store's site.
 
     ``roots`` are the top-level sitemaps that parsed; ``answered`` is whether any
-    candidate answered 2xx; ``complete`` becomes True once every sitemap read was
-    readable and no off-site URL was left out.
+    candidate answered 2xx; ``complete`` becomes True once every sitemap chosen for
+    pages was readable and no off-site URL among them was left out.
     """
 
     def __init__(self, ctx: StoreContext) -> None:
@@ -129,25 +129,27 @@ class _Listing:
         return False
 
     async def locs(self) -> AsyncIterator[str]:
-        found, complete = await self._top_level()
+        found, unread = await self._top_level()
         read = {doc.url: doc for doc in found if doc.root == "urlset"}
-        for source in _prefer_products(self._sources(found)):
-            async for loc in self._source_locs(source, read):
-                if self._on_site(loc):
-                    yield loc
+        # Products are chosen before the off-site and unread ones are counted, so a
+        # sitemap that wouldn't have been read doesn't make the listing incomplete
+        for source in _prefer_products(self._sources(found) + unread):
+            if source in unread:
+                self._unread += 1
+            elif self._on_site(source):
+                async for loc in self._source_locs(source, read):
+                    if self._on_site(loc):
+                        yield loc
         if self._dropped:
             logger.info("Sitemaps listed %d off-site links", self._dropped)
-        self.complete = complete and not self._unread and not self._dropped
+        self.complete = bool(found) and not self._unread and not self._dropped
 
     def _sources(self, found: list[_Sitemap]) -> list[str]:
         """The sitemaps to choose product sitemaps from: the top-level urlsets and
-        the indexes' on-site children, together."""
+        the indexes' children, together."""
         sources: list[str] = []
         for doc in found:
-            if doc.root == "urlset":
-                sources.append(doc.url)
-            else:
-                sources += [loc for loc in doc.locs if self._on_site(loc)]
+            sources += [doc.url] if doc.root == "urlset" else doc.locs
         return sources
 
     async def _source_locs(self, source: str, read: dict[str, _Sitemap]) -> AsyncIterator[str]:
@@ -162,9 +164,9 @@ class _Listing:
             yield loc
         self._unread += not walk.root_ok
 
-    async def _top_level(self) -> tuple[list[_Sitemap], bool]:
+    async def _top_level(self) -> tuple[list[_Sitemap], list[str]]:
         """The robots.txt-listed sitemaps that parse, else the first well-known one,
-        and whether every robots.txt-listed one did."""
+        and the robots.txt-listed ones that didn't."""
         session = self.ctx.session
         robots_url = f"{self.ctx.url}/robots.txt"
         rules = await session.registry.robots(self.ctx.url, session)
@@ -177,15 +179,21 @@ class _Listing:
             if url not in listed and self._on_site(url):
                 listed.append(url)
         self._dropped = 0  # an off-site Sitemap: line isn't a page left out
-        found = [doc for url in listed if (doc := await self._read(url)) is not None]
+        found: list[_Sitemap] = []
+        unread: list[str] = []
+        for url in listed:
+            if (doc := await self._read(url)) is None:
+                unread.append(url)
+            else:
+                found.append(doc)
         if found:
-            if len(found) < len(listed):
+            if unread:
                 logger.info("Some robots.txt sitemaps were unreadable for %s", self.ctx.url)
-            return found, len(found) == len(listed)
+            return found, unread
         for path in SITEMAP_PATHS:
             if (doc := await self._read(f"{self.ctx.url}{path}")) is not None:
-                return [doc], not listed
-        return [], False
+                return [doc], unread
+        return [], unread
 
     async def _read(self, url: str) -> _Sitemap | None:
         self.tried.append(url)
