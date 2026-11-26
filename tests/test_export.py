@@ -953,6 +953,17 @@ def test_bigcommerce_variant_without_a_price_takes_the_products():
     assert (row["price"], row["compare_at_price"]) == (Decimal("20"), Decimal("30"))
 
 
+def test_bigcommerce_variant_price_keeps_its_own_was_price():
+    from shopify_spy._flatten import flatten
+
+    variant = _bc_variant(101, "TEE-R-S", "Red", "S", 20)
+    variant["node"]["prices"] = {"price": _bc_money(20), "basePrice": None}
+    item = {**BIGCOMMERCE_PRODUCT, "variants": {"edges": [variant]}}
+    (row,) = flatten(item)
+    # The product's basePrice of 30 is another variant's price, not this one's "was"
+    assert (row["price"], row["compare_at_price"]) == (Decimal("20"), None)
+
+
 def test_csv_holds_all_four_platforms(tmp_path):
     path = tmp_path / "out.csv"
     write_items([WOO_PRODUCT, SHOPIFY_PRODUCT, MAGENTO_SIMPLE, BIGCOMMERCE_SIMPLE], path)

@@ -424,14 +424,17 @@ def _bigcommerce_offer(
 ) -> dict[str, Any]:
     """The price, SKU and stock columns of a BigCommerce product or variant.
 
-    A variant without its own price or "was" price takes the ``fallback`` product's.
+    A variant without its own price takes the ``fallback`` product's prices, its
+    "was" price included, so a variant's price is never compared with another's.
     The "was" price is ``basePrice``, else ``retailPrice`` (MSRP): the first one the
     item sells below.
     """
-    sources = [data.get("prices"), fallback.get("prices") if fallback else None]
+    prices = data.get("prices")
+    if bigcommerce_price(prices, "price")[0] is None and fallback is not None:
+        prices = fallback.get("prices")
 
     def money(key: str) -> Decimal | None:
-        return next((p for s in sources if (p := bigcommerce_price(s, key)[0]) is not None), None)
+        return bigcommerce_price(prices, key)[0]
 
     price = money("price")
     was = [m for m in (money("basePrice"), money("retailPrice")) if _below(price, m)]
