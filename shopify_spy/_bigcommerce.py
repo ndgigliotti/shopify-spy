@@ -123,10 +123,6 @@ def _claims(jwt: str) -> dict[str, Any] | None:
     return claims if isinstance(claims, dict) else None
 
 
-def _is_stencil(html: str) -> bool:
-    return _STENCIL.search(html) is not None
-
-
 async def run(ctx: StoreContext, emit: Emit) -> bool:
     """Emit every product from the store; return whether it got to the end.
 
@@ -139,7 +135,7 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
         return False  # diagnose() reports the homepage's status
     site = origin(response.url)  # past apex-to-www and http-to-https redirects
     if token is None:
-        if _is_stencil(response.text):
+        if _STENCIL.search(response.text):
             reason = " (a Stencil theme that doesn't expose one)"
         else:
             reason = (
