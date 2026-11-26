@@ -302,11 +302,6 @@ def _no_proxy_pattern(host: str) -> str:
     return f"all://*{host}"
 
 
-def _env_proxies() -> list[str]:
-    """The proxy URLs httpx would take from the environment."""
-    return [value for value in _env_proxy_mounts().values() if value is not None]
-
-
 @dataclass(frozen=True)
 class _URLPattern:
     """Mirrors httpx._utils.URLPattern, which orders and matches proxy mounts."""
@@ -414,7 +409,7 @@ def check_proxy_support(proxy: str | None) -> None:
         return
     import httpx
 
-    for value in _env_proxies():
+    for value in filter(None, _env_proxy_mounts().values()):
         # httpx parses these itself, so they aren't encoded for it (see
         # encode_proxy_userinfo); stricter than httpx, which would misroute them
         if encode_proxy_userinfo(value) != value:
