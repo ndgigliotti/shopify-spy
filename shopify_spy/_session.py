@@ -271,7 +271,7 @@ class StoreSession:
         retry: RetryPolicy,
         identity: IdentityPool,
         request_timeout: float,
-        store_url: str | None = None,
+        store_url: str,
     ) -> None:
         self.fetcher = fetcher
         self.registry = registry
@@ -339,9 +339,8 @@ class StoreSession:
         """Whether the store's own URL is non-public, which exempts its requests."""
         if self._store_is_private is None:
             url = self.store_url
-            self._store_is_private = url is not None and is_private_host(
-                hostname(url), await self.registry.resolved(url, self.request_timeout)
-            )
+            resolved = await self.registry.resolved(url, self.request_timeout)
+            self._store_is_private = is_private_host(hostname(url), resolved)
         return self._store_is_private
 
     async def _check_destination(self, url: str) -> None:
