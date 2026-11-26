@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- A `magento` platform (`--platform magento`, `platform="magento"`) for Magento
+  Open Source and Adobe Commerce 2.4 stores, read through the storefront GraphQL
+  API at `/graphql` without a token. Items are the GraphQL products plus `store`,
+  `platform`, `html_url` and `image_urls` (`MagentoProductItem`), and the unified
+  schema has a row per configurable variant. A store whose `/graphql` answers
+  without products reports `failed` with Magento's message
+  ([#89](https://github.com/ndgigliotti/shopify-spy/issues/89)).
+
 ### Changed
 
 - `--help` is plain text when stdout isn't a terminal, as when an agent or script

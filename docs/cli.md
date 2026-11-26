@@ -17,6 +17,9 @@ spy scrape https://www.example.com
 # Scrape a WooCommerce store
 spy scrape --platform woocommerce https://www.example.com
 
+# Scrape a Magento store
+spy scrape --platform magento https://www.example.com
+
 # Several stores, from arguments or a file
 spy scrape https://store1.com https://store2.com
 spy scrape --url-file stores.txt
@@ -35,7 +38,7 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 
 - `URL...`: one or more store URLs (optional with `--url-file`).
 - `--url-file, -f FILE`: a file of URLs, one per line; lines starting with `#` are comments.
-- `--platform, -p PLATFORM`: `shopify` (the default) or `woocommerce`.
+- `--platform, -p PLATFORM`: `shopify` (the default), `woocommerce` or `magento`.
 - `--products / --no-products`: scrape products (default: yes; Shopify only).
 - `--collections / --no-collections`: scrape collections (default: no; Shopify only).
 - `--images / --no-images`: download product images into `<output>/images/full/` (default: no). See [Images](output.md#images).
@@ -87,7 +90,7 @@ A config file looks like this, and `spy init` writes one to start from:
 ```yaml
 # shopify-spy.yaml
 scrape:
-  platform: shopify   # Platform: shopify, woocommerce
+  platform: shopify   # Platform: shopify, woocommerce, magento
   products: true      # Scrape product data (Shopify only)
   collections: false  # Scrape collection data (Shopify only)
   images: false       # Download product images

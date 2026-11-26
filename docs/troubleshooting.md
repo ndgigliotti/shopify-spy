@@ -19,7 +19,7 @@ Every store ends with a status, which the CLI lists when a store fails and the [
 | `unavailable (5xx)` | `unavailable` | The store answered 5xx server errors (often an outage or maintenance) and no successful response; retry later |
 | `TLS error` | `tls_error` | The certificate failed verification; try `--insecure` |
 | `no response` | `no_response` | The store never answered (DNS, connection or network failure), or a proxy refused the request (407); with a proxy in use, the library's `StoreResult.hint` says to check it (see [Proxies](cli.md#proxies)) |
-| `failed` | `error` | An unexpected error (details in the [log file](#log-files)) |
+| `failed` | `error` | An unexpected error, or a Magento store whose `/graphql` answered without products (the reason is in the [log file](#log-files) and `StoreResult.errors`; see [Magento stores](#magento-stores)) |
 | `stopped` | `stopped` | Interrupted (Ctrl-C) before producing anything |
 | `invalid URL` | `invalid_url` | The URL was malformed and skipped before scraping |
 
@@ -49,7 +49,7 @@ Each run except `--peek` writes a status file to `<output>/status/`, with each U
 }
 ```
 
-`finish_reason` summarizes the run: `finished`, `item_limit` (a store reached `--limit`), `bail` (a store hit the `--bail` timeout), `crawler_failed` (a store raised an unexpected error), or `shutdown` (interrupted). `items_written` is how many items the data file holds. A crash or a killed process writes no status file.
+`finish_reason` summarizes the run: `finished`, `item_limit` (a store reached `--limit`), `bail` (a store hit the `--bail` timeout), `crawler_failed` (a store failed with an error: unexpected, or a Magento answer without products), or `shutdown` (interrupted). `items_written` is how many items the data file holds. A crash or a killed process writes no status file.
 
 `output_error` is `null` unless writing the data file failed, in any format (such as a full disk or an unwritable directory). Then it holds the error, and the command exits with status 1.
 
@@ -81,3 +81,13 @@ Shopify's `products.json` stops paging at 25,000 items (100 pages of 250), so a 
 ## WooCommerce stores
 
 WooCommerce scraping uses the public Store API (`/wp-json/wc/store/v1/products`), built into WooCommerce since version 6.4 (2022). It needs no authentication. When it's unavailable, products come from the product pages' structured data instead (see [Items from product pages](output.md#items-from-product-pages)). Those items have no categories or tags, and variations only for products with up to 30 of them (WooCommerce's default). Stores whose pages have no schema.org `Product` data, or that broadly block crawlers, may not be scrapeable.
+
+## Magento stores
+
+Magento scraping uses the storefront GraphQL API at `/graphql`, which Magento Open Source and Adobe Commerce 2.4 serve without a token (the REST API needs one). The `products` query is sent as a GET, with the query in the URL, 100 products a page. Only the default store view is read, in its currency; a multi-store site's other views and currencies aren't.
+
+- **Page size:** some stores cap the page size. A GraphQL error about the page size on the first page makes the scraper retry it with the size the message names (or half), so these stores still finish `ok`.
+- **`failed` with a GraphQL message:** the store's `/graphql` answered the first page without products. The message from Magento is in the log file and `StoreResult.errors`. Common causes are a query complexity or depth limit the store set below Magento's defaults, a disabled GraphQL module, a store whose catalog search errors, or a site that isn't Magento (WordPress's WPGraphQL also answers at `/graphql`). When `/products.json` or `/wp-json/` answers like Shopify or WooCommerce, the hint names that platform.
+- **`blocked by robots.txt`:** robots.txt rules that match query strings, such as `Disallow: /*?`, also match the GraphQL URLs, since the query is in the URL; see the `robots_blocked` status above.
+- **`ok` with a warning about fewer products than `total_count`:** `total_count` can include products the storefront hides, such as out-of-stock ones. If some products also came back twice, the result order shifted between pages and products were likely missed; the store is then `partial`. Scraping it again may give a complete result.
+- **`403 Forbidden`:** sites behind a bot challenge (such as Cloudflare's) answer 403 to scripted requests, on `/graphql` as on every other page.
