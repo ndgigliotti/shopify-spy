@@ -15,7 +15,6 @@ import json
 import logging
 import re
 import ssl
-import sys
 import urllib.parse
 import urllib.request
 import warnings
@@ -599,8 +598,6 @@ class CurlCffiFetcher:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", CurlCffiWarning)
             acurl = AsyncCurl()
-        if sys.platform == "win32" and not self._curls:
-            logger.debug("curl_cffi runs a selector thread on this event loop")
         self._curls.append(acurl)
         return AsyncSession(
             async_curl=acurl,
