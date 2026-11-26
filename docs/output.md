@@ -142,7 +142,7 @@ The unified schema has one row per variant and a plain value in every cell (no e
 | `vendor` | `vendor` | brand names | |
 | `product_type` | `product_type` | | |
 | `categories` | | category names | category names |
-| `options` | option names, such as `Color, Size` | names of the attributes that define variations | `configurable_options` labels |
+| `options` | option names, such as `Color, Size` | names of the attributes that define variations | `configurable_options` labels (the attribute code for an option without one) |
 | `created_at`, `updated_at`, `published_at` | yes | | |
 | `description` | `body_html` as plain text | `description` as plain text | `description.html` as plain text |
 | `short_description` | | as plain text | `short_description.html` as plain text |

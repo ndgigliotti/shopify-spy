@@ -283,7 +283,10 @@ def _magento(item: dict[str, Any]) -> list[dict[str, Any]]:
     images = gallery_urls(item)
     variants = dicts(item.get("variants"))
     options = dicts(item.get("configurable_options"))
-    codes = [o.get("attribute_code") for o in options if o.get("attribute_code")]
+    # One entry per coded option, so option1-3 line up with the options column; the
+    # code names an option without a label
+    options = [o for o in options if o.get("attribute_code")]
+    codes = [o["attribute_code"] for o in options]
     product = {
         "platform": "magento",
         "kind": "product",
@@ -292,7 +295,7 @@ def _magento(item: dict[str, Any]) -> list[dict[str, Any]]:
         "handle": item.get("url_key"),
         "title": summary.title,
         "categories": _names(item.get("categories")),
-        "options": _join(o.get("label") for o in options),
+        "options": _join(o.get("label") or o["attribute_code"] for o in options),
         "description": _text(_html(item.get("description"))),
         "short_description": _text(_html(item.get("short_description"))),
         "html_url": item.get("html_url"),

@@ -778,6 +778,17 @@ def test_csv_magento_variant_without_price_keeps_product_price(tmp_path):
     assert (row["sku"], row["price"], row["compare_at_price"]) == ("TEE-R-S", "20", "30")
 
 
+def test_csv_magento_option_without_label_keeps_its_place(tmp_path):
+    options = [
+        {"attribute_code": "color", "label": None},
+        {"attribute_code": "size", "label": "Size"},
+    ]
+    path = tmp_path / "out.csv"
+    write_items([MAGENTO_CONFIGURABLE | {"configurable_options": options}], path)
+    row = read_csv(path)[0]
+    assert (row["options"], row["option1"], row["option2"]) == ("color, Size", "Red", "S")
+
+
 def test_csv_magento_simple_product_row(tmp_path):
     path = tmp_path / "out.csv"
     write_items([MAGENTO_SIMPLE], path)
