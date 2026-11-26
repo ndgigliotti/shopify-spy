@@ -207,6 +207,8 @@ class StoreContext:
     items: int = 0  # items emitted so far (maintained by the runner)
     item_limit: int | None = None  # the runner stops the store at this many items
     suggested_platform: str | None = None  # set when the store looks like another platform
+    # Why the store has no item yet, reported if --bail stops it
+    no_item_reason: str | None = None
 
     @property
     def items_left(self) -> int | None:
