@@ -23,11 +23,9 @@ import urllib.parse
 from typing import Any
 
 from shopify_spy._fetch import Response
-from shopify_spy._magento import _dig, _first_error
+from shopify_spy._magento import _dig, _first_error, _probe_others
 from shopify_spy._session import Emit, RequestFailed, RequestKind, StoreContext
-from shopify_spy._shopify import _looks_like_woocommerce
 from shopify_spy._utils import dicts, normalize_url, origin
-from shopify_spy._woocommerce import _looks_like_shopify
 
 __all__ = ["get_api_url", "run", "image_list"]
 
@@ -318,14 +316,6 @@ def _read(response: Response) -> tuple[dict[str, Any] | None, str | None]:
     if isinstance(products, dict) and isinstance(products.get("edges"), list):
         return products, error
     return None, error or "no products in the answer"
-
-
-async def _probe_others(ctx: StoreContext) -> None:
-    """Suggest another platform when a BigCommerce run's store answers like Shopify
-    or WooCommerce."""
-    await ctx.probe_platform("/products.json", _looks_like_shopify, "shopify")
-    if ctx.suggested_platform is None:
-        await ctx.probe_platform("/wp-json/", _looks_like_woocommerce, "woocommerce")
 
 
 def _item(node: dict[str, Any], site: str, images: bool) -> dict[str, Any]:
