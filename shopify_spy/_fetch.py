@@ -265,14 +265,6 @@ def validate_proxy(url: str) -> str:
     return url
 
 
-def _is_ip(host: str, kind: type[ipaddress.IPv4Address | ipaddress.IPv6Address]) -> bool:
-    try:
-        kind(host.split("/")[0])
-    except ValueError:
-        return False
-    return True
-
-
 def _env_proxy_mounts() -> dict[str, str | None]:
     """The proxy mounts httpx builds from the environment: pattern -> proxy, None to bypass.
 
@@ -294,9 +286,13 @@ def _env_proxy_mounts() -> dict[str, str | None]:
 def _no_proxy_pattern(host: str) -> str:
     if "://" in host:
         return host
-    if _is_ip(host, ipaddress.IPv4Address) or host.lower() == "localhost":
+    try:
+        version = ipaddress.ip_address(host.split("/")[0]).version
+    except ValueError:
+        version = None
+    if version == 4 or host.lower() == "localhost":
         return f"all://{host}"
-    if _is_ip(host, ipaddress.IPv6Address):
+    if version == 6:
         return f"all://[{host}]"
     # Unlike urllib's rule, ".example.com" bypasses subdomains but not example.com
     return f"all://*{host}"
