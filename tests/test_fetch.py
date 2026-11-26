@@ -7,6 +7,7 @@ import http.server
 import json
 import socket
 import ssl
+import sys
 import threading
 import time
 import zlib
@@ -35,9 +36,12 @@ from shopify_spy._fetch import (
     decompress,
     encode_proxy_userinfo,
     env_proxy_for,
+    impersonate_targets,
     load_corpus,
     redact_url,
+    require_curl_cffi,
     uses_proxy,
+    validate_impersonate,
     validate_proxy,
 )
 
@@ -417,6 +421,39 @@ def test_env_proxy_for_no_proxy_names(clean_proxy_env, no_proxy, url, expected):
 def test_env_proxy_for_unparseable_url_goes_direct(clean_proxy_env):
     clean_proxy_env.setenv("HTTPS_PROXY", GW)
     assert env_proxy_for("https://exa\x7fmple.com/") is None
+
+
+def test_require_curl_cffi_missing(monkeypatch):
+    monkeypatch.setitem(sys.modules, "curl_cffi", None)
+    with pytest.raises(ModuleNotFoundError, match=r"shopify-spy\[impersonate\]") as info:
+        require_curl_cffi("needs shopify-spy[impersonate]")
+    assert info.value.name == "curl_cffi"
+
+
+def test_require_curl_cffi_returns_module():
+    curl_cffi = pytest.importorskip("curl_cffi")
+    assert require_curl_cffi("unused") is curl_cffi
+
+
+def test_validate_impersonate_accepts_every_installed_target():
+    pytest.importorskip("curl_cffi")
+    from typing import get_args
+
+    from curl_cffi.requests.impersonate import BrowserTypeLiteral
+
+    targets = impersonate_targets()
+    assert targets == get_args(BrowserTypeLiteral)
+    assert {"chrome", "firefox", "safari", "edge", "chrome150", "tor145"} <= set(targets)
+    for target in targets:
+        assert validate_impersonate(target) == target
+
+
+@pytest.mark.parametrize("target", ["nosuchbrowser", "", "Chrome", "chrome "])
+def test_validate_impersonate_rejects(target):
+    pytest.importorskip("curl_cffi")
+    with pytest.raises(ValueError, match="chrome, firefox or safari") as info:
+        validate_impersonate(target)
+    assert repr(target) in str(info.value)
 
 
 def test_explicit_proxy_is_always_used(clean_proxy_env):

@@ -22,7 +22,7 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, Self
+from typing import TYPE_CHECKING, Any, Protocol, Self, get_args
 
 from shopify_spy._utils import canonicalize_url
 
@@ -361,6 +361,32 @@ def env_proxy_for(url: str) -> str | None:
 def uses_proxy(url: str, proxy: str | None) -> bool:
     """Whether a request to ``url`` goes through a proxy, explicit or from the environment."""
     return proxy is not None or env_proxy_for(url) is not None
+
+
+def require_curl_cffi(message: str) -> Any:
+    """Import and return curl_cffi, or raise ModuleNotFoundError with ``message``."""
+    try:
+        import curl_cffi
+    except ModuleNotFoundError as e:
+        raise ModuleNotFoundError(message, name="curl_cffi") from e
+    return curl_cffi
+
+
+def impersonate_targets() -> tuple[str, ...]:
+    """Every browser profile the installed curl_cffi can impersonate."""
+    from curl_cffi.requests.impersonate import BrowserTypeLiteral
+
+    return get_args(BrowserTypeLiteral)
+
+
+def validate_impersonate(target: str) -> str:
+    """Return ``target`` if the installed curl_cffi knows it, else raise ValueError."""
+    if target not in impersonate_targets():
+        raise ValueError(
+            f"unknown impersonate target {target!r}; use a curl_cffi browser such as "
+            "chrome, firefox or safari, or a pinned profile such as chrome150"
+        )
+    return target
 
 
 def check_proxy_support(proxy: str | None) -> None:
