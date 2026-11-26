@@ -451,8 +451,7 @@ def _jsonld_value(value: Any) -> str | None:
 
 def _jsonld_names(value: Any) -> str:
     """``brand`` or ``category``: a string, a dict with a ``name``, or a list of either."""
-    names = (v.get("name") if isinstance(v, dict) else v for v in jsonld.listify(value))
-    return _join(_unescape(jsonld.text(n)) for n in names)
+    return _join(_jsonld_value(v) for v in jsonld.listify(value))
 
 
 def _last_segment(value: Any) -> str | None:
