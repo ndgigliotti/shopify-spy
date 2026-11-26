@@ -1,6 +1,6 @@
 ---
 name: release
-description: Publish a shopify-spy release from master to PyPI and GitHub (version check, tag, build, smoke test, uv publish, GitHub release). Use when asked to release, publish or cut a version, after the PRs going into it are merged.
+description: Publish a shopify-spy release from master to PyPI and GitHub (version check, tag, build, smoke test, uv publish, GitHub release, nixpkgs follow-up). Use when asked to release, publish or cut a version, after the PRs going into it are merged.
 ---
 
 # Release shopify-spy
@@ -68,4 +68,33 @@ merged and master's CI has passed.
   `uvx --exclude-newer-package shopify-spy=false --refresh-package shopify-spy shopify-spy@X.Y.Z --version`
 - `gh release view vX.Y.Z` shows the notes.
 
-Report the PyPI and GitHub release links.
+Report the PyPI and GitHub release links now; step 6 can take days.
+
+## 6. Nixpkgs
+
+The nixpkgs package (`pkgs/development/python-modules/shopify-spy/default.nix`,
+with a CLI wrapper in `pkgs/by-name/sh/shopify-spy/package.nix`) lists its
+dependencies by hand. The nixpkgs update bot (r-ryantm) runs the default
+`nix-update` script: it bumps only the version and hash, builds the package with
+our tests, and opens a PR only if that build passes. A failed build leaves
+nothing but its log. Bump PRs touch `python-modules`, so the maintainer merge bot
+can't merge them; a nixpkgs committer has to.
+
+- Diff the dependencies since the last release:
+  `git diff vPREV vX.Y.Z -- pyproject.toml` (`dependencies`, optional
+  dependencies, the test group, `[build-system]`, and extras on a dependency like
+  `httpx[socks]`). A new top-level dependency or a raised bound fails nixpkgs'
+  runtime-deps check; a new extra on an existing dependency isn't checked, so
+  only our tests catch it.
+- No changes: wait for the bot's PR
+  (`gh pr list -R NixOS/nixpkgs --search shopify-spy`) and **(ask)** approve it
+  as maintainer. If none appears within a few days, read the newest log under
+  https://nixpkgs-update-logs.nixos.org/python3Packages.shopify-spy/
+- Changes: **(ask)** open the bump PR yourself with the dependency changes in
+  `default.nix`. It merges when a committer reviews it. If the bot's PR for the
+  same version is already open (an extra-only change can pass its build), don't
+  approve it; **(ask)** comment there linking yours so a committer closes it.
+- Close any shopify-spy issue tracking a nixpkgs change (like #71) once its PR
+  merges.
+
+Report the nixpkgs PR link once there is one.
