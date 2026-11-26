@@ -26,12 +26,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from shopify_spy import _jsonld as jsonld
+from shopify_spy import _magento as magento
 from shopify_spy import _sitemap as sitemap
 from shopify_spy._fetch import Response
 from shopify_spy._session import Emit, RequestFailed, StoreContext
-from shopify_spy._shopify import _looks_like_woocommerce
 from shopify_spy._utils import canonicalize_url, hostname
-from shopify_spy._woocommerce import GONE, _looks_like_shopify, _site
+from shopify_spy._woocommerce import GONE, _site
 
 __all__ = ["JsonLdError", "run"]
 
@@ -326,7 +326,7 @@ class _Pages:
         self.ctx.no_item_reason = self.reason()
         if self.counts.checked >= HINT_AFTER and self._probe is None and self._tg is not None:
             # Started early, so it can finish before --bail on a slow store
-            self._probe = self._tg.create_task(_probe_others(self.ctx))
+            self._probe = self._tg.create_task(magento.probe_others(self.ctx))
 
     async def _emit_item(self, item: dict[str, Any]) -> None:
         if not self.emitted:
@@ -340,7 +340,7 @@ class _Pages:
     async def probe_others(self) -> None:
         """Run the hint probe unless it already ran during the pages."""
         if self._probe is None:
-            await _probe_others(self.ctx)
+            await magento.probe_others(self.ctx)
 
     def reason(self) -> str:
         """Why the store has no item: the pages checked and their outcomes."""
@@ -360,13 +360,6 @@ class _Pages:
             f"product pages checked ({where})"
         )
         return f"{reason}: {', '.join(outcomes)}" if outcomes else reason
-
-
-async def _probe_others(ctx: StoreContext) -> None:
-    """Suggest another platform when the store answers like Shopify or WooCommerce."""
-    await ctx.probe_platform("/products.json", _looks_like_shopify, "shopify")
-    if ctx.suggested_platform is None:
-        await ctx.probe_platform("/wp-json/", _looks_like_woocommerce, "woocommerce")
 
 
 def _item(node: dict[str, Any], response: Response, images: bool) -> dict[str, Any]:
