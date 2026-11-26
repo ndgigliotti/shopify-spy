@@ -25,6 +25,7 @@ from typing import Any
 from shopify_spy import _jsonld as jsonld
 from shopify_spy import _sitemap as sitemap
 from shopify_spy._fetch import Response
+from shopify_spy._jsonld import OUT_OF_STOCK
 from shopify_spy._session import (
     FALLBACK,
     Emit,
@@ -64,7 +65,6 @@ FETCH_CONCURRENCY = 8  # product pages fetched at once per store (host slots sti
 PAGE_SOURCE = "product_page"
 GONE = frozenset({404, 410})
 MAX_PRICE_DECIMALS = 6
-OUT_OF_STOCK = frozenset({"OutOfStock", "SoldOut", "Discontinued"})
 
 
 def get_api_url(store_url: str, page: int = 1, by_id: bool = True) -> str:

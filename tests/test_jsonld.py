@@ -1,6 +1,6 @@
 import json
 
-from shopify_spy._jsonld import parse_product_page
+from shopify_spy._jsonld import OUT_OF_STOCK, parse_product_page
 
 STORE = "https://shop.example"
 PAGE = f"{STORE}/products/tee"
@@ -106,3 +106,10 @@ def test_no_fallback_still_prefers_the_page_match():
 def test_no_products():
     html = ld_page({"@type": "Organization"}, "{not json")
     assert parse(html, groups=True, fallback=False) is None
+
+
+def test_out_of_stock_still_importable_from_woocommerce():
+    from shopify_spy import _woocommerce
+
+    assert _woocommerce.OUT_OF_STOCK is OUT_OF_STOCK
+    assert {"OutOfStock", "SoldOut", "Discontinued"} == OUT_OF_STOCK

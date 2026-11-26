@@ -26,6 +26,7 @@ _BODY_CLASS = re.compile(r"""<body\b[^>]*?\bclass\s*=\s*(["'])(.*?)\1""", re.I |
 _POST_ID = re.compile(r"(?:^|\s)postid-(\d{1,18})(?:\s|$)")
 MAX_PRICE_DIGITS = 15  # digits before the decimal point
 LIST_PRICES = frozenset({"ListPrice", "StrikethroughPrice"})
+OUT_OF_STOCK = frozenset({"OutOfStock", "SoldOut", "Discontinued"})
 
 
 def _types(node: dict[str, Any]) -> list[Any]:
