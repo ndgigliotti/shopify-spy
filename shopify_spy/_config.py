@@ -60,6 +60,7 @@ class NetworkConfig(BaseModel):
     verify_tls: bool = True
     max_concurrent_stores: int | None = Field(default=16, ge=1)  # None = no limit
     proxy: str | None = None  # None = HTTPS_PROXY/HTTP_PROXY/ALL_PROXY from the environment
+    impersonate: str | None = None  # curl_cffi browser profile; checked when the run starts
 
     @field_validator("proxy")
     @classmethod
@@ -102,6 +103,7 @@ class Config(BaseModel):
             "verify_tls": self.network.verify_tls,
             "max_concurrent_stores": self.network.max_concurrent_stores,
             "proxy": self.network.proxy,
+            "impersonate": self.network.impersonate,
             "throttle": self.throttle.enabled,
             "throttle_start_delay": self.throttle.start_delay,
             "throttle_max_delay": self.throttle.max_delay,
@@ -140,6 +142,7 @@ network:
   retries: 2               # Retry failed requests
   # user_agent: MyBot/1.0 (+https://example.com)  # Custom user agent
   # proxy: http://proxy.example.com:8080  # Fixed proxy (overrides HTTPS_PROXY)
+  # impersonate: chrome  # Browser TLS fingerprint and headers (needs the impersonate extra)
   respect_robots_txt: true
   verify_tls: true         # Verify TLS certificates (false = --insecure)
   max_concurrent_stores: 16  # Stores scraped at once

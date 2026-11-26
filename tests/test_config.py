@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from shopify_spy._config import (
+    DEFAULT_CONFIG_YAML,
     Config,
     OutputConfig,
     ScrapeConfig,
@@ -182,6 +183,18 @@ def test_network_proxy_from_file(tmp_path):
 
 def test_network_proxy_defaults_to_none():
     assert Config().to_kwargs()["proxy"] is None
+
+
+def test_network_impersonate_from_file(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("network:\n  impersonate: chrome\n")
+    assert load_config_from_file(path).to_kwargs()["impersonate"] == "chrome"
+    assert Config().to_kwargs()["impersonate"] is None
+
+
+def test_default_config_template_has_commented_impersonate():
+    network = DEFAULT_CONFIG_YAML.split("\nnetwork:\n")[1].split("\n\n")[0]
+    assert "  # impersonate: chrome" in network
 
 
 @pytest.mark.parametrize(
