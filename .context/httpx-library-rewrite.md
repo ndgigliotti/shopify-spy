@@ -888,8 +888,8 @@ engine, robots.txt respected, one item per store:
 | **TLS verification failures** | **0 of 17** |
 
 D14 (verify by default) stands. Explicit blocking (403) was not seen; the main
-gap is headless stores, which supports prioritizing §12 item 5 over the libcurl transport
-transports.
+gap is headless stores, which supports prioritizing §12 item 5 over the libcurl
+transport.
 
 ## 9. Deviations needing sign-off
 
