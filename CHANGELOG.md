@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- `--help` is plain text when stdout isn't a terminal, as when an agent or script
+  reads it, even with `FORCE_COLOR`, `PY_COLORS` or `GITHUB_ACTIONS` set: no boxes,
+  no truncation and no wrapping. A terminal still gets Rich panels. Usage errors
+  follow the same rule. `-h` is an alias for `--help`
+  ([#75](https://github.com/ndgigliotti/shopify-spy/issues/75)).
+- `spy scrape --help` groups its options by task (what to scrape, output, network,
+  run control), gives each option's default, marks `--products` and `--collections`
+  as Shopify only, and ends with examples, where results go, the exit status and the
+  config files read without `--config`. `scripts/contract_test.py` reports a DIFF for
+  both `--help` outputs against 0.5.0 because of this.
+
+### Fixed
+
+- `help(spy.scrape)` and `help(spy.scrape_async)` no longer indent everything from
+  "Args" on a level deeper than the summary on Python 3.13+. They now give each
+  option's default and document `images_dir`.
+
 ## 0.5.0
 
 ### Added
