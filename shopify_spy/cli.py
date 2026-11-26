@@ -363,7 +363,7 @@ def scrape(
             "--user-agent",
             "-A",
             help="Fixed User-Agent header, never swapped (default: a random browser UA "
-            "per store, swapped after a 403 or 429).",
+            "per store, swapped after a 403 or 429). Can't be combined with --impersonate.",
             rich_help_panel=NETWORK_PANEL,
         ),
     ] = None,
