@@ -18,6 +18,7 @@ from shopify_spy._session import (
     PROBE,
     HostRegistry,
     RequestFailed,
+    RequestKind,
     ShutdownRequested,
     SingleFlight,
     StoreSession,
@@ -644,3 +645,63 @@ async def test_image_429s_do_not_count_as_rate_limits():
     await get(session, f"{STORE}/probe", kind=PROBE)
     await get(session, f"{STORE}/image", kind=IMAGE)
     assert session.stats.rate_limits == 1
+
+
+# --- POST -----------------------------------------------------------------------------
+
+
+async def post(session, url, body=b"{}", **kwargs):
+    async with asyncio.timeout(2):
+        return await session.post(url, body, headers={"X-Test": "1"}, **kwargs)
+
+
+async def test_post_sends_method_body_and_headers():
+    session, fetcher = make_session({("POST", f"{STORE}/graphql"): {"data": {}}})
+    response = await post(session, f"{STORE}/graphql", b'{"q": 1}')
+    assert response.status == 200
+    sent = fetcher.requests[-1]
+    assert (sent.method, sent.body, sent.headers["X-Test"]) == ("POST", b'{"q": 1}', "1")
+    assert session.stats.successes == 1
+
+
+async def test_post_is_not_deduped():
+    session, fetcher = make_session({("POST", f"{STORE}/graphql"): {"data": {}}})
+    await post(session, f"{STORE}/graphql")
+    await post(session, f"{STORE}/graphql")
+    assert fetcher.count(f"{STORE}/graphql", "POST") == 2
+    assert session.stats.duplicates == 0
+
+
+async def test_post_redirect_returned_not_followed():
+    session, fetcher = make_session(
+        {("POST", f"{STORE}/graphql"): (302, "", {"Location": "/login"})}
+    )
+    response = await post(session, f"{STORE}/graphql")
+    assert response.status == 302
+    assert fetcher.count(f"{STORE}/login") == 0
+    assert fetcher.count(f"{STORE}/login", "POST") == 0
+
+
+async def test_post_disallowed_by_robots_returns_none():
+    session, fetcher = make_session(
+        {f"{STORE}/robots.txt": (200, "User-agent: *\nDisallow: /graphql\n")}
+    )
+    assert await post(session, f"{STORE}/graphql") is None
+    assert session.stats.robots_disallowed == 1
+    assert fetcher.count(f"{STORE}/graphql", "POST") == 0
+
+
+async def test_post_503_is_retried():
+    session, fetcher = make_session({("POST", f"{STORE}/graphql"): Seq([(503, ""), {"data": {}}])})
+    response = await post(session, f"{STORE}/graphql")
+    assert response.status == 200
+    assert fetcher.count(f"{STORE}/graphql", "POST") == 2
+
+
+async def test_kind_without_success_counts_responses_not_successes():
+    session, _ = make_session({f"{STORE}/": (200, "<html>")}, robots=False)
+    kind = RequestKind("homepage", dedupe=False, success=False)
+    assert (await get(session, f"{STORE}/", kind=kind)).status == 200
+    assert session.stats.successes == 0
+    assert session.stats.responses == 1
+    assert session.stats.by_status == {200: 1}
