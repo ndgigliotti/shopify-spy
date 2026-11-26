@@ -9,22 +9,30 @@ one row each, sharing the product columns they have. WooCommerce products get a 
 per variation, with the variation's own price, SKU and stock when the scrape fetched
 its record (otherwise the product's). Magento products get a row per configurable
 variant, with the variant's own price, SKU and stock (a simple product gets one row
-with its own). JSONL, JSON and XML keep each platform's native item shape.
+with its own). JSON-LD products get a row per ``hasVariant`` Product, else per offer
+in a list of offers, else one row. JSONL, JSON and XML keep each platform's native
+item shape.
 """
 
 from __future__ import annotations
 
 import html
 import re
+import urllib.parse
 from collections.abc import Callable, Iterable
 from decimal import Decimal
 from html.parser import HTMLParser
 from typing import Any
 
+from shopify_spy import _jsonld as jsonld
+from shopify_spy._jsonld import OUT_OF_STOCK
 from shopify_spy._magento import gallery_urls
 from shopify_spy._summary import (
     html_url,
+    is_jsonld,
     is_magento,
+    jsonld_id,
+    jsonld_variants,
     magento_price,
     shopify_price_range,
     summarize,
@@ -108,14 +116,16 @@ def _builder(item: dict[str, Any]) -> Callable[[dict[str, Any]], list[dict[str, 
         return _shopify_collection
     if is_magento(item):
         return _magento
+    if is_jsonld(item):
+        return _jsonld
     if isinstance(item.get("prices"), dict) and "permalink" in item:
         return _woocommerce
     return None
 
 
 def item_platform(item: dict[str, Any]) -> str | None:
-    """``"shopify"``, ``"woocommerce"`` or ``"magento"``; None when it isn't a
-    scraped item."""
+    """``"shopify"``, ``"woocommerce"``, ``"magento"`` or ``"jsonld"``; None when it
+    isn't a scraped item."""
     builder = _builder(item)
     return _PLATFORMS.get(builder) if builder else None
 
@@ -349,6 +359,120 @@ def _magento_offer(item: dict[str, Any], fallback: dict[str, Any] | None = None)
     return offer
 
 
+def _jsonld(item: dict[str, Any]) -> list[dict[str, Any]]:
+    summary = summarize(item)
+    images = jsonld.image_urls(item.get("image"))
+    variants = jsonld_variants(item)
+    offers = dicts(item.get("offers"))
+    # Without variants, a list of offers is the variants: one per size, say
+    per_offer = not variants and len(offers) > 1
+    names = [n for v in _listify(item.get("variesBy")) if (n := _last_segment(v))]
+    product = {
+        "platform": "jsonld",
+        "kind": "product",
+        "store": item.get("store"),
+        "id": summary.id,
+        "handle": _handle(item.get("html_url")),
+        "title": summary.title,
+        "vendor": _jsonld_names(item.get("brand")),
+        "categories": _jsonld_names(item.get("category")),
+        "options": _join(names) if variants else None,
+        "description": _text(item.get("description")),
+        "html_url": item.get("html_url"),
+        "image_url": images[0] if images else None,
+        "image_count": len(images),
+        "currency": summary.currency,
+        "min_price": summary.min_price,
+        "max_price": summary.max_price,
+        "variant_count": len(offers) if per_offer else len(variants),
+        "sku": jsonld.text(item.get("sku")),
+        **_jsonld_offer(item.get("offers")),
+    } | _image_paths(item)
+    if per_offer:
+        return [
+            product
+            | {
+                "variant_id": jsonld_id(offer, ("sku", "@id", "url")),
+                "variant_title": _unescape(jsonld.text(offer.get("name"))),
+                "sku": jsonld.text(offer.get("sku")),
+            }
+            | _jsonld_offer(offer)
+            for offer in offers
+        ]
+    return [_jsonld_variant(product, v, names) for v in variants] or [product]
+
+
+def _jsonld_variant(
+    product: dict[str, Any], variant: dict[str, Any], names: list[str]
+) -> dict[str, Any]:
+    """A ``hasVariant`` Product's row; option1-3 follow ``variesBy``."""
+    values = [_jsonld_value(variant.get(name)) for name in names]
+    images = jsonld.image_urls(variant.get("image"))
+    title = " / ".join(v for v in values if v) or _unescape(jsonld.text(variant.get("name")))
+    return (
+        product
+        | {
+            "variant_id": jsonld_id(variant, ("productID", "sku", "@id")),
+            "variant_title": title,
+            "sku": jsonld.text(variant.get("sku")),
+            "variant_image_url": images[0] if images else None,
+        }
+        | {f"option{i + 1}": v for i, v in enumerate(values[:3])}
+        | _jsonld_offer(variant.get("offers"), fallback=product)
+    )
+
+
+def _jsonld_offer(value: Any, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The price and stock columns of JSON-LD ``offers``.
+
+    Without a price, a variant keeps the product's ``fallback`` price and compare-at
+    price, as a Magento variant does."""
+    found = jsonld.offers(value)
+    amounts = found.current or found.bounds
+    price = min(amounts) if amounts else None
+    listed = max(found.listed) if found.listed else None
+    offer = {
+        "price": price,
+        "compare_at_price": listed if _below(price, listed) else None,
+        "available": found.availability not in OUT_OF_STOCK if found.availability else None,
+    }
+    if price is None and fallback is not None:
+        offer["price"] = fallback.get("price")
+        offer["compare_at_price"] = fallback.get("compare_at_price")
+    return offer
+
+
+def _jsonld_value(value: Any) -> str | None:
+    """A variant's value for a ``variesBy`` property: text, or a dict's ``name``."""
+    if isinstance(value, dict):
+        value = value.get("name")
+    return _unescape(jsonld.text(value))
+
+
+def _jsonld_names(value: Any) -> str:
+    """``brand`` or ``category``: a string, a dict with a ``name``, or a list of either."""
+    names = (v.get("name") if isinstance(v, dict) else v for v in _listify(value))
+    return _join(_unescape(jsonld.text(n)) for n in names)
+
+
+def _last_segment(value: Any) -> str | None:
+    """``https://schema.org/size`` -> ``size``."""
+    if not isinstance(value, str):
+        return None
+    return value.rstrip("/").rsplit("/", 1)[-1] or None
+
+
+def _handle(url: Any) -> str | None:
+    """The page's slug: the last segment of its path."""
+    if not isinstance(url, str):
+        return None
+    return urllib.parse.unquote(_last_segment(urllib.parse.urlsplit(url).path) or "") or None
+
+
+def _listify(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else [value]
+
+
 def _html(value: Any) -> Any:
     """The ``html`` of a Magento ``ComplexTextValue``."""
     return value.get("html") if isinstance(value, dict) else None
@@ -359,6 +483,7 @@ _PLATFORMS: dict[Callable[[dict[str, Any]], list[dict[str, Any]]], str] = {
     _shopify_collection: "shopify",
     _woocommerce: "woocommerce",
     _magento: "magento",
+    _jsonld: "jsonld",
 }
 
 

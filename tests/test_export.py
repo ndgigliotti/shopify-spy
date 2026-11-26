@@ -812,3 +812,208 @@ def test_item_platform_names_magento():
     assert item_platform(WOO_PRODUCT) == "woocommerce"
     assert item_platform(SHOPIFY_PRODUCT) == "shopify"
     assert item_platform({"platform": "magento", "name": "x"}) is None
+
+
+JSONLD_PRODUCT = {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    "name": "Felt Hat",
+    "sku": "HAT-1",
+    "brand": {"@type": "Brand", "name": "Acme"},
+    "category": "Apparel > Hats",
+    "description": "<p>Warm <b>felt</b></p>",
+    "image": ["https://j.test/hat.jpg", {"@type": "ImageObject", "url": "https://j.test/2.jpg"}],
+    "offers": {
+        "@type": "Offer",
+        "price": "20.00",
+        "priceCurrency": "USD",
+        "availability": "https://schema.org/InStock",
+        "priceSpecification": {"priceType": "https://schema.org/ListPrice", "price": "30.00"},
+    },
+    "store": "j.test",
+    "platform": "jsonld",
+    "html_url": "https://j.test/products/felt%20hat",
+    "image_urls": [],
+}
+
+
+def _jl_variant(sku, size, price, availability="InStock"):
+    return {
+        "@type": "Product",
+        "sku": sku,
+        "name": f"Tee {size}",
+        "size": size,
+        "image": f"https://j.test/{sku}.jpg",
+        "offers": {"@type": "Offer", "price": price, "availability": availability},
+    }
+
+
+JSONLD_GROUP = {
+    "@context": "https://schema.org",
+    "@type": "ProductGroup",
+    "name": "Tee",
+    "productGroupID": "TEE",
+    "variesBy": ["https://schema.org/size"],
+    "hasVariant": [
+        _jl_variant("TEE-S", "S", "10", "OutOfStock"),
+        _jl_variant("TEE-L", "L", "12"),
+    ],
+    "store": "j.test",
+    "platform": "jsonld",
+    "html_url": "https://j.test/tee/",
+    "image_urls": [],
+}
+
+
+def test_csv_jsonld_product_row(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([JSONLD_PRODUCT], path)
+    (row,) = read_csv(path)
+    assert (row["platform"], row["kind"], row["store"]) == ("jsonld", "product", "j.test")
+    assert (row["id"], row["handle"], row["title"]) == ("HAT-1", "felt hat", "Felt Hat")
+    assert (row["sku"], row["vendor"], row["categories"]) == ("HAT-1", "Acme", "Apparel > Hats")
+    assert row["description"] == "Warm felt"
+    assert row["html_url"] == "https://j.test/products/felt%20hat"
+    assert (row["image_url"], row["image_count"]) == ("https://j.test/hat.jpg", "2")
+    assert (row["currency"], row["min_price"], row["max_price"]) == ("USD", "20.00", "20.00")
+    assert (row["price"], row["compare_at_price"], row["available"]) == ("20.00", "30.00", "true")
+    assert (row["variant_count"], row["variant_id"], row["options"]) == ("0", "", "")
+
+
+def test_csv_jsonld_compare_at_price_only_above_price(tmp_path):
+    offers = JSONLD_PRODUCT["offers"] | {
+        "priceSpecification": {"priceType": "ListPrice", "price": "20"}
+    }
+    path = tmp_path / "out.csv"
+    write_items([JSONLD_PRODUCT | {"offers": offers}], path)
+    (row,) = read_csv(path)
+    assert (row["price"], row["compare_at_price"]) == ("20.00", "")
+
+
+def test_csv_jsonld_product_group_rows(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([JSONLD_GROUP], path)
+    rows = read_csv(path)
+    assert [(r["variant_id"], r["sku"]) for r in rows] == [("TEE-S", "TEE-S"), ("TEE-L", "TEE-L")]
+    assert [(r["options"], r["option1"], r["variant_title"]) for r in rows] == [
+        ("size", "S", "S"),
+        ("size", "L", "L"),
+    ]
+    assert [(r["price"], r["available"]) for r in rows] == [("10", "false"), ("12", "true")]
+    assert rows[0]["variant_image_url"] == "https://j.test/TEE-S.jpg"
+    row = rows[0]
+    assert (row["id"], row["handle"], row["title"]) == ("TEE", "tee", "Tee")
+    assert (row["min_price"], row["max_price"], row["variant_count"]) == ("10", "12", "2")
+
+
+def test_csv_jsonld_variant_without_size_is_titled_by_name(tmp_path):
+    variant = _jl_variant("TEE-S", "S", "10")
+    del variant["size"]
+    path = tmp_path / "out.csv"
+    write_items([JSONLD_GROUP | {"hasVariant": [variant]}], path)
+    (row,) = read_csv(path)
+    assert (row["option1"], row["variant_title"]) == ("", "Tee S")
+
+
+def test_csv_jsonld_variant_value_from_a_dict(tmp_path):
+    variant = _jl_variant("TEE-S", "S", "10") | {"color": {"@type": "Color", "name": "Red"}}
+    path = tmp_path / "out.csv"
+    group = JSONLD_GROUP | {
+        "variesBy": ["https://schema.org/color", "size"],
+        "hasVariant": [variant],
+    }
+    write_items([group], path)
+    (row,) = read_csv(path)
+    assert (row["options"], row["option1"], row["option2"]) == ("color, size", "Red", "S")
+    assert row["variant_title"] == "Red / S"
+
+
+def test_csv_jsonld_variant_without_price_keeps_product_price(tmp_path):
+    variant = _jl_variant("TEE-S", "S", "10")
+    del variant["offers"]
+    path = tmp_path / "out.csv"
+    write_items(
+        [JSONLD_GROUP | {"offers": JSONLD_PRODUCT["offers"], "hasVariant": [variant]}], path
+    )
+    (row,) = read_csv(path)
+    assert (row["sku"], row["price"], row["compare_at_price"]) == ("TEE-S", "20.00", "30.00")
+
+
+def test_csv_jsonld_offers_list_rows(tmp_path):
+    offers = [
+        {
+            "@type": "Offer",
+            "sku": "HAT-S",
+            "name": "Small",
+            "price": "18",
+            "availability": "InStock",
+        },
+        {
+            "@type": "Offer",
+            "sku": "HAT-L",
+            "name": "Large",
+            "price": "22",
+            "availability": "SoldOut",
+        },
+    ]
+    path = tmp_path / "out.csv"
+    write_items([JSONLD_PRODUCT | {"offers": offers}], path)
+    rows = read_csv(path)
+    assert [(r["variant_id"], r["variant_title"], r["sku"]) for r in rows] == [
+        ("HAT-S", "Small", "HAT-S"),
+        ("HAT-L", "Large", "HAT-L"),
+    ]
+    assert [(r["price"], r["available"]) for r in rows] == [("18", "true"), ("22", "false")]
+    assert (rows[0]["min_price"], rows[0]["max_price"], rows[0]["variant_count"]) == (
+        "18",
+        "22",
+        "2",
+    )
+
+
+def test_csv_jsonld_single_offer_in_a_list_gives_one_row(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([JSONLD_PRODUCT | {"offers": [JSONLD_PRODUCT["offers"]]}], path)
+    (row,) = read_csv(path)
+    assert (row["sku"], row["price"], row["variant_id"]) == ("HAT-1", "20.00", "")
+
+
+def test_csv_jsonld_aggregate_offer_row(tmp_path):
+    offers = {"@type": "AggregateOffer", "lowPrice": "5", "highPrice": "9", "priceCurrency": "GBP"}
+    path = tmp_path / "out.csv"
+    write_items([JSONLD_PRODUCT | {"offers": offers}], path)
+    (row,) = read_csv(path)
+    assert (row["currency"], row["min_price"], row["max_price"]) == ("GBP", "5", "9")
+    assert (row["price"], row["compare_at_price"], row["available"]) == ("5", "", "")
+
+
+@pytest.mark.parametrize(
+    ("brand", "category", "vendor", "categories"),
+    [
+        ("Acme", ["Hats", "Winter"], "Acme", "Hats, Winter"),
+        (["Acme", {"name": "Beta"}], [{"name": "Hats"}, "Winter"], "Acme, Beta", "Hats, Winter"),
+        ({"@type": "Brand"}, None, "", ""),
+    ],
+)
+def test_csv_jsonld_brand_and_category_shapes(tmp_path, brand, category, vendor, categories):
+    path = tmp_path / "out.csv"
+    write_items([JSONLD_PRODUCT | {"brand": brand, "category": category}], path)
+    (row,) = read_csv(path)
+    assert (row["vendor"], row["categories"]) == (vendor, categories)
+
+
+def test_csv_holds_jsonld_beside_other_platforms(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([MAGENTO_SIMPLE, JSONLD_GROUP, WOO_PRODUCT, JSONLD_PRODUCT], path)
+    rows = read_csv(path)
+    assert [r["platform"] for r in rows] == ["magento"] + ["jsonld"] * 2 + ["woocommerce"] * 2 + [
+        "jsonld"
+    ]
+
+
+def test_item_platform_names_jsonld():
+    from shopify_spy._flatten import item_platform
+
+    assert item_platform(JSONLD_PRODUCT) == "jsonld"
+    assert item_platform(JSONLD_GROUP) == "jsonld"
+    assert item_platform({"platform": "jsonld", "name": "x"}) is None
