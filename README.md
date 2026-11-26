@@ -17,8 +17,6 @@
 
 Shopify Spy is a command-line tool and Python library for scraping product and collection data from ecommerce stores. It supports Shopify and WooCommerce stores out of the box, using their public JSON endpoints, so it needs no API keys or store access. It's designed to be driven by AI agents as much as by people: coding agents such as Claude Code, Codex and GitHub Copilot, and personal agents such as Hermes and OpenClaw, or any agent that can run a shell command or a Python script.
 
-To find Shopify stores to scrape, try searching Google with `site:myshopify.com`.
-
 ## Installation
 
 ```bash
