@@ -15,8 +15,10 @@ import json
 import logging
 import re
 import ssl
+import sys
 import urllib.parse
 import urllib.request
+import warnings
 import zlib
 from collections import defaultdict
 from collections.abc import Callable, Mapping
@@ -68,7 +70,9 @@ class Response:
     status: int
     headers: Mapping[str, str]
     body: bytes
-    latency: float = 0.0  # seconds to response headers
+    # Seconds to response headers (CurlCffiFetcher: to the first body byte, or to
+    # the complete response when there is no body; curl_cffi has no headers hook)
+    latency: float = 0.0
 
     @property
     def text(self) -> str:
@@ -524,6 +528,206 @@ class HttpxFetcher:
             body=body,
             latency=latency,
         )
+
+
+# httpx's default max_connections; curl_cffi's own default of 10 would queue
+# requests the run's concurrency limits allow
+MAX_CURL_CLIENTS = 100
+
+# curl_cffi warns on every https:// request through an https:// proxy; ours are
+# deliberate, and its advice (use http://) would change how the proxy is reached
+_HTTPS_PROXY_WARNING = "Make sure you are using https over https proxy"
+
+
+class _UndecodableBody(Exception):
+    """libcurl refused a Content-Encoding before writing any body."""
+
+
+def _socks_on_proxy(proxy: str) -> str:
+    """``socks5://`` as ``socks5h://``: httpx resolves names on the proxy for both."""
+    scheme, sep, rest = proxy.partition("://")
+    return f"socks5h://{rest}" if sep and scheme.lower() == "socks5" else proxy
+
+
+def _scrub(message: str, proxy: str | None) -> str:
+    return message.replace(proxy, redact_url(proxy)) if proxy else message
+
+
+class CurlCffiFetcher:
+    """Transport that presents one browser profile's TLS and HTTP/2 fingerprint and
+    headers, through curl_cffi (the ``impersonate`` extra). One hop per fetch.
+
+    It keeps HttpxFetcher's contract: no redirects followed, no cookies kept, the
+    MAX_SIZE cap, the same errors, a total deadline on the loop clock, and proxies
+    chosen by httpx's rules (an explicit ``proxy`` replaces the environment's).
+    The profile brings its own user agent and headers, so ``Request.identity`` is
+    never applied; ``Request.headers`` override the profile's.
+    """
+
+    capabilities = FetcherCapabilities(applies_identity_headers=False, can_impersonate=True)
+
+    def __init__(self, impersonate: str, *, verify: bool = True, proxy: str | None = None) -> None:
+        self._impersonate = impersonate
+        self._verify = verify
+        self._proxy = None if proxy is None else encode_proxy_userinfo(proxy)
+        self._session: Any = None
+        self._raw: Any = None  # for bodies libcurl can't decode, opened on first use
+        self._curls: list[Any] = []
+
+    async def __aenter__(self) -> Self:
+        from curl_cffi.utils import CurlCffiWarning
+
+        # Installed on every entry: a caller's catch_warnings may have reset the
+        # filters since. Never removed, since that could drop someone else's entry
+        warnings.filterwarnings("ignore", message=_HTTPS_PROXY_WARNING, category=CurlCffiWarning)
+        self._session = self._open_session()
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        for session in (self._session, self._raw):
+            if session is not None:
+                await session.close()
+        for acurl in self._curls:  # a session doesn't close an AsyncCurl it was given
+            await acurl.close()
+        self._session = self._raw = None
+        self._curls = []
+
+    def _open_session(self, curl_options: Mapping[Any, Any] | None = None) -> Any:
+        from curl_cffi import AsyncCurl, CurlOpt
+        from curl_cffi.requests import AsyncSession
+        from curl_cffi.utils import CurlCffiWarning
+
+        # On a Windows Proactor loop curl_cffi warns that it runs select() in a
+        # thread and to change the loop policy, which scrape() and the CLI own; the
+        # thread hands control back to the loop, so callbacks stay on it
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", CurlCffiWarning)
+            acurl = AsyncCurl()
+        if sys.platform == "win32" and not self._curls:
+            logger.debug("curl_cffi runs a selector thread on this event loop")
+        self._curls.append(acurl)
+        return AsyncSession(
+            async_curl=acurl,
+            max_clients=MAX_CURL_CLIENTS,
+            impersonate=self._impersonate,
+            verify=self._verify,
+            discard_cookies=True,  # the session is shared by every store in a run
+            allow_redirects=False,
+            # Every request sets its proxy, empty for direct, so libcurl never reads
+            # the proxy environment; NOPROXY "" stops it applying NO_PROXY to that
+            curl_options={CurlOpt.NOPROXY: "", **(curl_options or {})},
+        )
+
+    def _raw_session(self) -> Any:
+        from curl_cffi import CurlOpt
+
+        if self._raw is None:
+            self._raw = self._open_session({CurlOpt.HTTP_CONTENT_DECODING: 0})
+        return self._raw
+
+    async def fetch(self, request: Request) -> Response:
+        import httpx
+
+        assert self._session is not None, "use CurlCffiFetcher as an async context manager"
+        try:
+            # httpx's rule, so both fetchers refuse the same URLs; curl_cffi would
+            # percent-encode control characters and send them
+            httpx.URL(request.url)
+        except (httpx.InvalidURL, UnicodeError, ValueError) as exc:
+            raise FetchInvalidURL(f"{request.url!r}: {exc}") from exc
+        proxy = self._proxy or env_proxy_for(request.url)
+        if proxy:
+            proxy = _socks_on_proxy(proxy)
+        # proxies={"all": ""} sets an empty CURLOPT_PROXY: direct, whatever the
+        # environment says (proxy="" would count as unset)
+        route: dict[str, Any] = {"proxy": proxy} if proxy else {"proxies": {"all": ""}}
+        try:
+            # timeout=None on the request: libcurl's timers run on the wall clock,
+            # which keeps going while scrape() is paused
+            async with asyncio.timeout(request.timeout):
+                try:
+                    return await self._attempt(self._session, request, route, proxy)
+                except _UndecodableBody:
+                    # Every request the adapters make is a GET, so resending is safe
+                    return await self._attempt(self._raw_session(), request, route, proxy)
+        except TimeoutError as exc:
+            raise FetchTimeout(f"no complete response within {request.timeout}s") from exc
+
+    async def _attempt(
+        self, session: Any, request: Request, route: dict[str, Any], proxy: str | None
+    ) -> Response:
+        from curl_cffi.curl import CURL_WRITEFUNC_ERROR
+        from curl_cffi.requests.exceptions import RequestException
+
+        raw = session is self._raw
+        loop = asyncio.get_running_loop()
+        chunks: list[bytes] = []
+        size = 0
+        first_byte: float | None = None
+
+        def on_chunk(chunk: bytes) -> int:
+            nonlocal size, first_byte
+            if first_byte is None:
+                first_byte = loop.time()
+            size += len(chunk)
+            if size > MAX_SIZE:
+                return CURL_WRITEFUNC_ERROR  # aborts the transfer at once
+            chunks.append(chunk)
+            return len(chunk)
+
+        start = loop.time()  # the loop clock excludes time the sync API is paused
+        try:
+            resp = await session.request(
+                request.method,
+                request.url,
+                headers=dict(request.headers) or None,
+                data=request.body,
+                content_callback=on_chunk,
+                allow_redirects=False,
+                timeout=None,
+                **route,
+            )
+        except RequestException as exc:
+            if size > MAX_SIZE:
+                raise FetchTooLarge(f"response exceeded {MAX_SIZE} bytes") from exc
+            raise _map_curl_error(
+                exc, received=first_byte is not None, raw=raw, proxy=proxy
+            ) from exc
+        latency = (loop.time() if first_byte is None else first_byte) - start
+        body = b"".join(chunks)
+        headers = {k.lower(): v for k, v in resp.headers.items()}
+        if raw:
+            try:
+                body = _decode(body, headers.get("content-encoding", ""))
+            except zlib.error as exc:
+                raise FetchIncomplete(f"corrupt compressed body: {exc}") from exc
+        if len(body) > WARN_SIZE:
+            logger.warning("Large response (%d bytes) from %s", len(body), request.url)
+        return Response(
+            url=str(resp.url), status=resp.status_code, headers=headers, body=body, latency=latency
+        )
+
+
+def _map_curl_error(exc: Any, *, received: bool, raw: bool, proxy: str | None) -> Exception:
+    """The Fetch* error (or _UndecodableBody) for a curl_cffi RequestException."""
+    from curl_cffi.const import CurlECode
+    from curl_cffi.requests import exceptions as cx
+
+    message = _scrub(str(exc) or repr(exc), proxy)
+    code = getattr(exc, "code", None)
+    if isinstance(exc, cx.Timeout):
+        return FetchTimeout(message)
+    if isinstance(exc, cx.CertificateVerifyError):
+        return FetchTLSError(message)
+    if isinstance(exc, (cx.InvalidURL, cx.InvalidSchema, cx.MissingSchema)):
+        return FetchInvalidURL(message)
+    if code == CurlECode.BAD_CONTENT_ENCODING and not received:
+        return FetchIncomplete(message) if raw else _UndecodableBody(message)
+    # A failure once the body has started is a body-read error, as in HttpxFetcher
+    incomplete = (cx.IncompleteRead, cx.ChunkedEncodingError, cx.ContentDecodingError)
+    if received or code == CurlECode.PARTIAL_FILE or isinstance(exc, incomplete):
+        return FetchIncomplete(message)
+    return FetchConnectionError(message)
 
 
 # Transports for tests and for replaying recorded traffic
