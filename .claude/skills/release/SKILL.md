@@ -94,7 +94,8 @@ can't merge them; a nixpkgs committer has to.
   as maintainer. If none appears within a few days, read the newest log under
   https://nixpkgs-update-logs.nixos.org/python3Packages.shopify-spy/
 - Changes: open the bump PR yourself with the dependency changes in
-  `default.nix`, following "Your own bump PR" below. It merges when a committer
+  `default.nix`, following "Your own bump PR" below
+  and [nixpkgs.md](nixpkgs.md). It merges when a committer
   reviews it. If the bot's PR for the same version is already open (an
   extra-only change can pass its build), don't approve it; **(ask)** comment
   there linking yours so a committer closes it.
@@ -103,49 +104,8 @@ can't merge them; a nixpkgs committer has to.
 
 ### Your own bump PR
 
-Nixpkgs' [automation/AI policy](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md#automationai-policy)
-bans LLM prose in PR descriptions, comments, reviews and commit bodies, and
-requires AI use to be disclosed. Its reviewers enforce it, and they also expect
-the PR template kept intact. So you prepare the change and the facts, and the
+Read [nixpkgs.md](nixpkgs.md) first and follow it: it has the steps and every
+nixpkgs rule that applies, including the automation/AI policy, under which the
 user writes every sentence that nixpkgs reads.
-
-- **Branch:** a `shopify-spy-X.Y.Z` branch in the user's nixpkgs checkout, from
-  current master, pushed to their fork.
-- **Change:** version, hash (`nix flake prefetch github:ndgigliotti/shopify-spy/vX.Y.Z`,
-  or let a build report it) and the dependency changes, formatted with nixfmt.
-- **Build:** `nix-build -A python3Packages.shopify-spy -A shopify-spy`, plus
-  `python312Packages.shopify-spy` and every other Python nixpkgs ships that
-  we support, since nixpkgs-review covers only the default ones. Then run
-  `shopify-spy --version` from the result.
-- **Commit:** the subject `python3Packages.shopify-spy: OLD -> X.Y.Z` and a body
-  of trailers only:
-
-  ```
-  Changelog: https://github.com/ndgigliotti/shopify-spy/blob/vX.Y.Z/CHANGELOG.md
-  Assisted-by: Claude Code (<model name and version>)
-  ```
-
-  The policy exempts the subject and trailers; any explanation in the body is
-  the user's to write. `Co-authored-by:` doesn't count as disclosure.
-- **PR body:** write the current template to a file for the user to edit:
-  `gh api repos/NixOS/nixpkgs/contents/.github/PULL_REQUEST_TEMPLATE.md -H 'Accept: application/vnd.github.raw' > ~/Projects/nixpkgs-pr-body.md`.
-  Fill in only what isn't prose:
-  - the changelog link on the first line;
-  - in place of the template's summary comment, an HTML comment listing the facts
-    to cover (the version, each dependency change and why, notable fixes) and
-    a reminder to disclose the AI use (for example, "This change has been
-    prepared with Claude Code"). Facts as notes, not sentences: the policy
-    covers LLM output "verbatim or edited", so never draft the summary;
-  - the "Built on platform" and "Tested" boxes that are true. Leave the
-    CONTRIBUTING and automation/AI policy boxes for the user to tick.
-
-  Ask the user to write the summary (`micro ~/Projects/nixpkgs-pr-body.md`;
-  `wl-copy` it if they ask) and to read the diff, which they're accountable for.
-  Use their text as written.
-- **(ask)** Open the PR with their body, as a draft. Run
-  `nixpkgs-review pr N --no-shell --print-result` locally (it posts nothing),
-  tick its box in the body, and **(ask)** mark the PR ready.
-- **Reviews:** every reply on nixpkgs is the user's own words; post them as
-  written. Re-request a review after addressing it.
 
 Report the nixpkgs PR link once there is one.
