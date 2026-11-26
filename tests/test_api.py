@@ -12,7 +12,13 @@ import warnings
 import pytest
 
 import shopify_spy as spy
-from shopify_spy._fetch import FakeFetcher, FetchConnectionError, FetchTLSError, Seq
+from shopify_spy._fetch import (
+    CurlCffiFetcher,
+    FakeFetcher,
+    FetchConnectionError,
+    FetchTLSError,
+    Seq,
+)
 from tests.flow_support import FAST, STORE, bulk_url, products, scrape, urlset, woo_url
 
 OTHER = "https://other.test"
@@ -615,3 +621,100 @@ def test_proxy_kept_out_of_option_reprs():
     url = "http://u:secret@gw:8000"
     assert "secret" not in repr(ScrapeOptions(proxy=url))
     assert "secret" not in repr(RunConfig(proxy=url))
+
+
+# --- Impersonation ---
+
+
+class _CurlLike(FakeFetcher):
+    """FakeFetcher with CurlCffiFetcher's capabilities, so the runner retries as it would."""
+
+    capabilities = CurlCffiFetcher.capabilities
+
+
+def test_impersonate_with_user_agent_raises():
+    with pytest.raises(ValueError, match="browser profile; drop user_agent"):
+        spy.scrape("a.com", impersonate="chrome", user_agent="foo/1.0")
+
+
+def test_impersonate_with_user_agent_raises_with_custom_fetcher():
+    with pytest.raises(ValueError, match="drop user_agent"):
+        spy.scrape("a.com", impersonate="chrome", user_agent="foo/1.0", fetcher_factory=fake({}))
+
+
+def test_impersonate_without_extra_raises_at_call_time(monkeypatch):
+    monkeypatch.setitem(sys.modules, "curl_cffi", None)
+    with pytest.raises(ModuleNotFoundError, match=r"shopify-spy\[impersonate\]") as info:
+        spy.scrape("a.com", impersonate="chrome")
+    assert info.value.name == "curl_cffi"
+
+
+def test_unknown_impersonate_target_raises_at_call_time():
+    pytest.importorskip("curl_cffi")
+    with pytest.raises(ValueError, match="'nosuchbrowser'.*chrome, firefox or safari"):
+        spy.scrape("a.com", impersonate="nosuchbrowser")
+
+
+def test_custom_fetcher_ignores_impersonate(monkeypatch):
+    monkeypatch.setitem(sys.modules, "curl_cffi", None)  # neither imported nor validated
+    items, _, _ = scrape(ok_routes(), impersonate="nosuchbrowser")
+    assert len(items) == 2
+
+
+def test_impersonate_runs_on_curl_cffi_fetcher(monkeypatch, clean_proxy_env, caplog):
+    pytest.importorskip("curl_cffi")
+    from shopify_spy import _runner
+
+    made = []
+
+    def curl_fetcher(impersonate, *, verify, proxy):
+        made.append((impersonate, verify, proxy))
+        return _CurlLike(ok_routes())
+
+    def httpx_fetcher(**kwargs):
+        pytest.fail("HttpxFetcher built for an impersonated run")
+
+    monkeypatch.setattr(_runner, "CurlCffiFetcher", curl_fetcher)
+    monkeypatch.setattr(_runner, "HttpxFetcher", httpx_fetcher)
+    caplog.set_level("INFO", logger="shopify_spy")
+    proxy = "http://u:secret@127.0.0.1:8000"
+    run = spy.scrape(STORE, impersonate="chrome", verify_tls=False, proxy=proxy, **FAST)
+    assert len(list(run)) == 2
+    assert made == [("chrome", False, proxy)]
+    assert "Impersonating chrome (curl_cffi " in caplog.text
+    assert "secret" not in caplog.text
+
+
+def test_plain_run_stays_on_httpx_fetcher(monkeypatch, clean_proxy_env):
+    from shopify_spy import _runner
+
+    made = []
+
+    def httpx_fetcher(*, verify, proxy):
+        made.append((verify, proxy))
+        return FakeFetcher(ok_routes())
+
+    monkeypatch.setattr(_runner, "CurlCffiFetcher", lambda *a, **kw: pytest.fail("curl"))
+    monkeypatch.setattr(_runner, "HttpxFetcher", httpx_fetcher)
+    assert len(list(spy.scrape(STORE, **FAST))) == 2
+    assert made == [(True, None)]
+
+
+@pytest.mark.parametrize("status", [403, 429])
+def test_impersonated_refusal_retried_without_identity_swap(status):
+    fetcher = _CurlLike(
+        {f"{STORE}/robots.txt": (404, ""), bulk_url(1): Seq([(status, ""), products(2)])}
+    )
+    items, _, _ = scrape(fetcher)
+    assert len(items) == 2
+    agents = [r.identity.user_agent for r in fetcher.requests if r.url == bulk_url(1)]
+    assert len(agents) == 2
+    assert agents[0] == agents[1]
+
+
+def test_impersonated_forbidden_store_uses_every_retry_on_one_identity():
+    fetcher = _CurlLike({f"{STORE}/robots.txt": (404, "")}, default_status=403)
+    store = _status(fetcher, retries=2)
+    assert store.status == "forbidden"
+    assert fetcher.count(bulk_url(1)) == 3
+    assert len({r.identity.user_agent for r in fetcher.requests}) == 1

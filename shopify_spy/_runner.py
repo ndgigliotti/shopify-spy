@@ -20,7 +20,14 @@ from typing import Any
 
 from shopify_spy import _shopify as shopify
 from shopify_spy import _woocommerce as woocommerce
-from shopify_spy._fetch import FetcherFactory, HttpxFetcher, redact_url, uses_proxy
+from shopify_spy._fetch import (
+    CurlCffiFetcher,
+    FetcherFactory,
+    HttpxFetcher,
+    redact_url,
+    require_curl_cffi,
+    uses_proxy,
+)
 from shopify_spy._images import RESULT_FIELD as IMAGES_FIELD
 from shopify_spy._images import ImageDownloader
 from shopify_spy._policy import IdentityPool, ThrottleSettings, retry_policy_for
@@ -65,6 +72,7 @@ class RunConfig:
     respect_robots_txt: bool = True
     verify_tls: bool = True
     proxy: str | None = field(default=None, repr=False)
+    impersonate: str | None = None
     max_concurrent_stores: int | None = 16
     throttle: ThrottleSettings = field(default_factory=ThrottleSettings)
     backoff: bool = True
@@ -177,14 +185,20 @@ class Runner:
         """Finish reason for a store that didn't end on its own."""
         return "shutdown" if self.shutdown.is_set() else "closed"
 
+    def _default_fetcher(self) -> HttpxFetcher | CurlCffiFetcher:
+        config = self.config
+        if config.proxy:
+            logger.info("Using proxy %s", redact_url(config.proxy))
+        if config.impersonate is None:
+            return HttpxFetcher(verify=config.verify_tls, proxy=config.proxy)
+        version = require_curl_cffi("impersonate needs the impersonate extra").__version__
+        logger.info("Impersonating %s (curl_cffi %s)", config.impersonate, version)
+        return CurlCffiFetcher(config.impersonate, verify=config.verify_tls, proxy=config.proxy)
+
     async def _drive(self) -> None:
         watcher: asyncio.Task[None] | None = None
         try:
-            factory = self.config.fetcher_factory or (
-                lambda: HttpxFetcher(verify=self.config.verify_tls, proxy=self.config.proxy)
-            )
-            if self.config.fetcher_factory is None and self.config.proxy:
-                logger.info("Using proxy %s", redact_url(self.config.proxy))
+            factory = self.config.fetcher_factory or self._default_fetcher
             async with factory() as fetcher:
                 registry = HostRegistry(
                     concurrent_requests=self.config.concurrent_requests,

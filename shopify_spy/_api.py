@@ -23,7 +23,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from shopify_spy._fetch import check_proxy_support
+from shopify_spy._fetch import check_proxy_support, require_curl_cffi, validate_impersonate
 from shopify_spy._policy import ThrottleSettings
 from shopify_spy._results import RunResult, ScrapeFailed, StoreResult, run_finish_reason
 from shopify_spy._runner import RunConfig, Runner
@@ -70,6 +70,7 @@ class ScrapeOptions(BaseModel):
     respect_robots_txt: bool = True
     verify_tls: bool = True
     proxy: str | None = Field(default=None, repr=False)
+    impersonate: str | None = None
     max_concurrent_stores: int | None = Field(default=16, ge=1)
     throttle: bool = True
     throttle_start_delay: float = Field(default=1.0, ge=0)
@@ -94,8 +95,17 @@ def _prepare(
         opts = ScrapeOptions(**options)
     except ValidationError as exc:
         raise ValueError(str(exc)) from None
-    if opts.fetcher_factory is None:  # a custom transport ignores the proxy settings
+    if opts.impersonate is not None and opts.user_agent is not None:
+        raise ValueError(
+            "impersonate sets the user agent from the browser profile; drop user_agent"
+        )
+    if opts.fetcher_factory is None:  # a custom transport ignores the transport settings
         check_proxy_support(opts.proxy)
+        if opts.impersonate is not None:
+            require_curl_cffi(
+                "impersonate needs the impersonate extra: uv add 'shopify-spy[impersonate]'"
+            )
+            validate_impersonate(opts.impersonate)
     if opts.images and opts.images_dir is None:
         raise ValueError(
             "images=True needs images_dir, e.g. scrape(url, images=True, images_dir='images')"
@@ -151,6 +161,7 @@ def _config(opts: ScrapeOptions, backoff: bool) -> RunConfig:
         respect_robots_txt=opts.respect_robots_txt,
         verify_tls=opts.verify_tls,
         proxy=opts.proxy,
+        impersonate=opts.impersonate,
         max_concurrent_stores=opts.max_concurrent_stores,
         throttle=ThrottleSettings(
             enabled=opts.throttle,
