@@ -269,16 +269,16 @@ def _first_error(data: Any) -> str | None:
 
 def _smaller_page_size(page: int, size: int, problem: str | None) -> int | None:
     """The page size to retry the first page with after a page-size error: the
-    largest number in the error if it's below ``size``, else half, at least 1.
+    largest number in the error below ``size`` (a message can echo the size asked
+    for beside the limit), else half, at least 1.
 
     None when this isn't one, or it's too late: changing the page size after the
     first page would shift every later offset.
     """
     if problem is None or page > 1 or size <= 1 or not _PAGE_SIZE_ERROR.search(problem):
         return None
-    named = max((int(n) for n in re.findall(r"\d+", problem)), default=None)
-    smaller = named if named is not None and named < size else size // 2
-    return max(1, smaller)
+    named = max((n for n in map(int, re.findall(r"\d+", problem)) if n < size), default=None)
+    return max(1, size // 2 if named is None else named)
 
 
 async def _probe_others(ctx: StoreContext) -> None:

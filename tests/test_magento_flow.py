@@ -114,8 +114,13 @@ def test_html_url_follows_a_redirect():
 
 @pytest.mark.parametrize(
     ("message", "size"),
-    [("Maximum pageSize is 30", 30), ("pageSize is too large", 50), ("page size 500", 50)],
-    ids=["named", "halved", "named_larger"],
+    [
+        ("Maximum pageSize is 30", 30),
+        ("pageSize is too large", 50),
+        ("page size 500", 50),
+        ("pageSize value 100 must be less than or equal to 30", 30),
+    ],
+    ids=["named", "halved", "named_larger", "named_beside_requested"],
 )
 def test_page_size_error_on_first_page_shrinks_the_page_size(message, size):
     routes = {
