@@ -125,6 +125,7 @@ class _Listing:
         self.answered = False
         self.complete = False
         self._dropped = 0
+        self._unread = 0  # sitemaps that couldn't be read
 
     def _on_site(self, url: str) -> bool:
         if _site(hostname(url)) in self.sites:
@@ -134,32 +135,37 @@ class _Listing:
 
     async def locs(self) -> AsyncIterator[str]:
         found, complete = await self._top_level()
-        if not found:
-            return
-        # Product sitemaps: the top-level urlsets and the indexes' children, together
+        read = {doc.url: doc for doc in found if doc.root == "urlset"}
+        for source in _prefer_products(self._sources(found)):
+            async for loc in self._source_locs(source, read):
+                if self._on_site(loc):
+                    yield loc
+        if self._dropped:
+            logger.info("Sitemaps listed %d off-site links", self._dropped)
+        self.complete = complete and not self._unread and not self._dropped
+
+    def _sources(self, found: list[_Sitemap]) -> list[str]:
+        """The sitemaps to choose product sitemaps from: the top-level urlsets and
+        the indexes' on-site children, together."""
         sources: list[str] = []
-        read: dict[str, _Sitemap] = {}
         for doc in found:
             if doc.root == "urlset":
                 sources.append(doc.url)
-                read[doc.url] = doc
             else:
                 sources += [loc for loc in doc.locs if self._on_site(loc)]
-        for source in _prefer_products(sources):
-            if source in read:
-                for loc in read[source].locs:
-                    if self._on_site(loc):
-                        yield loc
-                continue
-            walk = sitemap.iter_locs(self.ctx.session, source)
-            async for loc in walk:
-                self.sites |= {_site(host) for host in walk.hosts}
-                if self._on_site(loc):
-                    yield loc
-            complete = complete and walk.root_ok
-        if self._dropped:
-            logger.info("Sitemaps listed %d off-site links", self._dropped)
-        self.complete = complete and not self._dropped
+        return sources
+
+    async def _source_locs(self, source: str, read: dict[str, _Sitemap]) -> AsyncIterator[str]:
+        """A sitemap's locs, from ``read`` if it was already fetched."""
+        if source in read:
+            for loc in read[source].locs:
+                yield loc
+            return
+        walk = sitemap.iter_locs(self.ctx.session, source)
+        async for loc in walk:
+            self.sites |= {_site(host) for host in walk.hosts}
+            yield loc
+        self._unread += not walk.root_ok
 
     async def _top_level(self) -> tuple[list[_Sitemap], bool]:
         """The robots.txt-listed sitemaps that parse, else the first well-known one,

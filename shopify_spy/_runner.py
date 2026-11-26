@@ -308,13 +308,7 @@ class Runner:
             ):
                 logger.warning("No items scraped from %s in %ss, aborting", state.url, config.bail)
                 state.finish_reason = "bail"
-                # A 429 that retries didn't get past is the likelier cause: rate_limited
-                if ctx.no_item_reason is not None and session.stats.rate_limits == 0:
-                    state.errored = True
-                    state.errors.append(
-                        f"{ctx.no_item_reason}; stopped at --bail ({config.bail:g}s); "
-                        "raise --bail to check more pages"
-                    )
+                _report_no_item_reason(state, ctx, config.bail)
             else:
                 complete = await adapter_task
                 state.truncated = not complete and ctx.items > 0
@@ -382,6 +376,19 @@ class Runner:
             s.result(self.config.platform, not custom and uses_proxy(s.url, self.config.proxy))
             for s in self.states
         ]
+
+
+def _report_no_item_reason(state: StoreState, ctx: StoreContext, bail: float) -> None:
+    """Make a bailed store an error with the adapter's reason for having no item.
+
+    Not when a request was rate limited: a 429 that retries didn't get past is the
+    likelier cause, and the store ends rate_limited.
+    """
+    if ctx.no_item_reason is not None and ctx.session.stats.rate_limits == 0:
+        state.errored = True
+        state.errors.append(
+            f"{ctx.no_item_reason}; stopped at --bail ({bail:g}s); raise --bail to check more pages"
+        )
 
 
 def _unwrap(exc: BaseException) -> BaseException:
