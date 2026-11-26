@@ -11,6 +11,17 @@
   schema has a row per configurable variant. A store whose `/graphql` answers
   without products reports `failed` with Magento's message
   ([#89](https://github.com/ndgigliotti/shopify-spy/issues/89)).
+- A `jsonld` platform (`--platform jsonld`, `platform="jsonld"`) for stores on
+  platforms without their own adapter. It reads the product pages listed in the
+  store's sitemaps (robots.txt `Sitemap:` lines, `/sitemap.xml`,
+  `/sitemap_index.xml` or `/xmlsitemap.php`, product sitemaps first) and keeps each
+  page's schema.org `Product` or `ProductGroup` JSON-LD. Items are the JSON-LD node
+  plus `store`, `platform`, `html_url` and `image_urls` (`JsonLdProductItem`), and
+  the unified schema has a row per `hasVariant` Product or per offer. It is a
+  best-effort fallback at one request per product. A store whose pages have no
+  Product data reports `failed` with the number of pages checked, after at most 50
+  pages or at `--bail`
+  ([#93](https://github.com/ndgigliotti/shopify-spy/issues/93)).
 
 ## 0.5.1
 

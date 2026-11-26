@@ -78,7 +78,7 @@ def test_help_links_name_installed_docs(text):
 
 def test_scrape_doc_names_every_platform():
     # Lowercase quoted platform lists, which a case-sensitive grep for stale
-    # "WooCommerce and Magento" text misses
+    # three-platform text misses
     doc = spy.scrape.__doc__
     assert doc.count('"jsonld"') >= 2
     assert "JsonLdProductItem" in doc
