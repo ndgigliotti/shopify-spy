@@ -31,7 +31,7 @@ from shopify_spy._fetch import Response
 from shopify_spy._session import Emit, RequestFailed, StoreContext
 from shopify_spy._shopify import _looks_like_woocommerce
 from shopify_spy._utils import canonicalize_url, hostname
-from shopify_spy._woocommerce import _looks_like_shopify
+from shopify_spy._woocommerce import GONE, _looks_like_shopify, _site
 
 __all__ = ["JsonLdError", "run"]
 
@@ -41,7 +41,6 @@ SITEMAP_PATHS = ("/sitemap.xml", "/sitemap_index.xml", "/xmlsitemap.php")
 FETCH_CONCURRENCY = 8  # product pages fetched at once per store (host slots still apply)
 PROBE_PAGES = 50  # pages back without an item, before the first, that end the store
 HINT_AFTER = 5  # pages back without an item, before the first, that start the hint probe
-GONE = frozenset({404, 410})
 # WordPress taxonomy sitemaps (Yoast's and Rank Math's product_cat-sitemap.xml, core's
 # wp-sitemap-taxonomies-product_cat-1.xml) list category, tag and brand pages
 _TAXONOMY_FRAGMENTS = (
@@ -77,10 +76,6 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
         return listing.complete  # no on-site page listed: empty
     await pages.probe_others()
     raise JsonLdError(pages.reason())
-
-
-def _site(host: str) -> str:
-    return host.removeprefix("www.")
 
 
 def _is_product_sitemap(url: str) -> bool:
