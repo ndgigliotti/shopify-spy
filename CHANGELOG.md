@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 ### Added
 
@@ -24,8 +24,12 @@
   refused request carried the store's current one. A fixed `--user-agent` stays fixed.
 - Time spent waiting out a server's `Retry-After` on a 429 or 503 no longer counts
   against `--bail`, so a rate-limited store isn't cut off mid-wait. A rate-limited
-  store can take several minutes to fail. A 429 without `Retry-After` is still capped
-  by bail.
+  store can take minutes or longer to fail (see the README's rate limiting notes). A
+  429 without `Retry-After` is still capped by bail.
+- Nix flake: the library package (`python3Packages.shopify-spy` from the overlay) no
+  longer includes xlsxwriter, matching nixpkgs; add
+  `ps.shopify-spy.optional-dependencies.excel` for Excel output. The CLI, the `python`
+  output and the dev shell still include it.
 
 ### Fixed
 
