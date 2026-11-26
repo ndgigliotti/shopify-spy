@@ -277,21 +277,22 @@ def _env_proxy_mounts() -> dict[str, str | None]:
     for scheme in ("http", "https", "all"):
         if value := info.get(scheme):
             mounts[f"{scheme}://"] = value if "://" in value else f"http://{value}"
-    for host in (h.strip() for h in info.get("no", "").split(",")):
-        if host == "*":
-            return {}
-        if not host:
-            continue
-        if "://" in host:
-            mounts[host] = None
-        elif _is_ip(host, ipaddress.IPv4Address) or host.lower() == "localhost":
-            mounts[f"all://{host}"] = None
-        elif _is_ip(host, ipaddress.IPv6Address):
-            mounts[f"all://[{host}]"] = None
-        else:
-            # Unlike urllib's rule, ".example.com" bypasses subdomains but not example.com
-            mounts[f"all://*{host}"] = None
+    hosts = [host.strip() for host in info.get("no", "").split(",")]
+    if "*" in hosts:
+        return {}
+    mounts.update((_no_proxy_pattern(host), None) for host in hosts if host)
     return mounts
+
+
+def _no_proxy_pattern(host: str) -> str:
+    if "://" in host:
+        return host
+    if _is_ip(host, ipaddress.IPv4Address) or host.lower() == "localhost":
+        return f"all://{host}"
+    if _is_ip(host, ipaddress.IPv6Address):
+        return f"all://[{host}]"
+    # Unlike urllib's rule, ".example.com" bypasses subdomains but not example.com
+    return f"all://*{host}"
 
 
 def _env_proxies() -> list[str]:
