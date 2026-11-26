@@ -473,10 +473,12 @@ _SCRAPE_DOC = """
         request_timeout: Seconds allowed for one request, not the whole run
             (default {request_timeout}).
         retries: Retries for 403/429/5xx responses and network errors (default
-            {retries}). A 429 also swaps the user agent, and a 429 or 503 pauses and slows
-            every request to that host.
+            {retries}). A 403 or 429 also swaps the user agent (not with
+            ``impersonate``), and a 429 or 503 pauses and slows every request to
+            that host.
         user_agent: Fixed User-Agent, never swapped; by default each store gets a
-            random browser UA, swapped after a 403 or 429.
+            random browser UA, swapped after a 403 or 429. Can't be combined with
+            ``impersonate``.
         respect_robots_txt: Obey robots.txt (default {respect_robots_txt}).
         verify_tls: Verify TLS certificates (default {verify_tls}).
         proxy: A fixed proxy URL for every request: http://, https:// or socks5://.
@@ -484,6 +486,14 @@ _SCRAPE_DOC = """
             honored (with NO_PROXY); an explicit proxy ignores NO_PROXY. Credentials
             in it are masked in logs and errors. It gives a fixed egress, not a way
             around a store's rate limits. Ignored with a custom ``fetcher_factory``.
+        impersonate: Send requests through curl_cffi with this browser profile's
+            TLS and HTTP/2 fingerprint and headers (default {impersonate}: off),
+            for sites that refuse clients that don't look like a browser. Any target
+            the installed curl_cffi accepts: "chrome", "firefox", "safari", or a pinned
+            profile such as "chrome150". The profile sets the user agent, and one
+            profile serves the whole run; a 403 or 429 retries with the same one.
+            robots.txt and throttling apply as usual. Needs the ``impersonate``
+            extra. Ignored with a custom ``fetcher_factory``.
         max_concurrent_stores: Stores scraped at once (default {max_concurrent_stores};
             None = no limit).
         throttle, throttle_start_delay, throttle_max_delay,
