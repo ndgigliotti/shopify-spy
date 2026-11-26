@@ -44,7 +44,7 @@ Without uv, install it into a virtual environment. While the environment is acti
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate      # Windows PowerShell: .venv\Scripts\Activate.ps1
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install shopify-spy
 ```
 
