@@ -173,18 +173,7 @@ class _Listing:
     async def _top_level(self) -> tuple[list[_Sitemap], list[str]]:
         """The robots.txt-listed sitemaps that parse, else the first well-known one,
         and the robots.txt-listed ones that didn't."""
-        session = self.ctx.session
-        robots_url = f"{self.ctx.url}/robots.txt"
-        rules = await session.registry.robots(self.ctx.url, session)
-        listed = []
-        for value in rules.sitemaps:
-            try:
-                url = urllib.parse.urljoin(robots_url, value)
-            except ValueError:
-                continue
-            if url not in listed and self._on_site(url):
-                listed.append(url)
-        self._dropped = 0  # an off-site Sitemap: line isn't a page left out
+        listed = await self._robots_sitemaps()
         found: list[_Sitemap] = []
         unread: list[str] = []
         for url in listed:
@@ -200,6 +189,22 @@ class _Listing:
             if (doc := await self._read(f"{self.ctx.url}{path}")) is not None:
                 return [doc], unread
         return [], unread
+
+    async def _robots_sitemaps(self) -> list[str]:
+        """The on-site ``Sitemap:`` URLs in robots.txt, in order, without repeats."""
+        session = self.ctx.session
+        robots_url = f"{self.ctx.url}/robots.txt"
+        rules = await session.registry.robots(self.ctx.url, session)
+        listed = []
+        for value in rules.sitemaps:
+            try:
+                url = urllib.parse.urljoin(robots_url, value)
+            except ValueError:
+                continue
+            if url not in listed and self._on_site(url):
+                listed.append(url)
+        self._dropped = 0  # an off-site Sitemap: line isn't a page left out
+        return listed
 
     async def _read(self, url: str) -> _Sitemap | None:
         self.tried.append(url)
