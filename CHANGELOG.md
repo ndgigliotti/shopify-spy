@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.1
 
 ### Security
 
@@ -29,6 +29,9 @@
 - The reference documentation moved from the README into `docs/`: installation, the
   command line, output, the library and troubleshooting each have a page. The README
   keeps the quick start and links to them.
+- The README leads with use from scripts and AI agents, installs with uv first
+  (`uv tool install` for the CLI, `uv add` for the library), and has a Responsible
+  use section. User-agent rotation is described as a retry detail.
 
 ### Fixed
 
