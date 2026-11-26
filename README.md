@@ -20,13 +20,18 @@ Shopify Spy is a command-line tool and Python library for scraping product and c
 ## Installation
 
 ```bash
+# The command (spy and shopify-spy)
 uv tool install shopify-spy
 
-# Or run it once without installing
+# The library, in a project
+uv add shopify-spy        # or: pip install shopify-spy
+
+# Or run either once, nothing to install
 uvx shopify-spy scrape --peek https://www.example.com
+uv run --with 'shopify-spy>=0.4' python script.py
 ```
 
-Installing provides two identical commands, `spy` and `shopify-spy`. With `uvx`, name the package (`uvx shopify-spy ...`), since `uvx spy` would fetch an unrelated package. Excel output needs the `excel` extra (`uv tool install 'shopify-spy[excel]'`), and Python 3.11 or later is required. [Installation](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.0/docs/install.md) covers pipx, using it as a library, inline script metadata and Nix.
+A `uv tool` install provides only the command, so `import shopify_spy` needs the library install. With `uvx`, name the package (`uvx shopify-spy ...`), since `uvx spy` would fetch an unrelated package. Excel output needs the `excel` extra (`uv tool install 'shopify-spy[excel]'` or `uv add 'shopify-spy[excel]'`), and Python 3.11 or later is required. [Installation](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.0/docs/install.md) covers inline script metadata and Nix.
 
 ## Quick Start
 
@@ -53,12 +58,7 @@ Results are saved as JSONL in `./output` (change it with `--output`), with a liv
 
 ### Python
 
-The same engine is a library, so a script can scrape, filter and save in one pass. A `uv tool` install only provides the command, so install the package where the script runs:
-
-```bash
-uv add shopify-spy                                  # in a project
-uv run --with 'shopify-spy>=0.4' python script.py   # or a one-off script, nothing to install
-```
+The same engine is a library, so a script can scrape, filter and save in one pass. Install the library first (see [Installation](#installation)).
 
 ```python
 import shopify_spy as spy
