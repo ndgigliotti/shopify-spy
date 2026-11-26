@@ -37,10 +37,12 @@
             };
           })
         ];
-        # The CLI includes the excel extra, so --format xlsx works (as in nixpkgs)
+        # The CLI includes the excel and impersonate extras, so --format xlsx and
+        # --impersonate work
         shopify-spy = final.python3Packages.toPythonApplication (
           final.python3Packages.shopify-spy.overridePythonAttrs (old: {
-            dependencies = old.dependencies ++ old.optional-dependencies.excel;
+            dependencies =
+              old.dependencies ++ old.optional-dependencies.excel ++ old.optional-dependencies.impersonate;
           })
         );
       };
@@ -49,7 +51,10 @@
         default = pkgs.shopify-spy;
         shopify-spy = pkgs.shopify-spy;
         python = pkgs.python3.withPackages (
-          ps: [ ps.shopify-spy ] ++ ps.shopify-spy.optional-dependencies.excel
+          ps:
+          [ ps.shopify-spy ]
+          ++ ps.shopify-spy.optional-dependencies.excel
+          ++ ps.shopify-spy.optional-dependencies.impersonate
         );
       });
 

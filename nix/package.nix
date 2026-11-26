@@ -22,6 +22,7 @@
   typer,
 
   # optional-dependencies
+  curl-cffi,
   xlsxwriter,
 
   # tests
@@ -53,6 +54,7 @@ buildPythonPackage (finalAttrs: {
 
   optional-dependencies = {
     excel = [ xlsxwriter ];
+    impersonate = [ curl-cffi ];
   };
 
   nativeCheckInputs = [
