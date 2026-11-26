@@ -111,6 +111,12 @@ An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an i
 - [Troubleshooting](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.0/docs/troubleshooting.md): store statuses, exit codes, the status file, logs, rate limiting, large catalogs
 - [Changelog](https://github.com/ndgigliotti/shopify-spy/blob/master/CHANGELOG.md): what changed in each release
 
+## Responsible use
+
+Shopify Spy reads public catalog data, follows robots.txt and throttles itself by default. You are responsible for how you use it, including following each site's terms and the laws that apply to you. Options that change how requests reach a site, such as `--proxy`, are opt-in for that reason. Product descriptions and images are often copyrighted; collecting them doesn't give you the right to republish them.
+
+Shopify Spy is not affiliated with or endorsed by Shopify or any other platform it supports. If a site asks you to stop collecting data, please do. The software is provided as is under the MIT License.
+
 ## Feedback
 
 Found a bug or have a suggestion? [Open an issue](https://github.com/ndgigliotti/shopify-spy/issues).
