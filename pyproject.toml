@@ -1,7 +1,7 @@
 [project]
 name = "shopify-spy"
 version = "0.5.0"
-description = "Python library and CLI to scrape product data, images, and collections from Shopify and WooCommerce stores"
+description = "Python library and CLI to scrape product data, images, and collections from Shopify and WooCommerce stores, built for scripts and AI coding agents"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -22,6 +22,10 @@ keywords = [
     "ecommerce-scraper",
     "product-scraper",
     "catalog",
+    "ai-agents",
+    "coding-agents",
+    "llm-tools",
+    "agent-friendly",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
