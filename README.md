@@ -29,9 +29,11 @@ uv add shopify-spy        # or: pip install shopify-spy
 # Or run either once, nothing to install
 uvx shopify-spy scrape --peek https://www.example.com
 uv run --with 'shopify-spy>=0.4' python script.py
+
+# Excel output (--format xlsx) needs the excel extra: 'shopify-spy[excel]' in any of these
 ```
 
-A `uv tool` install provides only the command, so `import shopify_spy` needs the library install. With `uvx`, name the package (`uvx shopify-spy ...`), since `uvx spy` would fetch an unrelated package. Excel output needs the `excel` extra (`uv tool install 'shopify-spy[excel]'` or `uv add 'shopify-spy[excel]'`), and Python 3.11 or later is required. [Installation](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.0/docs/install.md) covers inline script metadata and Nix.
+A `uv tool` install provides only the command, so `import shopify_spy` needs the library install. With `uvx`, name the package (`uvx shopify-spy ...`), since `uvx spy` would fetch an unrelated package. Python 3.11 or later is required. [Installation](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.0/docs/install.md) covers inline script metadata and Nix.
 
 ## Quick Start
 
