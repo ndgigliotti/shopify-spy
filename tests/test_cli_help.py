@@ -8,6 +8,7 @@ import sys
 
 import click
 import pytest
+import typer.core
 import typer.main
 import typer.rich_utils
 
@@ -98,6 +99,15 @@ def test_terminal_help_renders_rich_panels(monkeypatch):
     assert positions == sorted(positions)
     # Help text is plain, so Rich mode must escape it rather than drop [excel]
     assert "shopify-spy[excel]" in out
+
+
+def test_terminal_help_without_rich_is_plain(monkeypatch):
+    monkeypatch.setattr(cli_module, "use_rich_help", lambda: True)
+    monkeypatch.setattr(typer.core, "HAS_RICH", False)
+    result = runner.invoke(app, ["scrape", "--help"])
+    assert result.exit_code == 0
+    _assert_plain(result.stdout)
+    assert "shopify-spy[excel]" in result.stdout
 
 
 def test_help_defaults_come_from_config():

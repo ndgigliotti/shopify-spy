@@ -91,7 +91,9 @@ class _AdaptiveHelp:
 
     @property
     def rich_markup_mode(self) -> MarkupMode:
-        return "rich" if use_rich_help() else None
+        # TYPER_USE_RICH=0 clears HAS_RICH and Typer then renders plain Click help,
+        # which must not get the Rich-escaped text
+        return "rich" if typer.core.HAS_RICH and use_rich_help() else None
 
     @rich_markup_mode.setter
     def rich_markup_mode(self, value: MarkupMode) -> None:
