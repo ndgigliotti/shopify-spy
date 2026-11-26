@@ -23,14 +23,6 @@ _IPV4_SHORTHAND = re.compile(r"[0-9][0-9a-fx.]*", re.IGNORECASE)
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
-def url_host(url: str) -> str:
-    """The URL's lowercased host without brackets, or "" if it has none or won't parse."""
-    try:
-        return urllib.parse.urlsplit(url).hostname or ""
-    except ValueError:  # e.g. "http://[::1" (the transport reports it)
-        return ""
-
-
 def literal_ip(host: str) -> IPAddress | None:
     """The address a host names literally, including shorthand IPv4 forms."""
     host = host.strip("[]").removesuffix(".")

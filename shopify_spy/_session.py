@@ -24,7 +24,6 @@ from shopify_spy._address import (
     is_private_host,
     literal_ip,
     non_public_reason,
-    url_host,
 )
 from shopify_spy._fetch import (
     Fetcher,
@@ -46,7 +45,7 @@ from shopify_spy._policy import (
     now,
     parse_retry_after,
 )
-from shopify_spy._utils import canonicalize_url, origin
+from shopify_spy._utils import canonicalize_url, hostname, origin
 
 logger = logging.getLogger("shopify_spy")
 
@@ -164,7 +163,7 @@ class HostRegistry:
     async def resolved(self, url: str, timeout: float) -> list[IPAddress]:
         """The addresses the URL's host resolves to, looked up once per origin per run;
         [] without a resolver, for a literal IP or local name, or if the lookup fails."""
-        host = url_host(url)
+        host = hostname(url)
         resolver = self.resolver
         if resolver is None or not host or literal_ip(host) is not None or is_local_name(host):
             return []
@@ -341,7 +340,7 @@ class StoreSession:
         if self._store_is_private is None:
             url = self.store_url
             self._store_is_private = url is not None and is_private_host(
-                url_host(url), await self.registry.resolved(url, self.request_timeout)
+                hostname(url), await self.registry.resolved(url, self.request_timeout)
             )
         return self._store_is_private
 
@@ -350,7 +349,7 @@ class StoreSession:
         if await self._store_private():
             return
         resolved = await self.registry.resolved(url, self.request_timeout)
-        reason = non_public_reason(url_host(url), resolved)
+        reason = non_public_reason(hostname(url), resolved)
         if reason is not None:
             logger.warning("Refused request to %s: %s", url, reason)
             raise RequestFailed(url, f"refused: {reason}")

@@ -13,8 +13,8 @@ from shopify_spy._address import (
     is_public_ip,
     literal_ip,
     non_public_reason,
-    url_host,
 )
+from shopify_spy._utils import hostname
 
 NON_PUBLIC_URLS = [
     "http://127.0.0.1/",
@@ -48,7 +48,7 @@ PRIVATE = ipaddress.ip_address("10.0.0.5")
 
 @pytest.mark.parametrize("url", NON_PUBLIC_URLS)
 def test_non_public_urls_have_a_reason(url):
-    host = url_host(url)
+    host = hostname(url)
     reason = non_public_reason(host, [])
     assert reason == f"{host} is not a public address"
     assert is_private_host(host, [])
@@ -56,7 +56,7 @@ def test_non_public_urls_have_a_reason(url):
 
 @pytest.mark.parametrize("url", PUBLIC_URLS)
 def test_public_urls_have_no_reason(url):
-    host = url_host(url)
+    host = hostname(url)
     assert non_public_reason(host, []) is None
     assert not is_private_host(host, [])
 
@@ -158,7 +158,7 @@ def test_private_host_needs_every_answer_non_public():
 
 def test_empty_host_is_not_refused():
     assert non_public_reason("", [PRIVATE]) is None
-    assert url_host("http://[::1/") == ""
+    assert hostname("http://[::1/") == ""
 
 
 async def test_resolve_uses_getaddrinfo(monkeypatch):
