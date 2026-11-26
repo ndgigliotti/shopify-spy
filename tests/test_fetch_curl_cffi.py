@@ -443,6 +443,14 @@ async def test_invalid_url_never_reaches_the_server(server):
     assert server.paths == before
 
 
+@pytest.mark.parametrize(
+    "url", ["file:///etc/hostname", "dict://127.0.0.1:1/", "ftp://127.0.0.1:1/"]
+)
+async def test_non_http_scheme_is_refused(url):
+    with pytest.raises(FetchConnectionError, match="unsupported protocol"):
+        await fetch(url)
+
+
 async def test_truncated_body(server):
     with pytest.raises(FetchIncomplete):
         await fetch(f"{server.url}/truncated")

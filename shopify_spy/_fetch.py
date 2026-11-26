@@ -632,9 +632,13 @@ class CurlCffiFetcher:
         try:
             # httpx's rule, so both fetchers refuse the same URLs; curl_cffi would
             # percent-encode control characters and send them
-            httpx.URL(request.url)
+            scheme = httpx.URL(request.url).scheme
         except (httpx.InvalidURL, UnicodeError, ValueError) as exc:
             raise FetchInvalidURL(f"{request.url!r}: {exc}") from exc
+        if scheme not in ("http", "https"):
+            # libcurl would read file:// and open dict://, ftp:// and the rest;
+            # httpx raises UnsupportedProtocol, a transport error
+            raise FetchConnectionError(f"unsupported protocol in {request.url!r}")
         proxy = self._proxy or env_proxy_for(request.url)
         if proxy:
             proxy = _socks_on_proxy(proxy)
