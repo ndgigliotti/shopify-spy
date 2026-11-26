@@ -82,9 +82,10 @@ can't merge them; a nixpkgs committer has to.
 
 - Diff the dependencies since the last release:
   `git diff vPREV vX.Y.Z -- pyproject.toml` (`dependencies`, optional
-  dependencies, the test group, and extras on a dependency like `httpx[socks]`).
-  A new top-level dependency fails nixpkgs' runtime-deps check; a new extra on an
-  existing dependency isn't checked, so only our tests catch it.
+  dependencies, the test group, `[build-system]`, and extras on a dependency like
+  `httpx[socks]`). A new top-level dependency or a raised bound fails nixpkgs'
+  runtime-deps check; a new extra on an existing dependency isn't checked, so
+  only our tests catch it.
 - No changes: wait for the bot's PR
   (`gh pr list -R NixOS/nixpkgs --search shopify-spy`) and **(ask)** approve it
   as maintainer. If none appears within a few days, read the newest log under
