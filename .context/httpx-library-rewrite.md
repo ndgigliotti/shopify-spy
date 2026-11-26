@@ -720,7 +720,7 @@ streaming `ItemWriter` context manager used by the CLI. Formats per §3.7 with D
 | Dev | `respx` (for `HttpxFetcher` tests only), `pytest-asyncio`, `pytest-cov` | Consolidate dev deps into one place (today split between `[dependency-groups]` and `optional-dependencies.dev`) |
 
 CLI deps stay required so `uv tool install shopify-spy` keeps working.
-Later extras: `[stealth]` → `curl_cffi`, `[browser]` → `playwright`.
+Later extras: `[curl]` → `curl_cffi`, `[browser]` → `playwright` (§12 items 3 and 4).
 
 ## 6. Python and platforms
 
@@ -888,7 +888,7 @@ engine, robots.txt respected, one item per store:
 | **TLS verification failures** | **0 of 17** |
 
 D14 (verify by default) stands. Explicit blocking (403) was not seen; the main
-gap is headless stores, which supports prioritizing §12 item 5 over stealth
+gap is headless stores, which supports prioritizing §12 item 5 over the libcurl transport
 transports.
 
 ## 9. Deviations needing sign-off
@@ -932,8 +932,8 @@ on every public symbol (returns, statuses, files written); `py.typed`.
 
 Guiding principles:
 
-- Rotating browser UAs stay the default, so runs aren't traced back to the tool
-  or its author (Nick's decision); an honest UA is at most opt-in.
+- Rotating browser UAs stay the default, so requests look like ordinary browser
+  traffic (Nick's decision); an honest UA is at most opt-in.
 - Neutral names: no "stealth", "impersonate" or "bypass" in user-facing names.
 - No CAPTCHA solving or "bypass" features.
 - Polite defaults stay on: robots.txt, throttling, bail.
