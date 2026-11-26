@@ -20,6 +20,10 @@
 
 ### Fixed
 
+- A product page whose JSON-LD has a trailing comma or a `//` or `/* */` comment,
+  which browsers and search engines accept, no longer loses its product in the
+  WooCommerce sitemap fallback
+  ([#88](https://github.com/ndgigliotti/shopify-spy/issues/88)).
 - The robots.txt hint now says `--ignore-robots` ignores robots.txt, not that it
   "bypasses" it.
 - `help(spy.scrape)` and `help(spy.scrape_async)` no longer indent everything from

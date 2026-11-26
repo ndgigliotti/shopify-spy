@@ -26,6 +26,12 @@ _BODY_CLASS = re.compile(r"""<body\b[^>]*?\bclass\s*=\s*(["'])(.*?)\1""", re.I |
 _POST_ID = re.compile(r"(?:^|\s)postid-(\d{1,18})(?:\s|$)")
 MAX_PRICE_DIGITS = 15  # digits before the decimal point
 LIST_PRICES = frozenset({"ListPrice", "StrikethroughPrice"})
+# Strings are matched first so a ",}" or "//" inside one is kept. A string or
+# comment always matches, running to the end if unterminated, and the string never
+# backtracks, so each pass is linear on hostile input.
+_STRING = r'"(?:[^"\\]++|\\.?)*+(?:"|\Z)'
+_COMMENTS = re.compile(rf"({_STRING})|//[^\n]*|/\*.*?(?:\*/|\Z)", re.S)
+_TRAILING_COMMAS = re.compile(rf"({_STRING})|,(?=\s*[}}\]])", re.S)
 
 
 def _is_product(node: dict[str, Any]) -> bool:
@@ -51,6 +57,20 @@ def _products(data: Any) -> list[dict[str, Any]]:
     return found
 
 
+def _lenient(script: str) -> str:
+    """The script without comments or trailing commas, which browsers accept."""
+    script = _COMMENTS.sub(lambda m: m.group(1) or " ", script)
+    return _TRAILING_COMMAS.sub(lambda m: m.group(1) or "", script)
+
+
+def _load(script: str) -> Any:
+    # strict=False: hand-written JSON-LD often has raw newlines in strings
+    try:
+        return json.loads(script, strict=False)
+    except ValueError:
+        return json.loads(_lenient(script), strict=False)
+
+
 def _strip_fragment(url: Any) -> str:
     return url.split("#", 1)[0].rstrip("/") if isinstance(url, str) else ""
 
@@ -66,8 +86,7 @@ def parse_product_page(html: str, url: str) -> tuple[dict[str, Any] | None, int 
         if not _LD_TYPE.search(attrs):
             continue
         try:
-            # strict=False: hand-written JSON-LD often has raw newlines in strings
-            products += _products(json.loads(script, strict=False))
+            products += _products(_load(script))
         except (ValueError, RecursionError):
             logger.debug("Unparseable JSON-LD on %s", url)
     body = _BODY_CLASS.search(html)
