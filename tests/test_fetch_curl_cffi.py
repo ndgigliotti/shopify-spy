@@ -92,7 +92,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
             pass
 
-    def _endless(self, chunk: bytes, pause: float) -> None:
+    def _write_forever(self, chunk: bytes, pause: float) -> None:
         deadline = time.monotonic() + ENDLESS
         while time.monotonic() < deadline:
             self.wfile.write(chunk)
@@ -100,62 +100,74 @@ class Handler(http.server.BaseHTTPRequestHandler):
             time.sleep(pause)
 
     def _route(self):
-        path = self.path
-        if path == "/ok":
-            self._send(200, b"ok")
-        elif path == "/redirect":
-            self._send(302, headers={"Location": "/target"})
-        elif path == "/echo":
-            body = json.dumps({k.lower(): v for k, v in self.headers.items()}).encode()
-            self._send(200, body, {"Content-Type": "application/json"})
-        elif path == "/set-cookie":
-            self._send(200, b"ok", {"Set-Cookie": "session=secret; Path=/"})
-        elif path == "/big":
-            self._send(200, b"x" * 5000)
-        elif path == "/endless":
-            self.send_response(200)
-            self.send_header("Connection", "close")
-            self.end_headers()
-            self.close_connection = True
-            self._endless(b"x" * 16384, 0)
-        elif path == "/trickle":
-            self.send_response(200)
-            self.send_header("Content-Length", "1000000")
-            self.end_headers()
-            self._endless(b"x", 0.1)
-        elif path == "/no-headers":
-            time.sleep(ENDLESS)
-        elif path == "/truncated":
-            self.send_response(200)
-            self.send_header("Content-Length", "1000")
-            self.end_headers()
-            self.wfile.write(b"x" * 10)
-            self.close_connection = True
-        elif path.startswith("/delayed-body/"):
-            delay = float(path.rsplit("/", 1)[1])
-            self.send_response(200)
-            self.send_header("Content-Length", "2")
-            self.end_headers()
-            self.wfile.flush()
-            time.sleep(delay)
-            self.wfile.write(b"ok")
-        elif path == "/gzip":
-            self._send(200, gzip.compress(PAYLOAD), {"Content-Encoding": "gzip"})
-        elif path == "/br":
-            self._send(200, BROTLI_HELLO, {"Content-Encoding": "br"})
-        elif path == "/utf-8":
-            self._send(200, b"as sent", {"Content-Encoding": "utf-8"})
-        elif path == "/gzip-bomb":
-            self._send(200, gzip.compress(b"\0" * 5000), {"Content-Encoding": "gzip"})
-        elif path == "/gzip-bomb-unknown":
-            # Unknown token first: libcurl refuses it, so the raw path decodes the gzip
-            self._send(200, gzip.compress(b"\0" * 5000), {"Content-Encoding": "utf-8, gzip"})
-        elif path == "/gzip-unknown":
-            self._send(200, gzip.compress(PAYLOAD), {"Content-Encoding": "utf-8, gzip"})
-        elif path == "/mixed-case":
-            self._send(200, b"ok", {"X-Custom-Header": "Value", "Content-Type": "text/plain"})
+        if self.path in STATIC:
+            self._send(*STATIC[self.path])
+        elif self.path.startswith("/delayed-body/"):
+            self._delayed_body(float(self.path.rsplit("/", 1)[1]))
         else:
-            self._send(404, b"not found")
+            handlers = {
+                "/echo": self._echo,
+                "/endless": self._endless,
+                "/trickle": self._trickle,
+                "/no-headers": self._no_headers,
+                "/truncated": self._truncated,
+            }
+            handlers.get(self.path, self._not_found)()
+
+    def _not_found(self):
+        self._send(404, b"not found")
+
+    def _echo(self):
+        body = json.dumps({k.lower(): v for k, v in self.headers.items()}).encode()
+        self._send(200, body, {"Content-Type": "application/json"})
+
+    def _endless(self):
+        self.send_response(200)
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        self._write_forever(b"x" * 16384, 0)
+
+    def _trickle(self):
+        self.send_response(200)
+        self.send_header("Content-Length", "1000000")
+        self.end_headers()
+        self._write_forever(b"x", 0.1)
+
+    def _no_headers(self):
+        time.sleep(ENDLESS)
+
+    def _truncated(self):
+        self.send_response(200)
+        self.send_header("Content-Length", "1000")
+        self.end_headers()
+        self.wfile.write(b"x" * 10)
+        self.close_connection = True
+
+    def _delayed_body(self, delay: float):
+        self.send_response(200)
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.flush()
+        time.sleep(delay)
+        self.wfile.write(b"ok")
+
+
+# path -> (status, body, headers)
+STATIC = {
+    "/ok": (200, b"ok"),
+    "/redirect": (302, b"", {"Location": "/target"}),
+    "/set-cookie": (200, b"ok", {"Set-Cookie": "session=secret; Path=/"}),
+    "/big": (200, b"x" * 5000),
+    "/gzip": (200, gzip.compress(PAYLOAD), {"Content-Encoding": "gzip"}),
+    "/br": (200, BROTLI_HELLO, {"Content-Encoding": "br"}),
+    "/utf-8": (200, b"as sent", {"Content-Encoding": "utf-8"}),
+    "/gzip-bomb": (200, gzip.compress(b"\0" * 5000), {"Content-Encoding": "gzip"}),
+    # Unknown token first: libcurl refuses it, so the raw path decodes the gzip
+    "/gzip-bomb-unknown": (200, gzip.compress(b"\0" * 5000), {"Content-Encoding": "utf-8, gzip"}),
+    "/gzip-unknown": (200, gzip.compress(PAYLOAD), {"Content-Encoding": "utf-8, gzip"}),
+    "/mixed-case": (200, b"ok", {"X-Custom-Header": "Value", "Content-Type": "text/plain"}),
+}
 
 
 def _serve(handler, *, tls: bool = False, **attrs):
