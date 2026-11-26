@@ -27,6 +27,7 @@
                 fileset = lib.fileset.unions [
                   ./pyproject.toml
                   ./README.md
+                  ./docs
                   ./LICENSE
                   ./shopify_spy
                   ./scripts

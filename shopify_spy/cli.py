@@ -20,7 +20,7 @@ from rich.console import Console
 from rich.markup import escape
 from typer.core import MarkupMode, TyperCommand, TyperGroup
 
-from shopify_spy._api import AsyncScrapeRun, scrape_async
+from shopify_spy._api import DOCS_URL, AsyncScrapeRun, scrape_async
 from shopify_spy._config import (
     Config,
     OutputFormat,
@@ -54,6 +54,13 @@ LIBRARY_EPILOG = (
     "spy.scrape(urls) yields items as dicts (options: help(spy.scrape)). "
     "Run a script without installing anything: "
     "uv run --with 'shopify-spy>=0.4' python script.py"
+)
+# Whole pages, not headings: installed help keeps these links for good
+DOCS_EPILOG = (
+    f"Docs: {DOCS_URL}/cli.md (options, config, proxies), "
+    f"{DOCS_URL}/output.md (files and item shapes), "
+    f"{DOCS_URL}/troubleshooting.md (store statuses and exit codes), "
+    f"{DOCS_URL}/library.md (the Python API)."
 )
 
 # Wide enough that piped help never wraps; an agent reads whole lines better than a
@@ -137,7 +144,7 @@ app = typer.Typer(
     name="shopify-spy",
     cls=_HelpGroup,
     help="Scrape product and collection data from Shopify and WooCommerce stores.",
-    epilog=LIBRARY_EPILOG,
+    epilog=f"{LIBRARY_EPILOG}\n\n{DOCS_EPILOG}",
     no_args_is_help=True,
     context_settings=CONTEXT_SETTINGS,
 )
@@ -185,6 +192,7 @@ SCRAPE_EPILOG = "\n\n".join(
         "~/.config/shopify-spy/config.yaml is read if it exists, and its values replace "
         "the defaults shown above.",
         LIBRARY_EPILOG,
+        DOCS_EPILOG,
     ]
 )
 

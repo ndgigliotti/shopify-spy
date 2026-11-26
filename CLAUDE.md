@@ -14,7 +14,7 @@ For one-off scrapes and live checks, write a script against the library (`import
 
 ## Architecture
 
-Layers, top to bottom; lower layers never import higher ones, and only the CLI imports `typer`, `rich` or `yaml`. The public API is what `__init__.py` exports; `_` modules are private. The library is a first-class interface: an option or behavior change updates the CLI, `_SCRAPE_DOC` in `_api.py`, and the README's Python quick start and "Use as a library" together.
+Layers, top to bottom; lower layers never import higher ones, and only the CLI imports `typer`, `rich` or `yaml`. The public API is what `__init__.py` exports; `_` modules are private. The library is a first-class interface: an option or behavior change updates the CLI, `_SCRAPE_DOC` in `_api.py`, and the README and every `docs/` page that covers it together (`docs/output.md` for schema, column and format changes; `docs/troubleshooting.md` for statuses, exit codes and hints).
 
 - **CLI** (`cli.py`, `_config.py`): Typer app built on `scrape_async`. YAML config precedence: defaults -> config file -> CLI args; `Config.to_kwargs()` maps config to library options. `FETCHER_FACTORY` is the test hook for a fake transport.
 - **Public API** (`_api.py`, `_export.py`, `_summary.py`, `_types.py`): `scrape()` (sync; steps a private event loop whose clock excludes paused time) and `scrape_async()`; `on_failure` raises `ScrapeFailed` by default. Writers match the old Scrapy exporters byte for byte (JSONL/JSON/XML).
