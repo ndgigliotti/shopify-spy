@@ -15,7 +15,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Shopify Spy is a command-line tool and Python library for scraping product and collection data from ecommerce stores. It supports Shopify and WooCommerce stores out of the box, using their public JSON endpoints, so it needs no API keys or store access. It's designed to be driven by coding agents such as Claude Code, Codex and Cursor as much as by people.
+Shopify Spy is a command-line tool and Python library for scraping product and collection data from ecommerce stores. It supports Shopify and WooCommerce stores out of the box, using their public JSON endpoints, so it needs no API keys or store access. It's designed to be driven by AI agents as much as by people: coding agents such as Claude Code, Codex and GitHub Copilot, and personal agents such as Hermes and OpenClaw, or any agent that can run a shell command or a Python script.
 
 To find Shopify stores to scrape, try searching Google with `site:myshopify.com`.
 
@@ -84,7 +84,7 @@ An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an i
 
 ## Features
 
-- **Agent-friendly.** Built for AI coding agents as much as for people:
+- **Agent-friendly.** Built for AI agents, coding or personal, as much as for people:
   - `--help` prints plain, untruncated text when piped, with every default, examples, where results go and what each exit code means.
   - Items are plain dicts with typed definitions, and `help(spy.scrape)` documents every library option, so an agent can write a script without reading the source.
   - `--peek` prints one item to stdout for a quick look at its shape; warnings go to stderr, so stdout stays valid JSONL.
