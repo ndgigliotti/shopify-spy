@@ -234,3 +234,10 @@ class RobotsRules:
         if self._parser is None:
             return True
         return self._parser.can_fetch(url, agent)
+
+    @property
+    def sitemaps(self) -> list[str]:
+        """The ``Sitemap:`` values as written, so a relative one stays relative."""
+        if self._parser is None:
+            return []
+        return list(self._parser.sitemaps)
