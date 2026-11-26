@@ -84,3 +84,29 @@ class MagentoProductItem(TypedDict, total=False):
     html_url: str | None
     image_urls: list[str]
     scraped_images: list[ScrapedImage]
+
+
+class BigCommerceProductItem(TypedDict, total=False):
+    """A BigCommerce product from the Storefront GraphQL ``site.products`` query: the
+    GraphQL ``node`` as returned, with its ``edges``/``node`` connections, plus
+    ``store``, ``platform``, ``html_url`` and ``image_urls`` (and ``scraped_images``
+    with images enabled). Prices are ``Money`` objects (``value``, ``currencyCode``) in
+    the store's default currency. There is no ``url`` key.
+
+    ``html_url`` is the product page, ``<scheme>://<host><path>``, or None without a
+    ``path``. ``image_urls`` lists the ``images`` ``urlOriginal`` values, the default
+    image first. ``variants`` holds up to 250 variants, each with its own ``sku``,
+    ``prices``, ``inventory``, ``defaultImage`` and option values."""
+
+    entityId: int
+    sku: str
+    name: str
+    path: str
+    prices: dict[str, Any]
+    images: dict[str, Any]
+    variants: dict[str, Any]
+    store: str
+    platform: Literal["bigcommerce"]
+    html_url: str | None
+    image_urls: list[str]
+    scraped_images: list[ScrapedImage]

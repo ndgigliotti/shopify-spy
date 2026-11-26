@@ -5,6 +5,7 @@ import csv
 import json
 import os
 import threading
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -812,3 +813,159 @@ def test_item_platform_names_magento():
     assert item_platform(WOO_PRODUCT) == "woocommerce"
     assert item_platform(SHOPIFY_PRODUCT) == "shopify"
     assert item_platform({"platform": "magento", "name": "x"}) is None
+
+
+def _bc_money(value, currency="USD"):
+    return {"value": value, "currencyCode": currency}
+
+
+def _bc_option(entity_id, name, value):
+    values = {"edges": [{"node": {"entityId": entity_id * 10, "label": value}}]}
+    return {"node": {"entityId": entity_id, "displayName": name, "values": values}}
+
+
+def _bc_variant(entity_id, sku, color, size, price, base=30, in_stock=True):
+    return {
+        "node": {
+            "entityId": entity_id,
+            "sku": sku,
+            "isPurchasable": in_stock,
+            "prices": {"price": _bc_money(price), "basePrice": _bc_money(base)},
+            "inventory": {"isInStock": in_stock},
+            "defaultImage": {"urlOriginal": f"https://bc.test/{sku}.jpg"},
+            # Listed out of productOptions order on purpose
+            "options": {"edges": [_bc_option(2, "Size", size), _bc_option(1, "Color", color)]},
+        }
+    }
+
+
+BIGCOMMERCE_PRODUCT = {
+    "id": "UHJvZHVjdDo3Nw==",
+    "entityId": 77,
+    "sku": "TEE",
+    "name": "Tee",
+    "path": "/tee/",
+    "description": "<p>Soft</p><p>cotton</p>",
+    "createdAt": {"utc": "2026-01-02T03:04:05Z"},
+    "brand": {"name": "Acme"},
+    "categories": {"edges": [{"node": {"name": "Men"}}, {"node": {"name": "Tops"}}]},
+    "prices": {
+        "price": _bc_money(20),
+        "basePrice": _bc_money(30),
+        "priceRange": {"min": _bc_money(20), "max": _bc_money(30)},
+    },
+    "inventory": {"isInStock": True},
+    "reviewSummary": {"numberOfReviews": 3, "summationOfRatings": 13},
+    "images": {
+        "edges": [
+            {"node": {"urlOriginal": "https://bc.test/1.jpg", "isDefault": False}},
+            {"node": {"urlOriginal": "https://bc.test/2.jpg", "isDefault": True}},
+        ]
+    },
+    "productOptions": {
+        "edges": [
+            {"node": {"entityId": 1, "displayName": "Color", "isVariantOption": True}},
+            {"node": {"entityId": 3, "displayName": "Extended Warranty", "isVariantOption": False}},
+            {"node": {"entityId": 2, "displayName": "Size", "isVariantOption": True}},
+        ]
+    },
+    "variants": {
+        "pageInfo": {"hasNextPage": False},
+        "edges": [
+            _bc_variant(101, "TEE-R-S", "Red", "S", 20),
+            _bc_variant(102, "TEE-B-L", "Blue", "L", 30, in_stock=False),
+        ],
+    },
+    "store": "bc.test",
+    "platform": "bigcommerce",
+    "html_url": "https://bc.test/tee/",
+    "image_urls": [],
+}
+
+BIGCOMMERCE_SIMPLE = {
+    "entityId": 9,
+    "sku": "MUG",
+    "name": "Mug",
+    "path": "/mug/",
+    "prices": {
+        "price": _bc_money(8),
+        "basePrice": _bc_money(8),
+        "retailPrice": _bc_money(10),
+    },
+    "inventory": {"isInStock": False},
+    "reviewSummary": {"numberOfReviews": 0, "summationOfRatings": 0},
+    "images": {"edges": []},
+    "variants": {"edges": []},
+    "store": "bc.test",
+    "platform": "bigcommerce",
+    "html_url": "https://bc.test/mug/",
+    "image_urls": [],
+}
+
+
+def test_csv_bigcommerce_variant_rows(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([BIGCOMMERCE_PRODUCT], path)
+    rows = read_csv(path)
+    assert [r["variant_id"] for r in rows] == ["101", "102"]
+    assert [r["sku"] for r in rows] == ["TEE-R-S", "TEE-B-L"]
+    assert [(r["variant_title"], r["option1"], r["option2"]) for r in rows] == [
+        ("Red / S", "Red", "S"),
+        ("Blue / L", "Blue", "L"),
+    ]
+    assert [(r["price"], r["compare_at_price"]) for r in rows] == [("20", "30"), ("30", "")]
+    assert [(r["available"], r["is_purchasable"]) for r in rows] == [
+        ("true", "true"),
+        ("false", "false"),
+    ]
+    assert rows[0]["variant_image_url"] == "https://bc.test/TEE-R-S.jpg"
+    row = rows[0]
+    assert (row["platform"], row["kind"], row["store"]) == ("bigcommerce", "product", "bc.test")
+    assert (row["id"], row["handle"], row["title"], row["vendor"]) == ("77", "tee", "Tee", "Acme")
+    assert (row["categories"], row["options"]) == ("Men, Tops", "Color, Size")
+    assert (row["created_at"], row["description"]) == ("2026-01-02T03:04:05Z", "Soft cotton")
+    assert row["html_url"] == "https://bc.test/tee/"
+    assert (row["image_url"], row["image_count"]) == ("https://bc.test/2.jpg", "2")
+    assert (row["currency"], row["min_price"], row["max_price"]) == ("USD", "20", "30")
+    assert (row["average_rating"], row["review_count"]) == ("4.33", "3")
+    assert row["variant_count"] == "2"
+    assert (row["option3"], row["url"], row["source"]) == ("", "", "")
+
+
+def test_csv_bigcommerce_product_without_variants(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([BIGCOMMERCE_SIMPLE], path)
+    (row,) = read_csv(path)
+    # basePrice equals the price, so the retail price (MSRP) is the "was" price
+    assert (row["sku"], row["price"], row["compare_at_price"]) == ("MUG", "8", "10")
+    assert (row["available"], row["variant_count"], row["variant_id"]) == ("false", "0", "")
+    assert (row["average_rating"], row["review_count"]) == ("", "0")
+    assert (row["image_url"], row["image_count"], row["handle"]) == ("", "0", "mug")
+
+
+def test_bigcommerce_variant_without_a_price_takes_the_products():
+    from shopify_spy._flatten import flatten
+
+    variant = _bc_variant(101, "TEE-R-S", "Red", "S", 20)
+    variant["node"]["prices"] = None
+    item = {**BIGCOMMERCE_PRODUCT, "variants": {"edges": [variant]}}
+    (row,) = flatten(item)
+    assert (row["price"], row["compare_at_price"]) == (Decimal("20"), Decimal("30"))
+
+
+def test_csv_holds_all_four_platforms(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([WOO_PRODUCT, SHOPIFY_PRODUCT, MAGENTO_SIMPLE, BIGCOMMERCE_SIMPLE], path)
+    text = path.read_text(encoding="utf-8")
+    assert text.count("platform,kind,") == 1
+    rows = read_csv(path)
+    assert [r["platform"] for r in rows] == (
+        ["woocommerce"] * 2 + ["shopify"] * 2 + ["magento", "bigcommerce"]
+    )
+
+
+def test_item_platform_names_bigcommerce():
+    from shopify_spy._flatten import item_platform
+
+    assert item_platform(BIGCOMMERCE_SIMPLE) == "bigcommerce"
+    assert item_platform({"platform": "bigcommerce", "name": "x"}) is None

@@ -9,7 +9,9 @@ one row each, sharing the product columns they have. WooCommerce products get a 
 per variation, with the variation's own price, SKU and stock when the scrape fetched
 its record (otherwise the product's). Magento products get a row per configurable
 variant, with the variant's own price, SKU and stock (a simple product gets one row
-with its own). JSONL, JSON and XML keep each platform's native item shape.
+with its own). BigCommerce products get a row per variant in the same way, with the
+GraphQL ``edges``/``node`` connections read through. JSONL, JSON and XML keep each
+platform's native item shape.
 """
 
 from __future__ import annotations
@@ -21,9 +23,12 @@ from decimal import Decimal
 from html.parser import HTMLParser
 from typing import Any
 
+from shopify_spy._bigcommerce import image_list
 from shopify_spy._magento import gallery_urls
 from shopify_spy._summary import (
+    bigcommerce_price,
     html_url,
+    is_bigcommerce,
     is_magento,
     magento_price,
     shopify_price_range,
@@ -108,14 +113,17 @@ def _builder(item: dict[str, Any]) -> Callable[[dict[str, Any]], list[dict[str, 
         return _shopify_collection
     if is_magento(item):
         return _magento
+    # Before WooCommerce: both have a prices dict
+    if is_bigcommerce(item):
+        return _bigcommerce
     if isinstance(item.get("prices"), dict) and "permalink" in item:
         return _woocommerce
     return None
 
 
 def item_platform(item: dict[str, Any]) -> str | None:
-    """``"shopify"``, ``"woocommerce"`` or ``"magento"``; None when it isn't a
-    scraped item."""
+    """``"shopify"``, ``"woocommerce"``, ``"magento"`` or ``"bigcommerce"``; None when
+    it isn't a scraped item."""
     builder = _builder(item)
     return _PLATFORMS.get(builder) if builder else None
 
@@ -354,11 +362,115 @@ def _html(value: Any) -> Any:
     return value.get("html") if isinstance(value, dict) else None
 
 
+def _bigcommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
+    summary = summarize(item)
+    images = image_list(item)
+    variants = _nodes(item.get("variants"))
+    options = [o for o in _nodes(item.get("productOptions")) if o.get("isVariantOption") is True]
+    path = item.get("path")
+    rating, reviews = _bigcommerce_reviews(item.get("reviewSummary"))
+    product = {
+        "platform": "bigcommerce",
+        "kind": "product",
+        "store": item.get("store"),
+        "id": item.get("entityId"),
+        "handle": path.strip("/") or None if isinstance(path, str) else None,
+        "title": summary.title,
+        "vendor": _field(item.get("brand"), "name"),
+        "categories": _names(_nodes(item.get("categories"))),
+        "options": _join(o.get("displayName") for o in options),
+        "created_at": _field(item.get("createdAt"), "utc"),
+        "description": _text(item.get("description")),
+        "html_url": item.get("html_url"),
+        "image_url": images[0] if images else None,
+        "image_count": len(images),
+        "currency": summary.currency,
+        "min_price": summary.min_price,
+        "max_price": summary.max_price,
+        "average_rating": rating,
+        "review_count": reviews,
+        "variant_count": len(variants),
+        **_bigcommerce_offer(item),
+    } | _image_paths(item)
+    ids = [o.get("entityId") for o in options]
+    return [product | _bigcommerce_variant(v, ids, item) for v in variants] or [product]
+
+
+def _bigcommerce_variant(
+    variant: dict[str, Any], option_ids: list[Any], item: dict[str, Any]
+) -> dict[str, Any]:
+    """A variant's own columns; ``option_ids`` order option1-3 like the options column."""
+    labels = {}
+    for option in _nodes(variant.get("options")):
+        values = _nodes(option.get("values"))
+        labels[option.get("entityId")] = values[0].get("label") if values else None
+    # Options the product's variant options lack come after
+    values = [labels.get(i) for i in option_ids]
+    values += [v for k, v in labels.items() if k not in option_ids]
+    return (
+        {
+            "variant_id": variant.get("entityId"),
+            "variant_title": " / ".join(str(v) for v in values if v not in (None, "")) or None,
+            "is_purchasable": variant.get("isPurchasable"),
+        }
+        | {f"option{i + 1}": v for i, v in enumerate(values[:3])}
+        | _bigcommerce_offer(variant, fallback=item)
+        | {"variant_image_url": _field(variant.get("defaultImage"), "urlOriginal")}
+    )
+
+
+def _bigcommerce_offer(
+    data: dict[str, Any], fallback: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """The price, SKU and stock columns of a BigCommerce product or variant.
+
+    A variant without its own price or "was" price takes the ``fallback`` product's.
+    The "was" price is ``basePrice``, else ``retailPrice`` (MSRP): the first one the
+    item sells below.
+    """
+    sources = [data.get("prices"), fallback.get("prices") if fallback else None]
+
+    def money(key: str) -> Decimal | None:
+        return next((p for s in sources if (p := bigcommerce_price(s, key)[0]) is not None), None)
+
+    price = money("price")
+    was = [m for m in (money("basePrice"), money("retailPrice")) if _below(price, m)]
+    return {
+        "sku": data.get("sku"),
+        "price": price,
+        "compare_at_price": was[0] if was else None,
+        "available": _field(data.get("inventory"), "isInStock"),
+    }
+
+
+def _bigcommerce_reviews(summary: Any) -> tuple[Decimal | None, Any]:
+    """The average rating (None without reviews) and the review count."""
+    count = _field(summary, "numberOfReviews")
+    total = _field(summary, "summationOfRatings")
+    numbers = (int, float)
+    if not isinstance(count, numbers) or isinstance(count, bool) or count <= 0:
+        return None, count
+    if not isinstance(total, numbers) or isinstance(total, bool):
+        return None, count
+    return (Decimal(str(total)) / Decimal(str(count))).quantize(Decimal("0.01")), count
+
+
+def _nodes(connection: Any) -> list[dict[str, Any]]:
+    """The node dicts of a GraphQL connection (``{"edges": [{"node": ...}]}``)."""
+    edges = connection.get("edges") if isinstance(connection, dict) else None
+    return [n for e in dicts(edges) if isinstance(n := e.get("node"), dict)]
+
+
+def _field(value: Any, key: str) -> Any:
+    return value.get(key) if isinstance(value, dict) else None
+
+
 _PLATFORMS: dict[Callable[[dict[str, Any]], list[dict[str, Any]]], str] = {
     _shopify_product: "shopify",
     _shopify_collection: "shopify",
     _woocommerce: "woocommerce",
     _magento: "magento",
+    _bigcommerce: "bigcommerce",
 }
 
 
