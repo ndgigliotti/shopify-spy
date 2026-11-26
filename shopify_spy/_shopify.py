@@ -51,8 +51,12 @@ SKIPPED_CHILD_SITEMAPS = (
 )
 
 # A shop's Shopify domain, as a headless frontend's HTML names it (checkout links,
-# Shop Pay or analytics config)
-MYSHOPIFY_HANDLE = re.compile(r"([a-z0-9-]+)\.myshopify\.com")
+# Shop Pay or analytics config). The handle starts after a non-handle character or
+# a %XX or \uXXXX escape, so "%2f%2facme" and "/acme" don't capture the
+# escape's tail
+MYSHOPIFY_HANDLE = re.compile(
+    r"(?:(?<=%[0-9a-f]{2})|(?<=\\u[0-9a-f]{4})|(?<![a-z0-9%\\-]))([a-z0-9-]+)\.myshopify\.com"
+)
 
 next_bulk_page_url = next_page_url
 

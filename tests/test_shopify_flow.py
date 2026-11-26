@@ -696,6 +696,17 @@ def test_password_protected_myshopify_domain_falls_back_to_the_sitemap(caplog):
     assert "password protected" in caplog.text
 
 
+def test_escaped_myshopify_references_name_the_same_handle():
+    page = (
+        '<a href="/account?return_to=https%3A%2F%2Facme.myshopify.com">in</a>'
+        '<script>{"shop":"https:\\u002F\\u002Facme.myshopify.com"}</script>'
+        '<a href="https://acme.myshopify.com/cart">cart</a>'
+    )
+    items, result, _ = scrape(headless(**{HOMEPAGE: (200, page, {"Content-Type": "text/html"})}))
+    assert len(items) == 3
+    assert result.stores[0].products_from == "acme.myshopify.com"
+
+
 ROBOTS_HIDE_HOMEPAGE = (200, "User-agent: *\nDisallow: /$\n")
 HOMEPAGE_FAILURES = {
     "two_handles": homepage("acme.myshopify.com", "other.myshopify.com"),
