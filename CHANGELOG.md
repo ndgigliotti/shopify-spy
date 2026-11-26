@@ -14,6 +14,9 @@
   as Shopify only, and ends with examples, where results go, the exit status and the
   config files read without `--config`. `scripts/contract_test.py` reports a DIFF for
   both `--help` outputs against 0.5.0 because of this.
+- The reference documentation moved from the README into `docs/`: installation, the
+  command line, output, the library and troubleshooting each have a page. The README
+  keeps the quick start and links to them.
 
 ### Fixed
 

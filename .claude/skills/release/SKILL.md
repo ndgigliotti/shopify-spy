@@ -20,11 +20,14 @@ be undone.
   here means wait a few minutes and retry, not a bad build.
 - The version X.Y.Z is the same in `pyproject.toml` and in the project's
   `version =` line in `uv.lock` (under `name = "shopify-spy"`).
+- The README's links to `docs/` name the tag `vX.Y.Z`
+  (`.../shopify-spy/blob/vX.Y.Z/docs/...`), so the PyPI page opens this
+  release's docs. `tests/test_docs.py` fails until they match `pyproject.toml`.
 - `CHANGELOG.md` starts with a `## X.Y.Z` section describing what's on master.
 - X.Y.Z has no tag yet (`git tag -l vX.Y.Z`) and isn't on PyPI
   (`curl -s https://pypi.org/pypi/shopify-spy/X.Y.Z/json` is a 404).
 
-If the version or CHANGELOG needs updating, do it in a PR (master is protected):
+If the version, the docs links or the CHANGELOG need updating, do it in a PR (master is protected):
 the last commit of the release's PR, or a small PR of its own. Release once it's
 merged and master's CI has passed.
 
