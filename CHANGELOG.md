@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `--impersonate BROWSER`, `network.impersonate` in the config file and
+  `impersonate=` on `scrape`/`scrape_async` send requests through curl_cffi with a
+  real browser's TLS and HTTP/2 fingerprint and headers. Some sites refuse clients
+  that don't look like a browser. It needs the new `impersonate` extra
+  (`curl_cffi>=0.16.3,<0.18`), is off by default and never turns itself on. Any
+  target the installed curl_cffi accepts works (`chrome`, `firefox`, `safari`,
+  `chrome150`, ...). One profile serves the whole run: it sets the user agent, so
+  `--user-agent` can't be combined with it, and a 403 or 429 retries with the same
+  profile. The Nix package and dev shell include it
+  ([#95](https://github.com/ndgigliotti/shopify-spy/issues/95)).
+
 ## 0.5.1
 
 ### Changed
