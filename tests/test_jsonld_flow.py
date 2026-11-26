@@ -330,6 +330,18 @@ def test_product_group_with_variants(tmp_path):
     assert item["image_urls"] == ["https://cdn.test/tee.jpg", "https://cdn.test/s.jpg"]
 
 
+def test_lone_variant_images_listed(tmp_path):
+    group = {
+        "@type": "ProductGroup",
+        "url": url(0),
+        "image": "https://cdn.test/tee.jpg",
+        "hasVariant": {"@type": "Product", "image": "https://cdn.test/s.jpg"},
+    }
+    routes = {SITEMAP: urlset(url(0)), url(0): product_page(group)}
+    items, _, _ = scrape_ld(routes, images=True, images_dir=tmp_path)
+    assert items[0]["image_urls"] == ["https://cdn.test/tee.jpg", "https://cdn.test/s.jpg"]
+
+
 def test_images_on(tmp_path):
     items, _, _ = scrape_ld(store(1), images=True, images_dir=tmp_path)
     assert items[0]["image_urls"] == ["https://cdn.test/0.jpg"]

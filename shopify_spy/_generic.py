@@ -385,7 +385,7 @@ def _item(node: dict[str, Any], response: Response, images: bool) -> dict[str, A
 def _image_urls(node: dict[str, Any], page: str) -> list[str]:
     """The node's images, then its variants' images not already listed."""
     urls = jsonld.image_urls(node.get("image"), page)
-    for variant in node.get("hasVariant") or []:
+    for variant in jsonld.listify(node.get("hasVariant")):
         if isinstance(variant, dict):
             urls += [u for u in jsonld.image_urls(variant.get("image"), page) if u not in urls]
     return urls
