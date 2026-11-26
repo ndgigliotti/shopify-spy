@@ -361,7 +361,7 @@ def _magento_offer(item: dict[str, Any], fallback: dict[str, Any] | None = None)
 
 def _jsonld(item: dict[str, Any]) -> list[dict[str, Any]]:
     summary = summarize(item)
-    images = jsonld.image_urls(item.get("image"))
+    images = jsonld.image_urls(item.get("image"), item.get("html_url"))
     variants = jsonld_variants(item)
     offers = dicts(item.get("offers"))
     # Without variants, a list of offers is the variants: one per size, say
@@ -407,7 +407,7 @@ def _jsonld_variant(
 ) -> dict[str, Any]:
     """A ``hasVariant`` Product's row; option1-3 follow ``variesBy``."""
     values = [_jsonld_value(variant.get(name)) for name in names]
-    images = jsonld.image_urls(variant.get("image"))
+    images = jsonld.image_urls(variant.get("image"), product.get("html_url"))
     title = " / ".join(v for v in values if v) or _unescape(jsonld.text(variant.get("name")))
     return (
         product

@@ -132,6 +132,7 @@ With `--platform jsonld`, each line holds the schema.org `Product` or `ProductGr
 - **Which pages count:** a page whose JSON-LD has a `Product` or `ProductGroup` for that page. A listing page with several products, none of them the page's own, is skipped, as are pages with no Product data and deleted (404 or 410) pages.
 - **Fields:** whatever the page's node has. Common ones are `name`, `sku`, `brand`, `category`, `description`, `image` and `offers` (an `Offer`, an `AggregateOffer` with `lowPrice`/`highPrice`, or a list of offers). Prices are strings or numbers as the page wrote them.
 - **`html_url`** is the page the node came from, without its fragment.
+- **Images:** `image_urls` and the unified `image_url` and `variant_image_url` columns resolve a relative `image` (`/media/tee.jpg`) against the page's URL; the node's own `image` stays as written.
 - **Variants:** a `ProductGroup` keeps its `hasVariant` Products inside it, each with its own `sku` and `offers`. Many stores publish a single Product with one offer or a price range instead, so variants are often missing.
 - **Fidelity:** a store's JSON-LD is written for search engines, not as a catalog, so it can leave out fields the native platforms have (tags, stock counts, variant options). See [JSON-LD stores](troubleshooting.md#json-ld-stores).
 - **XML:** keys that aren't valid element names (such as `@type`) have their invalid characters replaced with `_`.

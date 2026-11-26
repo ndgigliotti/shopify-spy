@@ -335,6 +335,18 @@ def test_images_on(tmp_path):
     assert items[0]["image_urls"] == ["https://cdn.test/0.jpg"]
 
 
+def test_relative_images_resolved_against_the_page(tmp_path):
+    page = node(0, image=["/media/0.jpg", "//cdn.test/0b.jpg", "https://cdn.test/0c.jpg"])
+    routes = {SITEMAP: urlset(url(0)), url(0): product_page(page)}
+    items, _, _ = scrape_ld(routes, images=True, images_dir=tmp_path)
+    assert items[0]["image_urls"] == [
+        f"{STORE}/media/0.jpg",
+        "https://cdn.test/0b.jpg",
+        "https://cdn.test/0c.jpg",
+    ]
+    assert items[0]["image"] == page["image"]
+
+
 def test_page_without_product_gives_no_item():
     routes = store(3, page=lambda i: product_page(node(i)) if i else blank_page())
     items, result, _ = scrape_ld(routes)

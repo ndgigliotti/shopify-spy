@@ -126,14 +126,21 @@ def _dicts(value: Any) -> list[dict[str, Any]]:
     return [v for v in listify(value) if isinstance(v, dict)]
 
 
-def image_urls(value: Any) -> list[str]:
-    """URLs from ``image``: a URL, an ImageObject, or a list of either."""
+def image_urls(value: Any, base: Any = None) -> list[str]:
+    """URLs from ``image``: a URL, an ImageObject, or a list of either; resolved
+    against ``base`` (the page's URL), if it's a string."""
     urls = []
     for image in listify(value):
         if isinstance(image, dict):
             image = image.get("url") or image.get("contentUrl")
-        if isinstance(image, str) and image:
-            urls.append(image)
+        if not isinstance(image, str) or not image:
+            continue
+        if isinstance(base, str):
+            try:
+                image = urllib.parse.urljoin(base, image)
+            except ValueError:  # a malformed host, such as an unclosed "[" in an IPv6 one
+                continue
+        urls.append(image)
     return urls
 
 

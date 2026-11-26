@@ -906,6 +906,15 @@ def test_csv_jsonld_product_group_rows(tmp_path):
     assert (row["min_price"], row["max_price"], row["variant_count"]) == ("10", "12", "2")
 
 
+def test_csv_jsonld_relative_images_resolved_against_the_page(tmp_path):
+    variant = _jl_variant("TEE-S", "S", "10") | {"image": "//cdn.j.test/s.jpg"}
+    path = tmp_path / "out.csv"
+    write_items([JSONLD_GROUP | {"image": "/media/tee.jpg", "hasVariant": [variant]}], path)
+    (row,) = read_csv(path)
+    assert row["image_url"] == "https://j.test/media/tee.jpg"
+    assert row["variant_image_url"] == "https://cdn.j.test/s.jpg"
+
+
 def test_csv_jsonld_variant_without_size_is_titled_by_name(tmp_path):
     variant = _jl_variant("TEE-S", "S", "10")
     del variant["size"]
