@@ -76,6 +76,15 @@ def test_help_links_name_installed_docs(text):
         assert (DOCS / m.group(2)).is_file()
 
 
+def test_scrape_doc_names_every_platform():
+    # Lowercase quoted platform lists, which a case-sensitive grep for stale
+    # "WooCommerce and Magento" text misses
+    doc = spy.scrape.__doc__
+    assert doc.count('"jsonld"') >= 2
+    assert "JsonLdProductItem" in doc
+    assert '"woocommerce" or "magento"' not in doc
+
+
 def test_troubleshooting_covers_every_status():
     text = (DOCS / "troubleshooting.md").read_text(encoding="utf-8")
     missing = [s for s in [*StoreStatus, "invalid_url"] if f"| `{s}` |" not in text]

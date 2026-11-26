@@ -123,7 +123,7 @@ DEFAULT_CONFIG_YAML = """\
 # See https://github.com/ndgigliotti/shopify-spy for documentation
 
 scrape:
-  platform: shopify   # Platform: shopify, woocommerce, magento
+  platform: shopify   # Platform: shopify, woocommerce, magento, jsonld
   products: true      # Scrape product data (Shopify only)
   collections: false  # Scrape collection data (Shopify only)
   images: false       # Download product images

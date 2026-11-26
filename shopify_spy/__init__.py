@@ -1,4 +1,5 @@
-"""Scrape product and collection data from Shopify, WooCommerce and Magento stores.
+"""Scrape product and collection data from Shopify, WooCommerce, Magento and other
+stores.
 
 Scripts::
 
