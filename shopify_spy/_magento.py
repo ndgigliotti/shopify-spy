@@ -33,7 +33,8 @@ PAGE_SIZE = 100
 # Only fields every 2.4.x release from 2.4.1 (which added uid) has on
 # ProductInterface: an unknown field fails the whole query. %d slots, not
 # str.format, because of GraphQL's braces
-_QUERY = """
+_QUERY = " ".join(
+    """
 { products(search: "", pageSize: %d, currentPage: %d) {
     total_count
     page_info { current_page page_size total_pages }
@@ -59,8 +60,8 @@ _QUERY = """
       }
     }
 } }
-"""
-QUERY = " ".join(_QUERY.split())
+""".split()
+)
 
 _PAGE_SIZE_ERROR = re.compile(r"page ?size", re.I)
 # "currentPage value 5 specified is greater than the 4 page(s) available."
@@ -74,7 +75,7 @@ class MagentoError(Exception):
 def get_api_url(store_url: str, page: int = 1, page_size: int = PAGE_SIZE) -> str:
     """Build the GraphQL GET URL for the given store, page and page size."""
     parsed = normalize_url(store_url)
-    query = urllib.parse.urlencode({"query": QUERY % (page_size, page)})
+    query = urllib.parse.urlencode({"query": _QUERY % (page_size, page)})
     return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, API_PATH, "", query, ""))
 
 
