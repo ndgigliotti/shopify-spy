@@ -418,6 +418,9 @@ class StoreSession:
         return delay, self._excuse_from_bail(delay) if excused else None
 
     async def _fetch_with_retries(self, url: str, kind: RequestKind) -> Response | None:
+        # Before the address lookup, which can wait up to request_timeout
+        if self.registry.shutdown.is_set():
+            raise ShutdownRequested
         # Before robots.txt, so a refused host isn't sent that request either
         await self._check_destination(url)
         if not await self._allowed(url, kind):

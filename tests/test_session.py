@@ -765,6 +765,18 @@ async def test_shutdown_stops_new_requests():
     assert fetcher.requests == []
 
 
+async def test_shutdown_stops_before_address_lookup():
+    calls = []
+    session, fetcher = make_session(
+        {f"{STORE}/p": (200, "ok")}, resolver=static_resolver({}, calls)
+    )
+    session.registry.shutdown.set()
+    with pytest.raises(ShutdownRequested):
+        await get(session, f"{STORE}/p")
+    assert calls == []
+    assert fetcher.requests == []
+
+
 async def test_shutdown_stops_before_retry():
     session = None
 
