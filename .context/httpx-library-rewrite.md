@@ -720,7 +720,7 @@ streaming `ItemWriter` context manager used by the CLI. Formats per §3.7 with D
 | Dev | `respx` (for `HttpxFetcher` tests only), `pytest-asyncio`, `pytest-cov` | Consolidate dev deps into one place (today split between `[dependency-groups]` and `optional-dependencies.dev`) |
 
 CLI deps stay required so `uv tool install shopify-spy` keeps working.
-Later extras: `[stealth]` → `curl_cffi`, `[browser]` → `playwright`.
+Later extras: `[curl]` → `curl_cffi`, `[browser]` → `playwright` (§12 items 3 and 4).
 
 ## 6. Python and platforms
 
@@ -888,8 +888,8 @@ engine, robots.txt respected, one item per store:
 | **TLS verification failures** | **0 of 17** |
 
 D14 (verify by default) stands. Explicit blocking (403) was not seen; the main
-gap is headless stores, which supports prioritizing §12 item 5 over stealth
-transports.
+gap is headless stores, which supports prioritizing §12 item 5 over the libcurl
+transport.
 
 ## 9. Deviations needing sign-off
 
@@ -930,19 +930,48 @@ on every public symbol (returns, statuses, files written); `py.typed`.
 
 ## 12. After the branch lands (not in this work)
 
-1. **Browser identities:** each UA paired with matching headers (client hints,
-   `Sec-Fetch-*`), versions regenerated at release time.
-2. **Platform auto-detect** (`platform="auto"`).
-3. **`[stealth]`:** `curl_cffi` `Fetcher` using `Identity.impersonate`.
-4. **`[browser]`:** Playwright `Fetcher` for anti-bot challenges, handing
-   clearance cookies to the HTTP transport via the session cookie jar. Where
-   stealth isn't needed, Lightpanda over CDP (`connect_over_cdp`) behind the
-   same interface.
-5. **Headless/Hydrogen stores** (removed from `master` in `db05673`): an adapter
-   using a `PageRenderer` protocol to extract JSON-LD, meta tags or Shopify JS
-   objects; `parsel` standalone if selectors are needed.
-6. **Escalation:** per store, move up transports on block signals; record the
-   level in `StoreResult`.
+Guiding principles:
+
+- Rotating browser UAs stay the default, so requests look like ordinary browser
+  traffic (Nick's decision); an honest UA is at most opt-in.
+- Neutral names: no "stealth", "impersonate" or "bypass" in user-facing names.
+- No CAPTCHA solving or "bypass" features.
+- Polite defaults stay on: robots.txt, throttling, bail.
+
+1. **Browser identities (dropped):** matching headers per UA (#54, closed).
+   Chrome client hints over httpx's TLS widen the mismatch: the one test,
+   recorded in #62, got a 403 where the bare UA got a 429. Revisit only
+   together with item 3.
+2. **Platform auto-detect** (`platform="auto"`), in progress: #41, branch
+   `feat/platform-autodetect`, no PR yet. On `master`, `platform="auto"` still
+   raises (`_api.py:87`).
+3. **libcurl transport:** `transport="curl"`, a `[curl]` extra, and UAs paired
+   with `curl_cffi` impersonation profiles via `Identity.impersonate`. Build it
+   on 403s from Cloudflare-fronted stores, or once Shopify or Cloudflare start
+   checking fingerprints.
+4. **Browser renderer:** any engine over CDP, defaulting to Playwright with
+   Chromium. Lightpanda 1.0.5 got 0/6 Shopify stores' `/products.json` through
+   the edge (challenge pages; the test was muddied by an IP rate limit), and its
+   binary refuses UAs containing "Mozilla". It stays an optional lightweight
+   renderer for pages that need JS.
+5. **Headless/Hydrogen stores** (removed from `master` in `db05673`): plain
+   fetch first, since most Hydrogen and Next.js storefronts render on the server:
+   JSON-LD, then Hydrogen/React Router loader data. A browser only for pages that
+   render on the client. Could generalize into a best-effort generic adapter for
+   stores not on Shopify.
+   - The `lightpanda` PyPI package has `AsyncBrowser`, `structured_data()` and
+     `CDPServer`, and finds its binary via `LIGHTPANDA_BIN` (works for Nix). The
+     bundled binary is AGPL-3.0; no Windows wheels.
+   - A browser does its own networking and skips the session layer (robots.txt,
+     throttling, proxy): strict concurrency limits, and robots.txt checked
+     against the `shopify-spy` token (#80).
+6. **Escalation:** per store, move up transports on block signals and record the
+   level in `StoreResult`, once a manual transport toggle has shown it rescues
+   stores.
 7. Optional run-wide item limit; public event/progress API if a real need appears.
 
-Priority of 3, 4 and 6 depends on the block rate measured in milestone 0.
+Evidence for 3, 4 and 6: milestone 0 saw no 403s in 17 stores. Spot checks on
+2026-11-25: on Shopify, a Windows Chrome UA and `shopify-spy/0.5.0` both got 200
+at 6/6 stores. On the WooCommerce Store API, Scrapy, shopify-spy and Chrome UAs
+got 200 at 3/3, while `python-httpx` got 403 at the two Cloudflare-fronted stores
+(porterandyork, nalgene), so never fall back to httpx's default UA.
