@@ -4,18 +4,16 @@ Shopify Spy needs Python 3.11 or later. Install it as a command-line tool, as a 
 
 ## As a command-line tool
 
-[pipx](https://pipx.pypa.io/) and [uv tool](https://docs.astral.sh/uv/) install CLI tools in isolated environments, so they won't conflict with other Python projects:
+[uv tool](https://docs.astral.sh/uv/) installs CLI tools in isolated environments, so they won't conflict with other Python projects:
 
 ```bash
-# pipx
-pipx install shopify-spy
-
-# uv
 uv tool install shopify-spy
 
 # Or run it once without installing
 uvx shopify-spy scrape --peek https://www.example.com
 ```
+
+[pipx](https://pipx.pypa.io/) works the same way: `pipx install shopify-spy`.
 
 Installing provides two identical commands, `spy` and `shopify-spy`; the docs use `spy`. With `uvx`, name the package: `uvx shopify-spy ...` or `uvx --from shopify-spy spy ...`. `uvx spy` would fetch an unrelated package named `spy`.
 
@@ -45,9 +43,9 @@ import shopify_spy as spy
 Excel output (`--format xlsx`, or an `.xlsx` path in the library) needs the `excel` extra:
 
 ```bash
-pipx install 'shopify-spy[excel]'
 uv tool install 'shopify-spy[excel]'
 uv add 'shopify-spy[excel]'
+pipx install 'shopify-spy[excel]'
 ```
 
 ## Nix

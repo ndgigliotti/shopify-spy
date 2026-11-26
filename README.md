@@ -22,13 +22,13 @@ To find Shopify stores to scrape, try searching Google with `site:myshopify.com`
 ## Installation
 
 ```bash
-pipx install shopify-spy      # or: uv tool install shopify-spy
+uv tool install shopify-spy
 
 # Or run it once without installing
 uvx shopify-spy scrape --peek https://www.example.com
 ```
 
-Installing provides two identical commands, `spy` and `shopify-spy`. With `uvx`, name the package (`uvx shopify-spy ...`), since `uvx spy` would fetch an unrelated package. Excel output needs the `excel` extra (`pipx install 'shopify-spy[excel]'`), and Python 3.11 or later is required. [Installation](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.0/docs/install.md) covers using it as a library, inline script metadata and Nix.
+Installing provides two identical commands, `spy` and `shopify-spy`. With `uvx`, name the package (`uvx shopify-spy ...`), since `uvx spy` would fetch an unrelated package. Excel output needs the `excel` extra (`uv tool install 'shopify-spy[excel]'`), and Python 3.11 or later is required. [Installation](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.0/docs/install.md) covers pipx, using it as a library, inline script metadata and Nix.
 
 ## Quick Start
 
@@ -55,7 +55,12 @@ Results are saved as JSONL in `./output` (change it with `--output`), with a liv
 
 ### Python
 
-The same engine is a library, so a script can scrape, filter and save in one pass:
+The same engine is a library, so a script can scrape, filter and save in one pass. A `uv tool` install only provides the command, so install the package where the script runs:
+
+```bash
+uv add shopify-spy                                  # in a project
+uv run --with 'shopify-spy>=0.4' python script.py   # or a one-off script, nothing to install
+```
 
 ```python
 import shopify_spy as spy
