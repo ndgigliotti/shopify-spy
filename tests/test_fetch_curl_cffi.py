@@ -311,7 +311,10 @@ async def test_sixteen_requests_are_in_flight_at_once():
             self.wfile.write(b"ok")
 
     httpd = _serve(BarrierHandler)
-    httpd.request_queue_size = 64
+    # The server is already listening with socketserver's backlog of 5, so
+    # request_queue_size would come too late; macOS drops the extra SYNs and
+    # the client's retransmit backoff outlasts the deadline
+    httpd.socket.listen(64)
     url = f"http://127.0.0.1:{httpd.server_address[1]}/"
     try:
         start = time.monotonic()
