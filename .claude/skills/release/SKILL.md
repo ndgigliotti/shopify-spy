@@ -91,8 +91,9 @@ can't merge them; a nixpkgs committer has to.
   as maintainer. If none appears within a few days, read the newest log under
   https://nixpkgs-update-logs.nixos.org/python3Packages.shopify-spy/
 - Changes: **(ask)** open the bump PR yourself with the dependency changes in
-  `default.nix`, after checking no bot PR is open for the same version. It
-  merges when a committer reviews it.
+  `default.nix`. It merges when a committer reviews it. If the bot's PR for the
+  same version is already open (an extra-only change can pass its build), don't
+  approve it; **(ask)** comment there linking yours so a committer closes it.
 - Close any shopify-spy issue tracking a nixpkgs change (like #71) once its PR
   merges.
 
