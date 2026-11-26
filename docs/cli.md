@@ -77,7 +77,7 @@ spy init [PATH] [--force]
 
 ## Configuration
 
-A YAML config file sets defaults for `scrape`, and options on the command line override it. `--config` names the file. Without it, or if that file doesn't exist, the CLI reads the first of these that exists:
+A YAML config file sets defaults for `scrape`, and options on the command line override it. `--config` names the file, which must exist. Without it, the CLI reads the first of these that exists:
 
 1. `./shopify-spy.yaml`
 2. `~/.config/shopify-spy/config.yaml`
