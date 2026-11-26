@@ -1,14 +1,15 @@
 """Flat rows for scraped items: one row per variant, every cell a scalar.
 
-Both platforms share one fixed column list, ``COLUMNS``, with a ``platform`` column,
-so one CSV (or any flat table) can hold a mixed run. Columns only one platform has
-are blank for the other. Shopify products get a row per variant with the product's
+Every platform shares one fixed column list, ``COLUMNS``, with a ``platform``
+column, so one CSV (or any flat table) can hold a mixed run. Columns a platform
+lacks are blank on its rows. Shopify products get a row per variant with the product's
 columns, including the price range across its variants, repeated (a product without
 variants still gets one row); collections get
 one row each, sharing the product columns they have. WooCommerce products get a row
 per variation, with the variation's own price, SKU and stock when the scrape fetched
-its record (otherwise the product's). JSONL, JSON and XML keep each platform's native
-item shape.
+its record (otherwise the product's). Magento products get a row per configurable
+variant, with the variant's own price, SKU and stock (a simple product gets one row
+with its own). JSONL, JSON and XML keep each platform's native item shape.
 """
 
 from __future__ import annotations
@@ -20,7 +21,15 @@ from decimal import Decimal
 from html.parser import HTMLParser
 from typing import Any
 
-from shopify_spy._summary import html_url, shopify_price_range, summarize, woo_money
+from shopify_spy._magento import gallery_urls
+from shopify_spy._summary import (
+    html_url,
+    is_magento,
+    magento_price,
+    shopify_price_range,
+    summarize,
+    woo_money,
+)
 from shopify_spy._utils import dicts
 
 COLUMNS = [
@@ -97,17 +106,18 @@ def _builder(item: dict[str, Any]) -> Callable[[dict[str, Any]], list[dict[str, 
         return _shopify_product
     if isinstance(item.get("collection"), dict):
         return _shopify_collection
+    if is_magento(item):
+        return _magento
     if isinstance(item.get("prices"), dict) and "permalink" in item:
         return _woocommerce
     return None
 
 
 def item_platform(item: dict[str, Any]) -> str | None:
-    """``"shopify"`` or ``"woocommerce"``; None when it isn't a scraped item."""
+    """``"shopify"``, ``"woocommerce"`` or ``"magento"``; None when it isn't a
+    scraped item."""
     builder = _builder(item)
-    if builder is None:
-        return None
-    return "woocommerce" if builder is _woocommerce else "shopify"
+    return _PLATFORMS.get(builder) if builder else None
 
 
 def default_columns(item: dict[str, Any]) -> list[str] | None:
@@ -266,6 +276,79 @@ def _woocommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
             | (_woo_offer(variation) if isinstance(variation.get("prices"), dict) else {})
         )
     return rows or [product]
+
+
+def _magento(item: dict[str, Any]) -> list[dict[str, Any]]:
+    summary = summarize(item)
+    images = gallery_urls(item)
+    variants = dicts(item.get("variants"))
+    options = dicts(item.get("configurable_options"))
+    codes = [o.get("attribute_code") for o in options if o.get("attribute_code")]
+    product = {
+        "platform": "magento",
+        "kind": "product",
+        "store": item.get("store"),
+        "id": item.get("uid"),
+        "handle": item.get("url_key"),
+        "title": summary.title,
+        "categories": _names(item.get("categories")),
+        "options": _join(o.get("label") for o in options),
+        "description": _text(_html(item.get("description"))),
+        "short_description": _text(_html(item.get("short_description"))),
+        "html_url": item.get("html_url"),
+        "image_url": images[0] if images else None,
+        "image_count": len(images),
+        "currency": summary.currency,
+        "min_price": summary.min_price,
+        "max_price": summary.max_price,
+        "variant_count": len(variants),
+        **_magento_offer(item),
+    } | _image_paths(item)
+    rows = []
+    for variant in variants:
+        data = variant.get("product") if isinstance(variant.get("product"), dict) else {}
+        labels = {a.get("code"): a.get("label") for a in dicts(variant.get("attributes"))}
+        # option1-3 line up with the options column; codes it lacks come after
+        values = [labels.get(c) for c in codes] + [v for c, v in labels.items() if c not in codes]
+        image = data.get("image") if isinstance(data.get("image"), dict) else {}
+        rows.append(
+            product
+            | {
+                "variant_id": data.get("uid"),
+                "variant_title": " / ".join(str(v) for v in values if v not in (None, "")) or None,
+            }
+            | {f"option{i + 1}": v for i, v in enumerate(values[:3])}
+            | _magento_offer(data)
+            | {"variant_image_url": image.get("url")}
+        )
+    return rows or [product]
+
+
+def _magento_offer(item: dict[str, Any]) -> dict[str, Any]:
+    """The price, SKU and stock columns of a Magento product or variant."""
+    prices = item.get("price_range")
+    price, _ = magento_price(prices)
+    regular_price, _ = magento_price(prices, kind="regular_price")
+    stock = item.get("stock_status")
+    return {
+        "sku": item.get("sku"),
+        "price": price,
+        "compare_at_price": regular_price if _below(price, regular_price) else None,
+        "available": stock == "IN_STOCK" if isinstance(stock, str) else None,
+    }
+
+
+def _html(value: Any) -> Any:
+    """The ``html`` of a Magento ``ComplexTextValue``."""
+    return value.get("html") if isinstance(value, dict) else None
+
+
+_PLATFORMS: dict[Callable[[dict[str, Any]], list[dict[str, Any]]], str] = {
+    _shopify_product: "shopify",
+    _shopify_collection: "shopify",
+    _woocommerce: "woocommerce",
+    _magento: "magento",
+}
 
 
 def _woo_offer(item: dict[str, Any]) -> dict[str, Any]:
