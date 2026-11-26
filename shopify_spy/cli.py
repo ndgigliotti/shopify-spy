@@ -12,9 +12,8 @@ import time
 from collections.abc import Callable, Container
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
-import click
 import platformdirs
 import typer
 from rich.console import Console
@@ -43,6 +42,10 @@ from shopify_spy._flatten import default_columns
 from shopify_spy._results import _PLATFORM_NAMES, RunResult, StoreResult, StoreStatus
 from shopify_spy._utils import normalize_url, read_url_file, split_valid_urls
 from shopify_spy._xlsx import require_xlsxwriter
+
+if TYPE_CHECKING:
+    # Typer 0.27 vendors Click as typer._click and no longer installs it
+    import click
 
 # Shown under --help so agents find the Python API, not just the CLI. Help text is
 # plain: Rich mode escapes it, so it reads the same in both renderers.
@@ -120,7 +123,8 @@ class _HelpCommand(_AdaptiveHelp, TyperCommand):
             record = param.get_help_record(ctx)
             if record is None:
                 continue
-            default = "Arguments" if isinstance(param, click.Argument) else "Options"
+            # not isinstance(click.Argument): Typer 0.27 has its own vendored Click
+            default = "Arguments" if param.param_type_name == "argument" else "Options"
             panel = getattr(param, "rich_help_panel", None) or default
             sections.setdefault(panel, []).append(record)
         for name, records in sections.items():

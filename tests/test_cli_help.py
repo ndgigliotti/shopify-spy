@@ -6,7 +6,6 @@ import re
 import subprocess
 import sys
 
-import click
 import pytest
 import typer.core
 import typer.main
@@ -35,10 +34,9 @@ def _piped(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _scrape_command() -> click.Command:
-    group = typer.main.get_command(app)
-    assert isinstance(group, click.Group)
-    return group.commands["scrape"]
+def _scrape_command():
+    # No isinstance(click.Group): Typer 0.27 vendors Click as typer._click
+    return typer.main.get_command(app).commands["scrape"]  # type: ignore[attr-defined]
 
 
 def _assert_plain(text: str) -> None:
