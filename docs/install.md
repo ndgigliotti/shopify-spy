@@ -4,18 +4,16 @@ Shopify Spy needs Python 3.11 or later. Install it as a command-line tool, as a 
 
 ## As a command-line tool
 
-[pipx](https://pipx.pypa.io/) and [uv tool](https://docs.astral.sh/uv/) install CLI tools in isolated environments, so they won't conflict with other Python projects:
+[uv tool](https://docs.astral.sh/uv/) installs CLI tools in isolated environments, so they won't conflict with other Python projects:
 
 ```bash
-# pipx
-pipx install shopify-spy
-
-# uv
 uv tool install shopify-spy
 
 # Or run it once without installing
 uvx shopify-spy scrape --peek https://www.example.com
 ```
+
+[pipx](https://pipx.pypa.io/) works the same way: `pipx install shopify-spy`.
 
 Installing provides two identical commands, `spy` and `shopify-spy`; the docs use `spy`. With `uvx`, name the package: `uvx shopify-spy ...` or `uvx --from shopify-spy spy ...`. `uvx spy` would fetch an unrelated package named `spy`.
 
@@ -25,7 +23,7 @@ To use it as a Python library (`import shopify_spy`), the package has to be in t
 
 ```bash
 # In a project (this also installs the CLI)
-uv add shopify-spy        # or: pip install shopify-spy
+uv add shopify-spy
 
 # A one-off script, no project or virtual environment needed
 uv run --with 'shopify-spy>=0.4' python script.py
@@ -40,14 +38,25 @@ A script can also declare the dependency itself ([inline script metadata](https:
 import shopify_spy as spy
 ```
 
+### With pip
+
+Without uv, install it into a virtual environment. While the environment is active, scripts can import it and the `spy` command works too.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install shopify-spy
+```
+
 ## Excel support
 
 Excel output (`--format xlsx`, or an `.xlsx` path in the library) needs the `excel` extra:
 
 ```bash
-pipx install 'shopify-spy[excel]'
 uv tool install 'shopify-spy[excel]'
 uv add 'shopify-spy[excel]'
+pipx install 'shopify-spy[excel]'
+pip install 'shopify-spy[excel]'
 ```
 
 ## Nix

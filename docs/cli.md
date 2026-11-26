@@ -53,7 +53,7 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 - `--concurrent INT`: concurrent requests per host (default: 16).
 - `--max-stores INT`: stores scraped at once (default: 16).
 - `--throttle / --no-throttle`: auto-throttle requests (default: yes). See [Rate limiting](troubleshooting.md#rate-limiting).
-- `--user-agent, -A TEXT`: a fixed User-Agent header (default: a random browser user agent, swapped after a 403 or 429).
+- `--user-agent, -A TEXT`: a fixed User-Agent header, never swapped (default: a random browser user agent per store, swapped after a 403 or 429).
 - `--proxy URL`: send every request through this proxy; see [Proxies](#proxies).
 - `--insecure`: don't verify TLS certificates.
 - `--ignore-robots, -i`: ignore robots.txt restrictions.

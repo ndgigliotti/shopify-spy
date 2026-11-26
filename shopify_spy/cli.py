@@ -355,8 +355,8 @@ def scrape(
         typer.Option(
             "--user-agent",
             "-A",
-            help="Fixed User-Agent header (default: a random browser UA, swapped after a "
-            "403 or 429).",
+            help="Fixed User-Agent header, never swapped (default: a random browser UA "
+            "per store, swapped after a 403 or 429).",
             rich_help_panel=NETWORK_PANEL,
         ),
     ] = None,

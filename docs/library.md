@@ -1,6 +1,6 @@
 # Use as a library
 
-The CLI is built on a Python API that scripts and coding agents can use directly. `scrape()` yields items as plain dicts while the stores are scraped, so a script can scrape, filter and save in one pass. `help(spy.scrape)` documents every option. To install the package where your script can import it, see [Installation](install.md#as-a-library).
+The CLI is built on a Python API that scripts and coding agents can use directly. `scrape()` yields items as plain dicts while the stores are scraped, so a script can scrape, filter and save in one pass. `help(spy.scrape)` documents every option. A `uv tool` or `pipx` install only provides the command, so install the package where your script runs: `uv add shopify-spy` in a project, or `uv run --with 'shopify-spy>=0.4' python script.py` for a one-off script. [Installation](install.md#as-a-library) covers the rest.
 
 ```python
 import shopify_spy as spy

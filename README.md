@@ -8,27 +8,32 @@
 
 # Shopify Spy
 
-**Product and collection scraper for Shopify and WooCommerce stores.**
+**Product and collection scraper for Shopify and WooCommerce stores, built for scripts and AI coding agents.**
 
 [![CI](https://github.com/ndgigliotti/shopify-spy/actions/workflows/ci.yml/badge.svg)](https://github.com/ndgigliotti/shopify-spy/actions/workflows/ci.yml)
 [![PyPI version](https://badge.fury.io/py/shopify-spy.svg)](https://badge.fury.io/py/shopify-spy)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Shopify Spy is a command-line tool and Python library for scraping product and collection data from ecommerce stores. It supports Shopify and WooCommerce stores out of the box, using their public JSON endpoints.
-
-To find Shopify stores to scrape, try searching Google with `site:myshopify.com`.
+Shopify Spy is a command-line tool and Python library for scraping product and collection data from ecommerce stores. It supports Shopify and WooCommerce stores out of the box, using their public JSON endpoints, so it needs no API keys or store access. It's designed to be driven by AI agents as much as by people: coding agents such as Claude Code, Codex and GitHub Copilot, and personal agents such as Hermes and OpenClaw, or any agent that can run a shell command or a Python script.
 
 ## Installation
 
 ```bash
-pipx install shopify-spy      # or: uv tool install shopify-spy
+# The command (spy and shopify-spy)
+uv tool install shopify-spy
 
-# Or run it once without installing
+# The library, in a project
+uv add shopify-spy        # or: pip install shopify-spy
+
+# Or run either once, nothing to install
 uvx shopify-spy scrape --peek https://www.example.com
+uv run --with 'shopify-spy>=0.4' python script.py
+
+# Excel output (--format xlsx) needs the excel extra: install 'shopify-spy[excel]'
 ```
 
-Installing provides two identical commands, `spy` and `shopify-spy`. With `uvx`, name the package (`uvx shopify-spy ...`), since `uvx spy` would fetch an unrelated package. Excel output needs the `excel` extra (`pipx install 'shopify-spy[excel]'`), and Python 3.11 or later is required. [Installation](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.0/docs/install.md) covers using it as a library, inline script metadata and Nix.
+A `uv tool` install provides only the command, so `import shopify_spy` needs the library install. With `uvx`, name the package (`uvx shopify-spy ...`), since `uvx spy` would fetch an unrelated package. Python 3.11 or later is required. [Installation](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.0/docs/install.md) covers pipx, inline script metadata and Nix.
 
 ## Quick Start
 
@@ -55,7 +60,7 @@ Results are saved as JSONL in `./output` (change it with `--output`), with a liv
 
 ### Python
 
-The same engine is a library, so a script can scrape, filter and save in one pass:
+The same engine is a library, so a script can scrape, filter and save in one pass. Install the library first (see [Installation](#installation)).
 
 ```python
 import shopify_spy as spy
@@ -75,19 +80,20 @@ for store in run.result.failed:
 
 ### With a coding agent
 
-An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an item's shape, and a script run with `uv run --with 'shopify-spy>=0.4' python script.py` filters and saves only what the task needs. The CLI is simpler for whole-catalog dumps and image downloads.
+An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an item's shape, and a script run with `uv run --with 'shopify-spy>=0.4' python script.py` filters and saves only what the task needs. The CLI is simpler for whole-catalog dumps and image downloads. Everything an agent needs to work this out is in `spy scrape --help`, which prints plain, complete text when piped, and in `help(spy.scrape)`.
 
 ## Features
 
-- **Automatic user-agent rotation.** Requests use a random browser user-agent. If a server responds with 403 or 429, the tool swaps to a different UA and retries.
-
-<div align="center"><img src="https://raw.githubusercontent.com/ndgigliotti/shopify-spy/master/assets/ua-rotation-neon.png" width="700"></div>
-
+- **Agent-friendly.** Built for AI agents, coding or personal, as much as for people:
+  - `--help` prints plain, untruncated text when piped, with every default, examples, where results go and what each exit code means.
+  - Items are plain dicts with typed definitions, and `help(spy.scrape)` documents every library option, so an agent can write a script without reading the source.
+  - `--peek` prints one item to stdout for a quick look at its shape; warnings go to stderr, so stdout stays valid JSONL.
+  - Every run writes a machine-readable status file with each store's status, the library suggests a fix for some failures (such as a likely wrong platform), and the exit code says whether any store produced items.
 - **Failure diagnostics.** A failed store gets a status saying what went wrong (403, 404, robots.txt, 429 rate limits, 5xx errors, TLS errors, timeout, no response). When a run returns 0 items, the tool explains the likely cause and suggests flags to try, including the other `--platform` when a store looks like it runs on it. See [Troubleshooting](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.0/docs/troubleshooting.md).
 - **Python library.** `import shopify_spy` gives the same scraping engine as the CLI, with items as typed plain dicts and failures that are never silent.
-- **Coding-agent friendly.** Designed for AI coding agents such as Claude Code and Cursor: plain dicts and `help(spy.scrape)` for scripts, `--peek` for a quick look at an item, a machine-readable status file for each run, and exit codes that say whether any store produced items.
 - **Spreadsheet-ready output.** JSONL, JSON, CSV, Excel and XML, with a unified schema shared by both platforms.
 - **Polite by default.** Robots.txt is honored, requests are auto-throttled, and a store that produces nothing within `--bail` seconds (default 30) is abandoned instead of hanging the run.
+- **Retries.** Timeouts, dropped connections, transient 5xx errors and 429 rate limits are retried, honoring `Retry-After` up to 60 seconds. Requests use a common browser user agent, and a 403 or 429 retries with another.
 
 ## Supported Platforms
 
@@ -98,11 +104,12 @@ An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an i
 
 ## Documentation
 
-- [Installation](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.0/docs/install.md): pipx, uv, library installs, the `excel` extra, Nix
+- [Installation](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.0/docs/install.md): uv, pipx, library installs, the `excel` extra, Nix
 - [Command line](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.0/docs/cli.md): `scrape` and `init` options, the config file, proxies
 - [Output](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.0/docs/output.md): files, item shapes, the unified schema, Excel, images, working with the output
 - [Use as a library](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.0/docs/library.md): the Python API, failures, options, schemas, async
 - [Troubleshooting](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.0/docs/troubleshooting.md): store statuses, exit codes, the status file, logs, rate limiting, large catalogs
+- [Changelog](https://github.com/ndgigliotti/shopify-spy/blob/master/CHANGELOG.md): what changed in each release
 
 ## Feedback
 
