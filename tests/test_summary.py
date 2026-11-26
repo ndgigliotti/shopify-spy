@@ -217,3 +217,62 @@ def test_magento_summary_dict_is_not_a_magento_item():
     from shopify_spy._flatten import flatten
 
     assert flatten(spy.summarize(MAGENTO_PRODUCT).asdict()) is None
+
+
+JSONLD_PRODUCT = {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    "name": "Hat &amp; Scarf",
+    "sku": "HAT-1",
+    "offers": {
+        "@type": "AggregateOffer",
+        "lowPrice": "12.50",
+        "highPrice": "20",
+        "priceCurrency": "USD",
+    },
+    "image": ["https://j.test/hat.jpg"],
+    "store": "j.test",
+    "platform": "jsonld",
+    "html_url": "https://j.test/products/hat",
+    "image_urls": [],
+}
+
+
+def test_jsonld_product():
+    s = spy.summarize(JSONLD_PRODUCT)
+    assert (s.kind, s.platform, s.id, s.title) == ("product", "jsonld", "HAT-1", "Hat & Scarf")
+    assert (s.min_price, s.max_price, s.currency) == (Decimal("12.50"), Decimal("20"), "USD")
+    assert (s.html_url, s.store) == ("https://j.test/products/hat", "j.test")
+    # image_urls is empty without images; the node's image stands in
+    assert s.image_urls == ["https://j.test/hat.jpg"]
+
+
+def test_jsonld_product_group_prices_span_its_variants():
+    group = {
+        **JSONLD_PRODUCT,
+        "@type": "ProductGroup",
+        "productGroupID": "G1",
+        "offers": None,
+        "hasVariant": [
+            {"@type": "Product", "offers": {"price": "30", "priceCurrency": "EUR"}},
+            {"@type": "Product", "offers": [{"price": "25"}, {"price": "40"}]},
+        ],
+    }
+    s = spy.summarize(group)
+    assert (s.id, s.min_price, s.max_price, s.currency) == (
+        "G1",
+        Decimal("25"),
+        Decimal("40"),
+        "EUR",
+    )
+
+
+def test_jsonld_product_without_prices():
+    s = spy.summarize({**JSONLD_PRODUCT, "offers": None})
+    assert (s.min_price, s.max_price, s.currency) == (None, None, None)
+
+
+def test_jsonld_summary_dict_is_not_a_jsonld_item():
+    from shopify_spy._flatten import flatten
+
+    assert flatten(spy.summarize(JSONLD_PRODUCT).asdict()) is None

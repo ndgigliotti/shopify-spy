@@ -2,7 +2,8 @@
 
 Provisional API. Each platform's items have their own shape (Shopify wraps the
 payload in "product"/"collection"; WooCommerce is flat, with prices in minor units;
-Magento is flat, with prices in ``price_range``); this reads any of them.
+Magento is flat, with prices in ``price_range``; JSON-LD is the page's schema.org
+node, with prices in ``offers``); this reads any of them.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from shopify_spy import _jsonld as jsonld
 from shopify_spy._magento import gallery_urls
 from shopify_spy._utils import dicts
 
@@ -25,7 +27,7 @@ logger = logging.getLogger("shopify_spy")
 @dataclass(frozen=True)
 class ItemSummary:
     kind: str  # "product" or "collection"
-    platform: str  # "shopify", "woocommerce" or "magento"
+    platform: str  # "shopify", "woocommerce", "magento" or "jsonld"
     id: Any
     title: str | None
     min_price: Decimal | None
@@ -100,12 +102,20 @@ def is_magento(item: dict[str, Any]) -> bool:
     return item.get("platform") == "magento" and isinstance(item.get("price_range"), dict)
 
 
+def is_jsonld(item: dict[str, Any]) -> bool:
+    """Whether ``item`` is a scraped JSON-LD product (``summarize().asdict()`` has a
+    ``platform`` but no ``@type``)."""
+    return item.get("platform") == "jsonld" and "@type" in item
+
+
 def summarize(item: dict[str, Any]) -> ItemSummary:
-    """Summarize a Shopify, WooCommerce or Magento item from ``scrape()``."""
+    """Summarize a Shopify, WooCommerce, Magento or JSON-LD item from ``scrape()``."""
     if isinstance(item.get("product"), dict) or isinstance(item.get("collection"), dict):
         return _shopify(item)
     if is_magento(item):
         return _magento(item)
+    if is_jsonld(item):
+        return _jsonld(item)
     return _woocommerce(item)
 
 
@@ -184,6 +194,48 @@ def _magento(item: dict[str, Any]) -> ItemSummary:
         min_price=low,
         max_price=high,
         currency=currency or high_currency,
+        html_url=item.get("html_url"),
+        store=item.get("store"),
+        image_urls=[u for u in urls if isinstance(u, str)],
+    )
+
+
+def jsonld_variants(item: dict[str, Any]) -> list[dict[str, Any]]:
+    """A ProductGroup's ``hasVariant`` Products: a list, or a lone one."""
+    variants = item.get("hasVariant")
+    return [variants] if isinstance(variants, dict) else dicts(variants)
+
+
+def jsonld_prices(item: dict[str, Any]) -> tuple[Decimal | None, Decimal | None, str | None]:
+    """The lowest and highest price and the currency across a JSON-LD product's
+    ``offers`` and its variants' ``offers``, or Nones."""
+    found = [jsonld.offers(item.get("offers"))]
+    found += [jsonld.offers(v.get("offers")) for v in jsonld_variants(item)]
+    # An offer set without a price of its own (an AggregateOffer) gives its bounds
+    amounts = [a for o in found for a in (o.current or o.bounds)]
+    currency = next((o.currency for o in found if o.currency), None)
+    if not amounts:
+        return None, None, currency
+    return min(amounts), max(amounts), currency
+
+
+def jsonld_id(node: dict[str, Any], keys: tuple[str, ...]) -> str | None:
+    """The first of ``keys`` that has a string (or number) value."""
+    return next((v for key in keys if (v := jsonld.text(node.get(key)))), None)
+
+
+def _jsonld(item: dict[str, Any]) -> ItemSummary:
+    low, high, currency = jsonld_prices(item)
+    name = item.get("name")
+    urls = item.get("image_urls") or jsonld.image_urls(item.get("image"))
+    return ItemSummary(
+        kind="product",
+        platform="jsonld",
+        id=jsonld_id(item, ("productID", "productGroupID", "sku", "@id")),
+        title=html.unescape(name) if isinstance(name, str) else jsonld.text(name),
+        min_price=low,
+        max_price=high,
+        currency=currency,
         html_url=item.get("html_url"),
         store=item.get("store"),
         image_urls=[u for u in urls if isinstance(u, str)],
