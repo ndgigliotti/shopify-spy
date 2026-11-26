@@ -154,6 +154,18 @@ def test_robots_sitemap_failing_to_respond_is_skipped():
     assert result.stores[0].status == "partial"
 
 
+def test_every_robots_sitemap_failing_falls_back_partial():
+    routes = {
+        ROBOTS: (200, "Sitemap: /maps/a.xml\nSitemap: /maps/b.xml\n"),
+        f"{STORE}/maps/a.xml": (503, ""),
+        f"{STORE}/maps/b.xml": FetchConnectionError("connection reset"),
+        **store(1),
+    }
+    items, result, _ = scrape_ld(routes)
+    assert len(items) == 1
+    assert result.stores[0].status == "partial"
+
+
 @pytest.mark.parametrize("path", ["/sitemap.xml", "/sitemap_index.xml", "/xmlsitemap.php"])
 def test_well_known_paths_tried_in_order(path):
     routes = store(1, sitemap_url=f"{STORE}{path}")

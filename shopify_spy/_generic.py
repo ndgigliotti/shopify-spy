@@ -189,7 +189,7 @@ class _Listing:
             return found, len(found) == len(listed)
         for path in SITEMAP_PATHS:
             if (doc := await self._read(f"{self.ctx.url}{path}")) is not None:
-                return [doc], True
+                return [doc], not listed
         return [], False
 
     async def _read(self, url: str) -> _Sitemap | None:
