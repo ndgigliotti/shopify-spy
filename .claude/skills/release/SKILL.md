@@ -68,6 +68,8 @@ merged and master's CI has passed.
   `uvx --exclude-newer-package shopify-spy=false --refresh-package shopify-spy shopify-spy@X.Y.Z --version`
 - `gh release view vX.Y.Z` shows the notes.
 
+Report the PyPI and GitHub release links now; step 6 can take days.
+
 ## 6. Nixpkgs
 
 The nixpkgs package (`pkgs/development/python-modules/shopify-spy/default.nix`,
@@ -93,4 +95,4 @@ can't merge them; a nixpkgs committer has to.
 - Close any shopify-spy issue tracking a nixpkgs change (like #71) once its PR
   merges.
 
-Report the PyPI and GitHub release links.
+Report the nixpkgs PR link once there is one.
