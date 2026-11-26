@@ -23,7 +23,7 @@ To use it as a Python library (`import shopify_spy`), the package has to be in t
 
 ```bash
 # In a project (this also installs the CLI)
-uv add shopify-spy        # or: pip install shopify-spy
+uv add shopify-spy
 
 # A one-off script, no project or virtual environment needed
 uv run --with 'shopify-spy>=0.4' python script.py
@@ -38,6 +38,16 @@ A script can also declare the dependency itself ([inline script metadata](https:
 import shopify_spy as spy
 ```
 
+### With pip
+
+Without uv, install it into a virtual environment. While the environment is active, scripts can import it and the `spy` command works too.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install shopify-spy
+```
+
 ## Excel support
 
 Excel output (`--format xlsx`, or an `.xlsx` path in the library) needs the `excel` extra:
@@ -46,6 +56,7 @@ Excel output (`--format xlsx`, or an `.xlsx` path in the library) needs the `exc
 uv tool install 'shopify-spy[excel]'
 uv add 'shopify-spy[excel]'
 pipx install 'shopify-spy[excel]'
+pip install 'shopify-spy[excel]'
 ```
 
 ## Nix
