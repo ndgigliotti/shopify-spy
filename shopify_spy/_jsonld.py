@@ -58,7 +58,7 @@ def _products(data: Any) -> list[dict[str, Any]]:
 
 
 def _lenient(script: str) -> str:
-    """The script without comments or trailing commas, which browsers accept."""
+    """The script without the comments and trailing commas of hand-written JSON-LD."""
     script = _COMMENTS.sub(lambda m: m.group(1) or " ", script)
     return _TRAILING_COMMAS.sub(lambda m: m.group(1) or "", script)
 
