@@ -134,6 +134,7 @@ With `--platform jsonld`, each line holds the schema.org `Product` or `ProductGr
 - **`html_url`** is the page the node came from, without its fragment.
 - **Images:** `image_urls` and the unified `image_url` and `variant_image_url` columns resolve a relative `image` (`/media/tee.jpg`) against the page's URL; the node's own `image` stays as written.
 - **Variants:** a `ProductGroup` keeps its `hasVariant` Products inside it, each with its own `sku` and `offers`. Many stores publish a single Product with one offer or a price range instead, so variants are often missing.
+- **Currencies:** pages come from the store's sitemaps, so a store with regional sections (such as vitamix.com's `/ca/en_us/` pages) can give items in several currencies. Each item's price carries its own currency (the offers' `priceCurrency`, and the unified `currency` column).
 - **Fidelity:** a store's JSON-LD is written for search engines, not as a catalog, so it can leave out fields the native platforms have (tags, stock counts, variant options). See [JSON-LD stores](troubleshooting.md#json-ld-stores).
 - **XML:** keys that aren't valid element names (such as `@type`) have their invalid characters replaced with `_`.
 
