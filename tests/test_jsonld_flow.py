@@ -9,6 +9,7 @@ import pytest
 import shopify_spy as spy
 from shopify_spy._fetch import FakeFetcher, FetchConnectionError, Seq
 from shopify_spy._generic import FETCH_CONCURRENCY, HINT_AFTER, PROBE_PAGES
+from shopify_spy._magento import STORE_CONFIG_PATH
 from tests.flow_support import (
     FAST,
     STORE,
@@ -24,6 +25,8 @@ ROBOTS = f"{STORE}/robots.txt"
 SITEMAP = f"{STORE}/sitemap.xml"
 SHOPIFY = {"products": []}
 WOOCOMMERCE = {"namespaces": ["wc/store/v1"]}
+MAGENTO = {"data": {"storeConfig": {"store_name": "Default Store View"}}}
+STORE_CONFIG = f"{STORE}{STORE_CONFIG_PATH}"
 
 
 def url(i, store=STORE):
@@ -713,6 +716,47 @@ def test_hint_after_probe_pages():
     assert s.suggested_platform == "shopify"
     assert fetcher.count(f"{STORE}/products.json") == 1
     assert fetcher.count(f"{STORE}/wp-json/") == 0
+    assert fetcher.count(STORE_CONFIG) == 0
+
+
+def test_magento_hint():
+    routes = {**store(3, page=lambda i: blank_page()), STORE_CONFIG: MAGENTO}
+    _, result, fetcher = scrape_ld(routes)
+    [s] = result.stores
+    assert s.status == "error"
+    assert s.suggested_platform == "magento"
+    assert s.hint == "looks like Magento; pass platform='magento'"
+    assert fetcher.count(f"{STORE}/products.json") == 1
+    assert fetcher.count(f"{STORE}/wp-json/") == 1
+    assert fetcher.count(STORE_CONFIG) == 1
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        (404, "<html>Not Found</html>"),
+        {"errors": [{"message": "Cannot query field storeConfig"}]},
+        {"data": {"storeConfig": None}},
+    ],
+)
+def test_no_magento_hint_without_store_config(answer):
+    routes = {**store(3, page=lambda i: blank_page()), STORE_CONFIG: answer}
+    _, result, fetcher = scrape_ld(routes)
+    assert result.stores[0].suggested_platform is None
+    assert fetcher.count(STORE_CONFIG) == 1
+
+
+def test_magento_probe_obeys_robots_txt():
+    routes = {
+        **store(3, page=lambda i: blank_page()),
+        ROBOTS: (200, "User-agent: *\nDisallow: /*?"),
+        STORE_CONFIG: MAGENTO,
+    }
+    _, result, fetcher = scrape_ld(routes)
+    [s] = result.stores
+    assert s.status == "error"
+    assert s.suggested_platform is None
+    assert fetcher.count(STORE_CONFIG) == 0
 
 
 def test_hint_at_the_end_of_a_short_listing():

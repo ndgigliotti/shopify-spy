@@ -345,7 +345,7 @@ class _Pages:
         self.ctx.no_item_reason = self.reason()
         if self.counts.checked >= HINT_AFTER and self._probe is None and self._tg is not None:
             # Started early, so it can finish before --bail on a slow store
-            self._probe = self._tg.create_task(magento.probe_others(self.ctx))
+            self._probe = self._tg.create_task(_probe_others(self.ctx))
 
     async def _emit_item(self, item: dict[str, Any]) -> None:
         if not self.emitted:
@@ -359,7 +359,7 @@ class _Pages:
     async def probe_others(self) -> None:
         """Run the hint probe unless it already ran during the pages."""
         if self._probe is None:
-            await magento.probe_others(self.ctx)
+            await _probe_others(self.ctx)
 
     def reason(self) -> str:
         """Why the store has no item: the pages checked and their outcomes."""
@@ -379,6 +379,14 @@ class _Pages:
             f"product pages checked ({where})"
         )
         return f"{reason}: {', '.join(outcomes)}" if outcomes else reason
+
+
+async def _probe_others(ctx: StoreContext) -> None:
+    """Suggest a platform with its own adapter when the store answers like Shopify,
+    WooCommerce or Magento (one request each, while none has matched)."""
+    await magento.probe_others(ctx)
+    if ctx.suggested_platform is None:
+        await ctx.probe_platform(magento.STORE_CONFIG_PATH, magento.looks_like_magento, "magento")
 
 
 def _item(node: dict[str, Any], response: Response, images: bool) -> dict[str, Any]:

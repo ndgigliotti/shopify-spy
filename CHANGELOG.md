@@ -21,7 +21,8 @@
   the unified schema has a row per `hasVariant` Product or per offer. It is a
   best-effort fallback at one request per product. A store whose pages have no
   Product data reports `failed` with the number of pages checked, after at most 50
-  pages or at `--bail`
+  pages or at `--bail`. Its hint names Shopify, WooCommerce or Magento when the
+  store answers like one
   ([#93](https://github.com/ndgigliotti/shopify-spy/issues/93)).
 
 ## 0.5.1
