@@ -20,9 +20,10 @@
   plus `store`, `platform`, `html_url` and `image_urls` (`JsonLdProductItem`), and
   the unified schema has a row per `hasVariant` Product or per offer. It is a
   best-effort fallback at one request per product. A store whose pages have no
-  Product data reports `failed` with the number of pages checked, after at most 50
-  pages or at `--bail`. Its hint names Shopify, WooCommerce or Magento when the
-  store answers like one
+  Product data reports `failed` with the number of pages checked and what stopped
+  it: the end of the listing, 50 pages, or `--bail` (about 20 to 25 pages at the
+  default on a throttled store). Its hint names Shopify, WooCommerce or Magento when
+  the store answers like one
   ([#93](https://github.com/ndgigliotti/shopify-spy/issues/93)).
 
 ## 0.5.1

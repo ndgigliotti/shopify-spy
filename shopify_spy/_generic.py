@@ -79,7 +79,7 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
             raise JsonLdError(f"no page listed; unreadable sitemaps: {', '.join(listing.unread)}")
         return listing.complete  # no on-site page listed: empty
     await pages.probe_others()
-    raise JsonLdError(pages.reason())
+    raise JsonLdError(f"{pages.reason()}; {pages.stopped_by()}")
 
 
 def _is_product_sitemap(url: str) -> bool:
@@ -247,6 +247,7 @@ class _Pages:
         self.counts = _Counts()
         self.emitted = False
         self.failed = False  # a page that should have been read wasn't
+        self.capped = False  # stopped at PROBE_PAGES rather than the listing's end
         self._limiter = asyncio.Semaphore(FETCH_CONCURRENCY)
         self._fetches: set[asyncio.Task[None]] = set()
         self._probe: asyncio.Task[None] | None = None
@@ -297,6 +298,7 @@ class _Pages:
                 self.counts.checked,
                 self.ctx.url,
             )
+            self.capped = True
             return False
         await self._limiter.acquire()
         return True
@@ -360,6 +362,13 @@ class _Pages:
         """Run the hint probe unless it already ran during the pages."""
         if self._probe is None:
             await _probe_others(self.ctx)
+
+    def stopped_by(self) -> str:
+        """Which limit ended the pages, for a store without an item (``--bail``'s
+        is added by the runner)."""
+        if self.capped:
+            return f"stopped at the {PROBE_PAGES}-page limit for pages without a Product"
+        return "no more pages listed"
 
     def reason(self) -> str:
         """Why the store has no item: the pages checked and their outcomes."""

@@ -448,6 +448,7 @@ def test_listing_page_counts_as_a_page_without_an_item():
     [s] = result.stores
     assert s.status == "error"
     assert "no schema.org Product JSON-LD on 1 of 1 product pages checked" in s.errors[0]
+    assert f"checked ({SITEMAP}); no more pages listed" in s.errors[0]
 
 
 def test_single_unmatched_product_kept():
@@ -545,6 +546,7 @@ def test_no_product_gives_up_after_probe_pages():
     assert found[1] == found[2]
     assert PROBE_PAGES <= int(found[1]) < PROBE_PAGES + FETCH_CONCURRENCY
     assert f"product pages checked ({SITEMAP})" in s.errors[0]
+    assert f"; stopped at the {PROBE_PAGES}-page limit for pages without a Product" in s.errors[0]
     assert len(pages_requested(fetcher)) <= PROBE_PAGES + FETCH_CONCURRENCY
     assert_fast_exit(s)
 
@@ -674,6 +676,7 @@ def test_bail_with_pages_checked_is_an_error():
     assert s.finish_reason == "bail"
     assert "product pages checked" in s.errors[0]
     assert "stopped at --bail (0.4s); raise --bail to check more pages" in s.errors[0]
+    assert "page limit" not in s.errors[0]
     assert len(pages_requested(fetcher)) < 60
 
 
