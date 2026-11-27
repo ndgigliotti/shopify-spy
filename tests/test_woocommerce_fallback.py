@@ -3,13 +3,14 @@
 import html
 import json
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
 import shopify_spy as spy
 from shopify_spy._flatten import COLUMNS, flatten
 from shopify_spy._jsonld import offers as read_offers
-from shopify_spy._jsonld import parse_product_page
+from shopify_spy._jsonld import parse_product_page, site_name
 from shopify_spy._jsonld import variation_form as read_form
 from shopify_spy._woocommerce import _prices, page_item
 from tests.flow_support import STORE, scrape, sitemapindex, urlset, woo_url
@@ -911,3 +912,63 @@ def test_site_name_from_open_graph():
     )
     assert site_name(head + "<body></body>") == "Shop & Co"
     assert site_name("<head></head><body></body>") is None
+
+
+FIXTURES = Path(__file__).parent / "fixtures" / "pages"
+NALGENE = "https://nalgene.com/product/32oz-wide-mouth-mythical-creatures/"
+
+
+def nalgene_item():
+    page = (FIXTURES / "nalgene-product-group.html").read_text()
+    product, post_id = parse_product_page(page, NALGENE, groups=True)
+    return page_item(product, NALGENE, post_id, None, site_name(page))
+
+
+def test_page_item_from_a_yoast_product_group():
+    item = nalgene_item()
+    assert (item["id"], item["name"], item["sku"]) == (
+        877583,
+        "32oz Wide Mouth Mythical Creatures Bottles",
+        "32oz-Mythical-Creatures",
+    )
+    # The group has no offers of its own; its variants' give the price
+    assert (item["prices"]["price"], item["prices"]["currency_code"]) == ("1424", "USD")
+    assert item["prices"]["price_range"] is None
+    assert item["is_in_stock"] is None
+
+
+def test_product_group_page_becomes_an_item():
+    group = {
+        "@type": "ProductGroup",
+        "name": "Bottle",
+        "hasVariant": [
+            {
+                "@type": "Product",
+                "sku": "B-1",
+                "offers": offer(price="12", availability="OutOfStock"),
+            },
+            {"@type": "Product", "sku": "B-2", "offers": offer(price="15", availability="InStock")},
+        ],
+    }
+    page = f'<script type="application/ld+json">{json.dumps(group)}</script><body class="postid-7">'
+    routes = {
+        woo_url(1): (403, ""),
+        wp_list(1): [{"id": 7, "link": product_url("bottle")}],
+        product_url("bottle"): (200, page),
+    }
+    items, _, _ = scrape_woo(routes)
+    assert [i["name"] for i in items] == ["Bottle"]
+    prices = items[0]["prices"]
+    assert (prices["price_range"], items[0]["is_in_stock"]) == (
+        {"min_amount": "12", "max_amount": "15"},
+        True,
+    )
+
+
+def test_page_item_resolves_relative_images():
+    product = {"@type": "Product", "name": "Hat", "image": ["/media/hat.jpg", "//cdn.test/b.jpg"]}
+    item = page_item(product, f"{STORE}/product/hat/", None)
+    assert [i["src"] for i in item["images"]] == [
+        f"{STORE}/media/hat.jpg",
+        "https://cdn.test/b.jpg",
+    ]

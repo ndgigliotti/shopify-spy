@@ -330,7 +330,7 @@ async def _product_pages(ctx: StoreContext, emit: Emit) -> bool:
                 failed = True
                 return
             text = response.text  # decoded on each access
-            product, post_id = jsonld.parse_product_page(text, response.url)
+            product, post_id = jsonld.parse_product_page(text, response.url, groups=True)
             if product is None:
                 logger.info("No schema.org Product on %s", response.url)
                 return
@@ -507,6 +507,17 @@ def page_item(
     marks the item as partial and ``json_ld`` keeps the original.
     """
     found = jsonld.offers(product.get("offers"))
+    in_stock = None if found.availability is None else found.availability not in OUT_OF_STOCK
+    variants = jsonld.variants(product)
+    if variants and not (found.current or found.bounds):
+        # A ProductGroup (Yoast's, for a variable product) has its offers on its
+        # variants; it's in stock if any of them is
+        offers = [jsonld.listify(v.get("offers")) for v in variants]
+        found = jsonld.offers([o for each in offers for o in each])
+        stock = [
+            a not in OUT_OF_STOCK for each in offers if (a := jsonld.offers(each).availability)
+        ]
+        in_stock = any(stock) if stock else None
     prices = _prices(found.current, found.listed, found.bounds, found.currency)
     return {
         "id": post_id,
@@ -518,14 +529,12 @@ def page_item(
         # With no SKU, WooCommerce's JSON-LD gives the product ID in its place
         "sku": sku if (sku := jsonld.text(product.get("sku"))) != str(post_id) else None,
         "description": jsonld.text(product.get("description")),
-        "images": [{"src": src} for src in jsonld.image_urls(product.get("image"))],
+        "images": [{"src": src} for src in jsonld.image_urls(product.get("image"), url)],
         "prices": prices,
         "on_sale": (
             prices["sale_price"] != prices["regular_price"] if prices["price"] is not None else None
         ),
-        "is_in_stock": (
-            None if found.availability is None else found.availability not in OUT_OF_STOCK
-        ),
+        "is_in_stock": in_stock,
         **_variations(form, found.currency, prices),
         "source": PAGE_SOURCE,
         "json_ld": product,
