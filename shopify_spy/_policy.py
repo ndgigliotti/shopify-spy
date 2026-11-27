@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import email.utils
 import json
+import math
 import random
 import time
 from dataclasses import dataclass, field
@@ -24,7 +25,9 @@ DEFAULT_HEADERS = {
 ROBOTS_TOKEN = "shopify-spy"
 
 RETRY_STATUSES = frozenset({500, 502, 503, 504, 522, 524, 408, 429, 403})
-RETRY_MAX_DELAY = 60.0  # longest wait before a retry, Retry-After included
+# Longest wait before a retry; a longer Retry-After isn't retried early (the host is
+# paused for it instead)
+RETRY_MAX_DELAY = 60.0
 ROTATE_ON_STATUSES = frozenset({403, 429})
 # "Slow down" responses: they pause the host and raise its delay floor (HostSlot.pause)
 RATE_LIMIT_STATUSES = frozenset({429, 503})
@@ -40,6 +43,7 @@ class ThrottleSettings:
     enabled: bool = True
     start_delay: float = 1.0
     max_delay: float = 60.0
+    min_delay: float = 1.0  # minimum gap between request starts while enabled
     target_concurrency: float = 1.0
 
 
@@ -50,7 +54,9 @@ class HostSlot:
     download slots (https://github.com/scrapy/scrapy, BSD-3-Clause).
 
     One request leaves the slot per gate pass; with a non-zero delay, passes are
-    spaced by ``uniform(0.5, 1.5) * delay`` since the previous request.
+    spaced by ``uniform(0.5, 1.5) * delay`` since the previous request, but never
+    closer than the minimum gap: robots.txt Crawl-delay, and ``min_delay`` while
+    throttling is enabled.
 
     Rate limits work like TCP congestion control: a rate limit doubles a delay floor
     (multiplicative decrease of the rate) and each answered request lowers it a
@@ -67,7 +73,11 @@ class HostSlot:
     def __init__(self, concurrency: int, throttle: ThrottleSettings) -> None:
         self.semaphore = asyncio.Semaphore(concurrency)
         self.throttle = throttle
-        self.delay = max(0.0, throttle.start_delay) if throttle.enabled else 0.0
+        self.crawl_delay = 0.0  # robots.txt Crawl-delay, applied even without throttling
+        self.delay = 0.0
+        if throttle.enabled:
+            start = max(throttle.start_delay, throttle.min_delay, 0.0)
+            self.delay = min(start, throttle.max_delay)
         self.floor = 0.0  # raised by pause(); adjust() never goes below it
         self.last_seen: float | None = None
         self.paused_until = 0.0
@@ -76,14 +86,29 @@ class HostSlot:
         self.answered_since_slowdown = True
         self._gate = asyncio.Lock()
 
+    def _min_gap(self) -> float:
+        """The hard minimum gap between request starts."""
+        throttle = self.throttle
+        minimum = min(throttle.min_delay, throttle.max_delay) if throttle.enabled else 0.0
+        return max(self.crawl_delay, minimum)
+
+    def set_crawl_delay(self, seconds: float) -> None:
+        """Space requests by at least ``seconds`` (a shared slot keeps the largest)."""
+        self.crawl_delay = max(self.crawl_delay, seconds)
+        if self.throttle.enabled:
+            self.delay = max(self.delay, self.crawl_delay)
+
     async def wait_turn(self) -> float:
         """Wait until the throttle allows the next request to leave; return its send time."""
         async with self._gate:
             # A rate limit can extend the pause while we sleep, so check again
             while (pause := self.paused_until - now()) > 0:
                 await asyncio.sleep(pause)
-            if self.delay > 0 and self.last_seen is not None:
-                wait = self.delay * random.uniform(0.5, 1.5) - (now() - self.last_seen)
+            if self.last_seen is not None:
+                spacing = self._min_gap()
+                if self.delay > 0:
+                    spacing = max(self.delay * random.uniform(0.5, 1.5), spacing)
+                wait = spacing - (now() - self.last_seen)
                 if wait > 0:
                     await asyncio.sleep(wait)
             self.last_seen = now()
@@ -102,7 +127,7 @@ class HostSlot:
             return  # pause() handles 429s; a quick refusal says nothing about load
         target = latency / self.throttle.target_concurrency
         new = max(target, (self.delay + target) / 2.0)
-        new = min(max(new, self.floor), self.throttle.max_delay)
+        new = min(max(new, self.floor, self._min_gap()), self.throttle.max_delay)
         # A non-200 response must not make us faster (errors can be quick to arrive)
         if status != 200 and new <= self.delay:
             return
@@ -171,8 +196,15 @@ class RetryPolicy:
         delay = base * (2**attempt) * random.uniform(0.5, 1.5)
         if retry_after is not None:
             delay = max(delay, retry_after)
-        limit = self.max_delay if cap is None else min(self.max_delay, cap)
-        return max(0.0, min(delay, limit))
+        return max(0.0, min(delay, self._limit(cap)))
+
+    def _limit(self, cap: float | None) -> float:
+        return self.max_delay if cap is None else min(self.max_delay, cap)
+
+    def retry_after_too_long(self, retry_after: float | None, cap: float | None) -> bool:
+        """Whether a Retry-After asks for longer than we'd wait before a retry; such
+        a request isn't retried early."""
+        return retry_after is not None and retry_after > self._limit(cap)
 
 
 def retry_policy_for(capabilities: FetcherCapabilities, retries: int, backoff: bool) -> RetryPolicy:
@@ -234,3 +266,13 @@ class RobotsRules:
         if self._parser is None:
             return True
         return self._parser.can_fetch(url, agent)
+
+    def crawl_delay(self) -> float | None:
+        """Seconds the robots.txt group for ROBOTS_TOKEN (or ``*``) asks between
+        requests; None without a usable positive value."""
+        if self._parser is None:
+            return None
+        delay = self._parser.crawl_delay(ROBOTS_TOKEN)
+        if delay is None or not math.isfinite(delay) or delay <= 0:
+            return None
+        return float(delay)
