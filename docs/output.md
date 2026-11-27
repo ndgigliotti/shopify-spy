@@ -61,7 +61,7 @@ Prices are strings in minor currency units: divide by `10^currency_minor_unit` t
 
 ### Items from product pages
 
-When a store's Store API is unavailable on its first page, Shopify Spy reads its product pages instead and turns each page's schema.org `Product` (or `ProductGroup`) data into a partial item in the same shape. These items have `"source": "product_page"`.
+When a store's Store API is unavailable on its first page, Shopify Spy reads its product pages instead and turns each page's schema.org `Product` (or `ProductGroup`) data, JSON-LD or microdata, into a partial item in the same shape. These items have `"source": "product_page"`.
 
 - **When it happens:** the first Store API page returns an error status other than a 429 rate limit, the request fails, the answer isn't a product list, or robots.txt disallows it.
 - **How pages are found:** through the WordPress REST API's product list (`/wp-json/wp/v2/product`), or the product sitemaps (WordPress core's `/wp-sitemap.xml`, Yoast's or Rank Math's `/sitemap_index.xml`).
@@ -107,7 +107,7 @@ Each line holds a product as the storefront GraphQL `products` query at `/graphq
 
 ## JSON-LD items
 
-With `--platform jsonld`, each line holds the schema.org `Product` or `ProductGroup` node from one product page's JSON-LD, as the page has it except that references to other nodes on the page (`{"@id": ...}`, as Yoast gives a product's images) are replaced by those nodes, plus four added fields (`image_urls` is empty unless `--images` is given):
+With `--platform jsonld`, each line holds the schema.org `Product` or `ProductGroup` node from one product page's JSON-LD (or its microdata), as the page has it except that references to other nodes on the page (`{"@id": ...}`, as Yoast gives a product's images) are replaced by those nodes, plus four added fields (`image_urls` is empty unless `--images` is given):
 
 ```json
 {
@@ -130,7 +130,8 @@ With `--platform jsonld`, each line holds the schema.org `Product` or `ProductGr
 ```
 
 - **How pages are found:** from the store's sitemaps: the `Sitemap:` lines in robots.txt, else the first of `/sitemap.xml`, `/sitemap_index.xml` and `/xmlsitemap.php` that is a sitemap. When a sitemap index has product sitemaps (a file name or query string containing `product`, such as BigCommerce's `/xmlsitemap.php?type=products&page=1`), only those are read. Pages on other hosts are skipped.
-- **Which pages count:** a page whose JSON-LD has a `Product` or `ProductGroup` for that page: one whose `url` or `@id` is the page, else the only one that is the page but for its query string (a `?variant=1` URL), else the page's only product or only group. The node can be at the top level, in an `@graph`, or a page's `mainEntity`, and a type can be written `Product`, `https://schema.org/Product` or `schema:Product`. A listing page with several products, none of them the page's own, is skipped, as are pages with no Product data and deleted (404 or 410) pages.
+- **Microdata:** a page whose JSON-LD has no Product for it is read for schema.org microdata (`itemscope`, `itemtype` and `itemprop` attributes), which gives a node of the same shape: `{"@type": "Product", "name": ..., "offers": {"@type": "Offer", ...}}`, with a property given more than once as a list. Values come from `content`, `href`, `src`, `datetime` or `value` attributes, else the element's text; `itemref` isn't followed. A rating's `ratingValue` is kept only with its `bestRating` or `worstRating`, since some themes give a percentage (Magento's Luma) or `0` for no reviews.
+- **Which pages count:** a page whose JSON-LD (or microdata) has a `Product` or `ProductGroup` for that page: one whose `url` or `@id` is the page, else the only one that is the page but for its query string (a `?variant=1` URL), else the page's only product or only group. The node can be at the top level, in an `@graph`, or a page's `mainEntity`, and a type can be written `Product`, `https://schema.org/Product` or `schema:Product`. A listing page with several products, none of them the page's own, is skipped, as are pages with no Product data and deleted (404 or 410) pages.
 - **Fields:** whatever the page's node has. Common ones are `name`, `sku`, `brand`, `category`, `description`, `image` and `offers` (an `Offer`, an `AggregateOffer` with `lowPrice`/`highPrice`, or a list of offers). Prices are strings or numbers as the page wrote them.
 - **Normalized:** the node keeps the page's values, but property names and `@type` lose a `schema:` or `https://schema.org/` prefix, and variants written as separate Products that name the group in `isVariantOf` are put in its `hasVariant`. JSON-LD wrapped in an HTML comment (`<!-- ... -->`), with comments, trailing commas or empty values (`"description": ,`, read as `null`) is read too.
 - **`html_url`** is the page the node came from, without its fragment.

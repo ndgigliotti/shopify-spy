@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from shopify_spy import _microdata as microdata
+
 logger = logging.getLogger("shopify_spy")
 
 MAX_NODES = 10_000  # JSON-LD objects examined per page
@@ -125,6 +127,9 @@ def parse_product_page(
 ) -> tuple[dict[str, Any] | None, int | None]:
     """Return (the page's schema.org Product, the WordPress post ID).
 
+    The Product comes from the page's JSON-LD, or from its microdata when the
+    JSON-LD has none for the page.
+
     The Product is a copy whose ``{"@id": ...}`` references are replaced by the
     nodes they name, from any of the page's scripts, and whose schema.org terms
     lose their namespace (``schema:name`` is ``name``). A group's variants written
@@ -150,15 +155,27 @@ def parse_product_page(
     body = _BODY_CLASS.search(html)
     match = body and _POST_ID.search(body.group(2))
     post_id = int(match.group(1)) if match else None
-    graph = _Graph(scripts, url)
+    found = _pick(scripts, products, url, fallback=fallback)
+    if found is None:
+        # A page without a JSON-LD Product may have one in microdata
+        nodes = microdata.items(html, url)
+        found = _pick(nodes, _products(nodes, groups=groups), url, fallback=fallback)
+    return found, post_id
+
+
+def _pick(
+    data: list[Any], products: list[dict[str, Any]], url: str, *, fallback: bool
+) -> dict[str, Any] | None:
+    """The page's product among ``products``, found in ``data``, resolved."""
+    graph = _Graph(data, url)
     products, variants = graph.split_variants(products)
     found = graph.page_product(products) or _unmatched(products, fallback=fallback)
     if found is None:
-        return None, post_id
+        return None
     product = graph.resolve(found)
     if variants.get(id(found)) and not product.get("hasVariant"):
         product["hasVariant"] = [graph.resolve(v) for v in variants[id(found)]]
-    return product, post_id
+    return product
 
 
 # Properties that point back at what holds the product (its page, its group), which

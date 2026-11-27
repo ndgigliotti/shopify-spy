@@ -1,5 +1,5 @@
-"""The generic platform: schema.org Product JSON-LD on the product pages that the
-store's sitemaps list.
+"""The generic platform: schema.org Product JSON-LD (or microdata) on the product
+pages that the store's sitemaps list.
 
 The sitemaps are the robots.txt ``Sitemap:`` URLs on the store's site, else the first
 of ``/sitemap.xml``, ``/sitemap_index.xml`` and ``/xmlsitemap.php`` that parses. Of
@@ -385,8 +385,8 @@ class _Pages:
             outcomes.append(f"{counts.skipped - robots} redirected to a page already fetched")
         where = ", ".join(self.listing.roots)
         reason = (
-            f"no schema.org Product JSON-LD on {counts.no_product} of {counts.checked} "
-            f"product pages checked ({where})"
+            f"no schema.org Product JSON-LD or microdata on {counts.no_product} of "
+            f"{counts.checked} product pages checked ({where})"
         )
         return f"{reason}: {', '.join(outcomes)}" if outcomes else reason
 

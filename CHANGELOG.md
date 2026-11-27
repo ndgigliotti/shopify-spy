@@ -16,7 +16,8 @@
   platforms without their own adapter. It reads the product pages listed in the
   store's sitemaps (robots.txt `Sitemap:` lines, `/sitemap.xml`,
   `/sitemap_index.xml` or `/xmlsitemap.php`, product sitemaps first) and keeps each
-  page's schema.org `Product` or `ProductGroup` JSON-LD. Items are the JSON-LD node
+  page's schema.org `Product` or `ProductGroup` JSON-LD, or its microdata on a page
+  without a JSON-LD Product. Items are the JSON-LD node
   plus `store`, `platform`, `html_url` and `image_urls` (`JsonLdProductItem`), and
   the unified schema has a row per `hasVariant` Product or per offer. It is a
   best-effort fallback at one request per product. A store whose pages have no
@@ -25,6 +26,17 @@
   default on a throttled store). Its hint names Shopify, WooCommerce or Magento when
   the store answers like one
   ([#93](https://github.com/ndgigliotti/shopify-spy/issues/93)).
+
+### Changed
+
+- The WooCommerce product-page fallback reads more pages: a Yoast `ProductGroup`
+  (a variable product, priced from its variants' offers), schema.org microdata on a
+  page without a JSON-LD Product, JSON-LD in an HTML comment or with empty values
+  (`"description": ,`), `@type` written as an IRI or `schema:Product`, and a Product
+  under a page's `mainEntity`. Images given as `{"@id": ...}` references or relative
+  URLs are resolved, and names and descriptions escaped twice (`&amp;amp;`) are
+  unescaped. Prices with a currency symbol or separators (`$19.99`, `1.234,56`) are
+  read.
 
 ## 0.5.1
 

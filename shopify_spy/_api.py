@@ -448,7 +448,7 @@ _SCRAPE_DOC = """
             storefront GraphQL API at ``/graphql``, in the default store view and
             its currency; there are no Magento collections. JSON-LD stores are
             read from the product pages listed in their sitemaps: each page with
-            schema.org Product JSON-LD becomes an item, at one request per
+            schema.org Product JSON-LD (or microdata) becomes an item, at one request per
             product. It is a best-effort fallback for platforms without an
             adapter, so ``max_items_per_store`` and the throttle matter.
         products: Scrape products (default {products}). Shopify only; WooCommerce,

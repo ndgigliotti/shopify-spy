@@ -994,3 +994,26 @@ def test_page_item_images_from_references():
         "Aliens_Front-667x1000-1.jpg",
         "Werewolf_Front-667x1000-1.jpg",
     ]
+
+
+def test_microdata_page_becomes_an_item():
+    page = (
+        '<body class="postid-7"><div itemscope itemtype="http://schema.org/Product">'
+        '<h1 itemprop="name">Mug</h1><img itemprop="image" src="/m.jpg">'
+        '<div itemprop="offers" itemscope itemtype="http://schema.org/Offer">'
+        '<meta itemprop="price" content="8"><link itemprop="availability" href="http://schema.org/InStock">'
+        "</div></div></body>"
+    )
+    routes = {
+        woo_url(1): (403, ""),
+        wp_list(1): [{"id": 7, "link": product_url("mug")}],
+        product_url("mug"): (200, page),
+    }
+    (item,), _, _ = scrape_woo(routes)
+    assert (item["id"], item["name"], item["prices"]["price"], item["is_in_stock"]) == (
+        7,
+        "Mug",
+        "8",
+        True,
+    )
+    assert item["images"] == [{"src": f"{STORE}/m.jpg"}]

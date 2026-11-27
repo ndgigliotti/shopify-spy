@@ -15,7 +15,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Shopify Spy is a command-line tool and Python library for scraping product and collection data from ecommerce stores. It supports Shopify, WooCommerce, Magento and other stores out of the box, using the first three platforms' public JSON and GraphQL endpoints and, for any other store, the schema.org Product data (JSON-LD) on the product pages their sitemaps list, so it needs no API keys or store access. It's designed to be driven by AI agents as much as by people: coding agents such as Claude Code, Codex and GitHub Copilot, and personal agents such as Hermes and OpenClaw, or any agent that can run a shell command or a Python script.
+Shopify Spy is a command-line tool and Python library for scraping product and collection data from ecommerce stores. It supports Shopify, WooCommerce, Magento and other stores out of the box, using the first three platforms' public JSON and GraphQL endpoints and, for any other store, the schema.org Product data (JSON-LD or microdata) on the product pages their sitemaps list, so it needs no API keys or store access. It's designed to be driven by AI agents as much as by people: coding agents such as Claude Code, Codex and GitHub Copilot, and personal agents such as Hermes and OpenClaw, or any agent that can run a shell command or a Python script.
 
 ## Installation
 
@@ -108,7 +108,7 @@ An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an i
 | Shopify | `/products.json` bulk endpoint, then collection pages past 25,000 products, then the store's `myshopify.com` domain if its own 404s, sitemap fallback; collections from `/collections.json` | Products and collections |
 | WooCommerce | `/wp-json/wc/store/v1/products`, then each page's variations (`?type=variation`); product pages' structured data as a fallback | No authentication required |
 | Magento | storefront GraphQL `products` query at `/graphql` | No authentication required; default store view |
-| JSON-LD | product pages from the sitemaps, schema.org `Product` JSON-LD | Best-effort fallback; one request per product |
+| JSON-LD | product pages from the sitemaps, schema.org `Product` JSON-LD or microdata | Best-effort fallback; one request per product |
 
 ## Documentation
 

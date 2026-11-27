@@ -447,7 +447,9 @@ def test_listing_page_counts_as_a_page_without_an_item():
     _, result, _ = scrape_ld(routes)
     [s] = result.stores
     assert s.status == "error"
-    assert "no schema.org Product JSON-LD on 1 of 1 product pages checked" in s.errors[0]
+    assert (
+        "no schema.org Product JSON-LD or microdata on 1 of 1 product pages checked" in s.errors[0]
+    )
     assert f"checked ({SITEMAP}); no more pages listed" in s.errors[0]
 
 
@@ -541,7 +543,9 @@ def test_no_product_gives_up_after_probe_pages():
     assert s.status == "error"
     assert s.finish_reason == "error"
     # Pages already in flight at the PROBE_PAGES mark are counted too
-    found = re.search(r"no schema.org Product JSON-LD on (\d+) of (\d+) product pages", s.errors[0])
+    found = re.search(
+        r"no schema.org Product JSON-LD or microdata on (\d+) of (\d+) product pages", s.errors[0]
+    )
     assert found
     assert found[1] == found[2]
     assert PROBE_PAGES <= int(found[1]) < PROBE_PAGES + FETCH_CONCURRENCY
@@ -852,3 +856,25 @@ async def test_request_shutdown_during_pages():
     assert s.status in ("partial", "ok")
     assert count < 200
     assert elapsed < 5
+
+
+def microdata_page(name):
+    return (
+        200,
+        '<html><body><div itemscope itemtype="https://schema.org/Product">'
+        f'<h1 itemprop="name">{name}</h1>'
+        '<div itemprop="offers" itemscope itemtype="https://schema.org/Offer">'
+        '<meta itemprop="price" content="12.50"><meta itemprop="priceCurrency" content="EUR">'
+        "</div></div></body></html>",
+        {"Content-Type": "text/html"},
+    )
+
+
+def test_microdata_pages_become_items():
+    routes = store(2, page=lambda i: microdata_page(f"Shoe {i}") if i else product_page(node(i)))
+    items, result, _ = scrape_ld(routes)
+    by_url = {i["html_url"]: i for i in items}
+    assert by_url[url(1)]["name"] == "Shoe 1"
+    assert by_url[url(1)]["offers"] == {"@type": "Offer", "price": "12.50", "priceCurrency": "EUR"}
+    assert by_url[url(0)]["name"] == "Product 0"
+    assert result.stores[0].status == "ok"
