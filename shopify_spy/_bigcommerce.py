@@ -7,6 +7,10 @@ token from the homepage and sends it as a bearer token with each query, a POST w
 a JSON body (``/graphql`` refuses GET). No channel or currency is chosen, so the
 store's default is scraped.
 
+A headless storefront's page can name its real endpoint, a
+``store-<hash>.mybigcommerce.com/graphql`` URL, which is queried instead of the
+store's own ``/graphql``; product URLs stay on the store's domain.
+
 Paging follows ``pageInfo.endCursor`` until ``hasNextPage`` is false. A 401 partway
 through (tokens expire) reads the homepage once more for a fresh token. A query
 complexity error halves the page size, which is safe mid-catalog because cursors
@@ -48,6 +52,11 @@ _STENCIL = re.compile(
 # of N out of 10000", but it wasn't seen live, so the match is broad
 _COMPLEXITY_ERROR = re.compile(r"complex", re.I)
 
+# A headless storefront's endpoint, as a page's config names it (slashes maybe escaped)
+_ENDPOINT = re.compile(r"https:\\?/\\?/(store-[a-z0-9]+)\.mybigcommerce\.com\\?/graphql", re.I)
+# The setting a value is assigned to, from the text before it: ``NAME:"``,
+# ``"NAME": "``, ``NAME = '`` or an escaped ``\"NAME\":\"``
+_SETTING = re.compile(r"""([A-Za-z_$][\w$]*)\\*["']?\s*[:=]\s*\\*["']$""")
 # The ``sub`` of the token Stencil issues for the theme (``storefront_api.token``);
 # apps and merchant scripts get tokens whose ``sub`` is their client ID
 STENCIL_SUB = "BC"
@@ -136,6 +145,41 @@ def _tokens(html: str, site: str, now: float) -> tuple[list[str], int]:
     return sorted(ranked, key=ranked.__getitem__), len(expired)
 
 
+def find_endpoint(html: str, token: str) -> str | None:
+    """The ``store-<hash>.mybigcommerce.com/graphql`` endpoint a headless page names.
+
+    With several (one per region, say), the one whose setting name ends like the
+    token's (``BC_GRAPHQL_AU`` for ``BIGCOMMERCE_ACCESS_TOKEN_AU``), else the first.
+    """
+    endpoints: dict[str, set[str]] = {}
+    for match in _ENDPOINT.finditer(html):
+        url = f"https://{match.group(1).lower()}.mybigcommerce.com{API_PATH}"
+        endpoints.setdefault(url, set()).add(_setting_suffix(html, match.start()))
+    if not endpoints:
+        return None
+    suffixes = {_setting_suffix(html, m.start()) for m in re.finditer(re.escape(token), html)}
+    suffixes.discard("")
+    paired = [url for url, ends in endpoints.items() if ends & suffixes]
+    chosen = (paired or list(endpoints))[0]
+    if len(endpoints) > 1:
+        how = "paired with the token" if paired else "the first"
+        logger.info(
+            "BigCommerce: the page names %d GraphQL endpoints; using %s (%s)",
+            len(endpoints),
+            chosen,
+            how,
+        )
+    return chosen
+
+
+def _setting_suffix(html: str, start: int) -> str:
+    """The last ``_`` part of the setting name a value at ``start`` is assigned to,
+    lowercased, or "" without a name of two or more parts."""
+    match = _SETTING.search(html, max(0, start - 100), start)
+    parts = match.group(1).split("_") if match else []
+    return parts[-1].lower() if len(parts) > 1 else ""
+
+
 def _claims(jwt: str) -> dict[str, Any] | None:
     payload = jwt.split(".")[1]
     try:
@@ -156,10 +200,11 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
     if response is None or not response.ok:
         return False  # diagnose() reports the homepage's status
     site = origin(response.url)  # past apex-to-www and http-to-https redirects
+    stencil = _STENCIL.search(response.text) is not None
     if token is None:
         if why == EXPIRED:
             reason = " (only expired ones)"
-        elif _STENCIL.search(response.text):
+        elif stencil:
             reason = " (a Stencil theme that doesn't expose one)"
         else:
             reason = (
@@ -167,7 +212,8 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
             )
             await _probe_others(ctx)
         raise BigCommerceError(f"{site}/: no Storefront API token on the homepage{reason}")
-    return await _Pager(ctx, emit, site, token).run()
+    api = None if stencil else find_endpoint(response.text, token)
+    return await _Pager(ctx, emit, site, token, api=api, headless=not stencil).run()
 
 
 async def _homepage(
@@ -195,11 +241,21 @@ async def _homepage(
 class _Pager:
     """One store's walk through ``site.products``."""
 
-    def __init__(self, ctx: StoreContext, emit: Emit, site: str, token: str) -> None:
+    def __init__(
+        self,
+        ctx: StoreContext,
+        emit: Emit,
+        site: str,
+        token: str,
+        *,
+        api: str | None = None,
+        headless: bool = False,
+    ) -> None:
         self.ctx = ctx
         self.emit = emit
-        self.site = site
-        self.api = get_api_url(site)
+        self.site = site  # product URLs stay here, wherever ``api`` is
+        self.api = api or get_api_url(site)
+        self.headless = headless  # not a Stencil storefront
         self.token = token
         self.first = PAGE_SIZE
         self.cursor: str | None = None
@@ -246,6 +302,12 @@ class _Pager:
             return await self._unauthorized(response)
         if 300 <= response.status < 400:
             # diagnose() has no redirect status and would call this empty
+            if self.headless and self.api == get_api_url(self.site):
+                return self._failed(
+                    f"{self.api}: redirected ({response.status}); the homepage isn't a "
+                    "Stencil storefront and names no store-<hash>.mybigcommerce.com/graphql "
+                    "endpoint, so this looks like a headless storefront"
+                )
             location = response.location or "an unknown location"
             return self._failed(f"{self.api}: redirected ({response.status}) to {location}")
         products, problem = _read(response)

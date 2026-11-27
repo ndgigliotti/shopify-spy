@@ -5,6 +5,7 @@ import logging
 
 import pytest
 
+from shopify_spy import _bigcommerce
 from shopify_spy._bigcommerce import _QUERY, PAGE_SIZE, find_token
 from shopify_spy._fetch import FetchConnectionError, Seq
 from tests.flow_support import STORE, bc_token, bigcommerce_api, redirect, scrape
@@ -216,6 +217,75 @@ def test_refresh_to_the_same_token_on_the_first_page_is_an_error():
     _, result, _, graphql = scrape_bc({None: REJECTED}, home=homepage(TOKEN))
     assert graphql.tokens == [TOKEN]
     assert "gave the same token" in result.stores[0].errors[-1]
+
+
+HEADLESS_AU = "https://store-5he0z7o63b.mybigcommerce.com/graphql"
+HEADLESS_US = "https://store-d38zsiurdu.mybigcommerce.com/graphql"
+
+
+def nuxt_homepage(au_token, us_token):
+    """A Nuxt storefront's config, as on mudaustralia.com: an endpoint and a token per
+    region, the US endpoint first but the AU token first."""
+    config = (
+        f'{{public:{{URL:"{STORE}",BC_GRAPHQL_US:"{HEADLESS_US}",BC_GRAPHQL_AU:"{HEADLESS_AU}",'
+        f'BIGCOMMERCE_ACCESS_TOKEN_AU:"{au_token}",BIGCOMMERCE_ACCESS_TOKEN_US:"{us_token}"}}}}'
+    )
+    return 200, f"<html><script>window.__NUXT__={{}};window.__NUXT__.config={config}</script>"
+
+
+def test_headless_endpoint_paired_with_the_token_is_used(caplog):
+    au, us = bc_token(sub="client-au"), bc_token(sub="client-us")
+    graphql = GraphQL({None: page(1)})
+    routes = {f"{STORE}/": nuxt_homepage(au, us), ("POST", HEADLESS_AU): graphql}
+    with caplog.at_level(logging.INFO, logger="shopify_spy"):
+        items, result, fetcher = scrape(routes, platform="bigcommerce")
+    assert graphql.tokens == [au]
+    assert fetcher.count(API, "POST") == 0
+    assert items[0]["html_url"] == f"{STORE}/p0/"
+    assert items[0]["store"] == "shop.test"
+    assert result.stores[0].status == "ok"
+    assert f"names 2 GraphQL endpoints; using {HEADLESS_AU} (paired" in caplog.text
+    assert any(r.url.startswith("https://store-5he0z7o63b") for r in fetcher.requests)
+
+
+def test_headless_endpoint_without_a_pairing_is_the_first():
+    endpoints = json.dumps({"a": HEADLESS_US, "b": HEADLESS_AU}).replace("/", "\\/")
+    html = f"<script>var c = {endpoints}; var t = '{TOKEN}';</script>"
+    assert _bigcommerce.find_endpoint(html, TOKEN) == HEADLESS_US
+
+
+def test_headless_endpoint_obeys_its_robots_txt():
+    au = bc_token(sub="client-au")
+    routes = {
+        f"{STORE}/": nuxt_homepage(au, bc_token(sub="client-us")),
+        "https://store-5he0z7o63b.mybigcommerce.com/robots.txt": (
+            200,
+            "User-agent: *\nDisallow: /",
+        ),
+    }
+    items, result, fetcher = scrape(routes, platform="bigcommerce")
+    assert items == []
+    assert fetcher.count(HEADLESS_AU, "POST") == 0
+    assert result.stores[0].status == "robots_blocked"
+
+
+def test_stencil_page_ignores_a_named_endpoint():
+    _, _, fetcher, graphql = scrape_bc(
+        {None: page(1)}, home=homepage(TOKEN, extra=f'<script>var u = "{HEADLESS_AU}";</script>')
+    )
+    assert graphql.tokens == [TOKEN]
+    assert fetcher.count(HEADLESS_AU, "POST") == 0
+
+
+def test_headless_redirect_without_an_endpoint_says_headless():
+    items, result, _, _ = scrape_bc(
+        {None: redirect("/graphql/", 301)}, home=homepage(TOKEN, stencil=False)
+    )
+    assert items == []
+    error = result.stores[0].errors[-1]
+    assert result.stores[0].status == "error"
+    assert "looks like a headless storefront" in error
+    assert "redirected (301)" in error
 
 
 def test_api_and_html_url_follow_a_homepage_redirect():
