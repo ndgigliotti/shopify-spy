@@ -16,8 +16,11 @@
   `/graphql` with the public API token the storefront's homepage carries. Items are
   the GraphQL product nodes plus `store`, `platform`, `html_url` and `image_urls`
   (`BigCommerceProductItem`), and the unified schema has a row per variant. A store
-  whose homepage has no token (such as the default Cornerstone theme, or a headless
-  storefront) reports `failed` with that reason
+  whose homepage has no unexpired token (such as the default Cornerstone theme)
+  reports `failed` with that reason. The theme's own Stencil token is preferred
+  over app tokens, a headless storefront's page that names its
+  `store-<hash>.mybigcommerce.com/graphql` endpoint is read through it, and
+  products with more than 250 variants are paged in full
   ([#90](https://github.com/ndgigliotti/shopify-spy/issues/90)).
 
 ## 0.5.1

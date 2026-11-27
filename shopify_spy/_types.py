@@ -95,8 +95,8 @@ class BigCommerceProductItem(TypedDict, total=False):
 
     ``html_url`` is the product page, ``<scheme>://<host><path>``, or None without a
     ``path``. ``image_urls`` lists the ``images`` ``urlOriginal`` values, the default
-    image first. ``variants`` holds up to 250 variants, each with its own ``sku``,
-    ``prices``, ``inventory``, ``defaultImage`` and option values."""
+    image first. ``variants`` holds every variant (up to 2,500), each with its own
+    ``sku``, ``prices``, ``inventory``, ``defaultImage`` and option values."""
 
     entityId: int
     sku: str

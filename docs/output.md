@@ -123,7 +123,7 @@ Each line holds a product node as the Storefront GraphQL `site.products` query a
   "inventory": { "isInStock": true },
   "images": { "edges": [{ "node": { "urlOriginal": "https://cdn11.bigcommerce.com/...", "altText": "", "isDefault": true } }] },
   "productOptions": { "edges": [{ "node": { "entityId": 1, "displayName": "Size", "isVariantOption": true } }] },
-  "variants": { "pageInfo": { "hasNextPage": false }, "edges": [{ "node": { "entityId": 78, "sku": "TEE-S", "prices": {...}, "options": {...} } }] },
+  "variants": { "pageInfo": { "hasNextPage": false, "endCursor": "YXJyYXljb25uZWN0aW9uOjE=" }, "edges": [{ "node": { "entityId": 78, "sku": "TEE-S", "prices": {...}, "options": {...} } }] },
   "store": "store.com",
   "platform": "bigcommerce",
   "html_url": "https://store.com/tee/",
@@ -134,7 +134,7 @@ Each line holds a product node as the Storefront GraphQL `site.products` query a
 - **Fields:** `id`, `entityId`, `sku`, `name`, `path`, `description` (HTML), `createdAt`, `brand`, `categories`, `prices` (`price`, `basePrice`, `salePrice`, `retailPrice` and `priceRange`), `inventory`, `availabilityV2`, `reviewSummary`, `images`, `productOptions` and `variants`. Prices are `{"value", "currencyCode"}` objects in the store's default currency; other currencies and channels aren't scraped.
 - **`html_url`** is the product page, `<scheme>://<host><path>`, or `null` without a `path`.
 - **`image_urls`** lists the `images` `urlOriginal` values, the default image first.
-- **Variants:** each variant node has its `entityId`, `sku`, `isPurchasable`, `prices`, `inventory`, `defaultImage` and `options` (each with its `values`). Only the first 250 variants of a product are read; `variants.pageInfo.hasNextPage` is `true` on a product with more, and the log has a warning for it.
+- **Variants:** each variant node has its `entityId`, `sku`, `isPurchasable`, `prices`, `inventory`, `defaultImage` and `options` (each with its `values`). Every variant is read, 250 per query, up to 2,500 a product; `variants.pageInfo.hasNextPage` is `true` only on a product whose variants weren't all read (past that bound, or after a failed variants query), and the log has a warning for it.
 
 ## Images
 

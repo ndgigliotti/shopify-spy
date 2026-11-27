@@ -447,9 +447,10 @@ _SCRAPE_DOC = """
             with ``source="product_page"``. Magento stores are read through the
             storefront GraphQL API at ``/graphql``, in the default store view and
             its currency; there are no Magento collections. BigCommerce stores are
-            read through the Storefront GraphQL API at ``/graphql``, with the public
-            API token the storefront's homepage carries, in the default currency;
-            there are no BigCommerce collections.
+            read through the Storefront GraphQL API at ``/graphql`` (or the
+            ``mybigcommerce.com`` endpoint a headless storefront's page names), with
+            the public API token the storefront's homepage carries, in the default
+            currency; there are no BigCommerce collections.
         products: Scrape products (default {products}). Shopify only; WooCommerce,
             Magento and BigCommerce always scrape products.
         collections: Also scrape collections (default {collections}). Shopify only.
