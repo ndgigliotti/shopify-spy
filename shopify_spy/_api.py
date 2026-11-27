@@ -56,7 +56,7 @@ class ScrapeOptions(BaseModel):
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
-    platform: Literal["shopify", "woocommerce"] = "shopify"
+    platform: Literal["shopify", "woocommerce", "magento"] = "shopify"
     products: bool = True
     collections: bool = False
     images: bool = False
@@ -75,6 +75,8 @@ class ScrapeOptions(BaseModel):
     throttle: bool = True
     throttle_start_delay: float = Field(default=1.0, ge=0)
     throttle_max_delay: float = Field(default=60.0, ge=0)
+    throttle_min_delay: float = Field(default=1.0, ge=0)
+    throttle_image_delay: float = Field(default=0.25, ge=0)
     throttle_target_concurrency: float = Field(default=1.0, ge=0.1)
     on_failure: Literal["raise", "warn", "ignore"] = "raise"
     strict: bool = False
@@ -86,7 +88,9 @@ def _prepare(
 ) -> tuple[list[tuple[str, str]], ScrapeOptions, bool]:
     backoff = options.pop("_backoff", True)
     if options.get("platform") == "auto":
-        raise ValueError("auto-detection isn't supported yet; use 'shopify' or 'woocommerce'")
+        raise ValueError(
+            "auto-detection isn't supported yet; use 'shopify', 'woocommerce' or 'magento'"
+        )
     proxy = options.get("proxy")
     if proxy is not None and not isinstance(proxy, str):
         # Checked here so pydantic never echoes the value, which may hold credentials
@@ -167,6 +171,8 @@ def _config(opts: ScrapeOptions, backoff: bool) -> RunConfig:
             enabled=opts.throttle,
             start_delay=opts.throttle_start_delay,
             max_delay=opts.throttle_max_delay,
+            min_delay=opts.throttle_min_delay,
+            image_delay=opts.throttle_image_delay,
             target_concurrency=opts.throttle_target_concurrency,
         ),
         backoff=backoff,
@@ -449,12 +455,14 @@ _SCRAPE_DOC = """
     Args:
         urls: A store URL or an iterable of them. Only the host matters; paths are
             ignored. One platform per call.
-        platform: "shopify" or "woocommerce" (default {platform}). When a
+        platform: "shopify", "woocommerce" or "magento" (default {platform}). When a
             WooCommerce store's Store API is unavailable, its product pages are
             read instead: partial items in the Store API's shape with
-            ``source="product_page"``.
+            ``source="product_page"``. Magento stores are read through the
+            storefront GraphQL API at ``/graphql``, in the default store view and
+            its currency; there are no Magento collections.
         products: Scrape products (default {products}). Shopify only; WooCommerce
-            always does.
+            and Magento always scrape products.
         collections: Also scrape collections (default {collections}). Shopify only.
         images: Download product images into ``images_dir/full/`` (default {images}).
             Requires ``images_dir``. Each item gains ``scraped_images`` records
@@ -467,7 +475,9 @@ _SCRAPE_DOC = """
         bail: Give up on a store that yields no item within this many seconds
             (default {bail}; None or 0 disables). Waits a server asks for with
             Retry-After don't count, for each request, so a rate-limited store can
-            take minutes or hours to fail.
+            take minutes or hours to fail. A Retry-After longer than 60s isn't
+            waited out or retried: it pauses that host for the whole Retry-After
+            (not excused from bail) and the request ends as if its retries ran out.
         concurrent_requests: Max concurrent requests per host across the run
             (default {concurrent_requests}).
         request_timeout: Seconds allowed for one request, not the whole run
@@ -475,11 +485,18 @@ _SCRAPE_DOC = """
         retries: Retries for 403/429/5xx responses and network errors (default
             {retries}). A 403 or 429 also swaps the user agent (not with
             ``impersonate``), and a 429 or 503 pauses and slows every request to
-            that host.
+            that host. A Retry-After up to 60s is waited out before the retry; a
+            longer one isn't retried early: the host is paused for it,
+            the request ends as if its retries ran out (a store with no successful
+            response is ``rate_limited`` after a 429, ``unavailable`` after a 503),
+            and the pause is logged as a WARNING on the ``shopify_spy`` logger (which
+            prints nothing until the caller configures logging).
         user_agent: Fixed User-Agent, never swapped; by default each store gets a
             random browser UA, swapped after a 403 or 429. Can't be combined with
             ``impersonate``.
-        respect_robots_txt: Obey robots.txt (default {respect_robots_txt}).
+        respect_robots_txt: Obey robots.txt (default {respect_robots_txt}), including
+            its Crawl-delay as a minimum gap between requests to that host, capped
+            at ``throttle_max_delay`` and applied even with ``throttle=False``.
         verify_tls: Verify TLS certificates (default {verify_tls}).
         proxy: A fixed proxy URL for every request: http://, https:// or socks5://.
             It overrides HTTPS_PROXY, HTTP_PROXY and ALL_PROXY, which are otherwise
@@ -498,10 +515,16 @@ _SCRAPE_DOC = """
             extra. Ignored with a custom ``fetcher_factory``.
         max_concurrent_stores: Stores scraped at once (default {max_concurrent_stores};
             None = no limit).
-        throttle, throttle_start_delay, throttle_max_delay,
-        throttle_target_concurrency: AutoThrottle settings. Defaults: {throttle};
-            {throttle_start_delay}s start and {throttle_max_delay}s max delay; target
-            concurrency {throttle_target_concurrency}.
+        throttle, throttle_start_delay, throttle_max_delay, throttle_min_delay,
+        throttle_image_delay, throttle_target_concurrency: AutoThrottle settings.
+            Defaults: {throttle}; {throttle_start_delay}s start,
+            {throttle_min_delay}s min, {throttle_image_delay}s image and
+            {throttle_max_delay}s max delay; target concurrency
+            {throttle_target_concurrency}. ``throttle_min_delay`` is the shortest gap
+            between page and API requests to one host, ``throttle_image_delay`` the
+            shortest between image downloads from one host. Neither applies with
+            ``throttle=False``, while robots.txt Crawl-delay and Retry-After pauses
+            still do.
         on_failure: What to do when stores fail, checked once iteration ends:
             "raise" (default) raises ScrapeFailed if every store failed; "warn"
             issues a ScrapeWarning; "ignore" leaves it to ``run.result``.
@@ -511,7 +534,9 @@ _SCRAPE_DOC = """
             Hostnames aren't resolved for the refusal of non-public addresses.
 
     Failures: a store fails when it is blocked (403, robots.txt), rate limited
-    (429), not found, unavailable (5xx), times out, can't be reached, or errors;
+    (429), not found, unavailable (5xx), times out, can't be reached, or errors
+    (status ``error``: an unexpected error, or a Magento store whose ``/graphql``
+    answered without products, with the GraphQL message in ``StoreResult.errors``);
     ``run.result.failed`` lists them with a status and, sometimes, a ``hint`` (e.g.
     a likely wrong ``platform``). An empty store is not a failure. A store's
     ``hint`` and ``products_from`` also name the ``myshopify.com`` domain a headless
@@ -520,9 +545,10 @@ _SCRAPE_DOC = """
     metadata) are refused with a warning unless the store's own URL is on one.
 
     Items are each platform's native shape plus ``store``, ``platform``
-    ("shopify" or "woocommerce") and ``image_urls`` (see ``ShopifyProductItem``,
-    ``WooCommerceProductItem``); ``write_items(..., schema="unified")`` flattens them
-    into one row per variant with the same columns on both platforms.
+    ("shopify", "woocommerce" or "magento") and ``image_urls`` (Magento items also
+    get ``html_url``; see ``ShopifyProductItem``, ``WooCommerceProductItem``,
+    ``MagentoProductItem``); ``write_items(..., schema="unified")`` flattens them
+    into one row per variant with the same columns on every platform.
 
     Nothing is written to disk unless ``images=True``, and no config file is read.
 """.format_map(

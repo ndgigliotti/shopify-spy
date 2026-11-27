@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from shopify_spy import _address
+from shopify_spy import _magento as magento
 from shopify_spy import _shopify as shopify
 from shopify_spy import _woocommerce as woocommerce
 from shopify_spy._fetch import (
@@ -52,6 +53,7 @@ SHUTDOWN_GRACE = 10.0  # seconds in-flight requests get after a graceful shutdow
 ADAPTERS: dict[str, Callable[[StoreContext, Emit], Awaitable[bool]]] = {
     "shopify": shopify.run,
     "woocommerce": woocommerce.run,
+    "magento": magento.run,
 }
 
 
@@ -121,6 +123,7 @@ class StoreState:
             finish_reason=reason,
             suggested_platform=self.ctx.suggested_platform if self.ctx else None,
             products_from=self.ctx.products_from if self.ctx else None,
+            query_disallowed=self.ctx.query_disallowed if self.ctx else False,
             responses_by_status=dict(stats.by_status),
             robots_disallowed=stats.robots_disallowed,
             rate_limited_requests=stats.rate_limits,

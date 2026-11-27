@@ -77,7 +77,7 @@ buildPythonPackage (finalAttrs: {
   pythonImportsCheck = [ "shopify_spy" ];
 
   meta = {
-    description = "Python library and CLI to scrape product data, images, and collections from Shopify and WooCommerce stores";
+    description = "Python library and CLI to scrape product data, images, and collections from Shopify, WooCommerce and Magento stores";
     homepage = "https://github.com/ndgigliotti/shopify-spy";
     changelog = "https://github.com/ndgigliotti/shopify-spy/blob/v${finalAttrs.version}/CHANGELOG.md";
     license = lib.licenses.mit;

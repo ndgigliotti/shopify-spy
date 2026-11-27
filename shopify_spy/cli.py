@@ -149,7 +149,7 @@ class _HelpCommand(_AdaptiveHelp, TyperCommand):
 app = typer.Typer(
     name="shopify-spy",
     cls=_HelpGroup,
-    help="Scrape product and collection data from Shopify and WooCommerce stores.",
+    help="Scrape product and collection data from Shopify, WooCommerce and Magento stores.",
     epilog=f"{LIBRARY_EPILOG}\n\n{DOCS_EPILOG}",
     no_args_is_help=True,
     context_settings=CONTEXT_SETTINGS,
@@ -226,7 +226,7 @@ def main(
         ),
     ] = None,
 ) -> None:
-    """Shopify Spy - Scrape product data from Shopify and WooCommerce stores."""
+    """Shopify Spy - Scrape product data from Shopify, WooCommerce and Magento stores."""
 
 
 @app.command(cls=_HelpCommand, epilog=SCRAPE_EPILOG)
@@ -251,7 +251,7 @@ def scrape(
         typer.Option(
             "--platform",
             "-p",
-            help="Ecommerce platform: shopify or woocommerce "
+            help="Ecommerce platform: shopify, woocommerce or magento "
             f"(default: {_DEFAULTS.scrape.platform.value}).",
             rich_help_panel=SCRAPE_PANEL,
         ),
@@ -260,7 +260,7 @@ def scrape(
         bool | None,
         typer.Option(
             "--products/--no-products",
-            help="Scrape products. Shopify only; WooCommerce always does "
+            help="Scrape products. Shopify only; WooCommerce and Magento always do "
             f"(default: {_on_off(_DEFAULTS.scrape.products)}).",
             rich_help_panel=SCRAPE_PANEL,
         ),
@@ -279,7 +279,8 @@ def scrape(
         typer.Option(
             "--images/--no-images",
             help=f"Download product images into {_IMAGES_DIR} "
-            f"(default: {_on_off(_DEFAULTS.scrape.images)}).",
+            f"(default: {_on_off(_DEFAULTS.scrape.images)}). Downloads from one host are "
+            "spaced by --image-delay.",
             rich_help_panel=SCRAPE_PANEL,
         ),
     ] = None,
@@ -318,7 +319,7 @@ def scrape(
             "--schema",
             help="Item shape (default: "
             f"{schema_for(_DEFAULTS.output.format, _DEFAULTS.output.schema_)}): native (as "
-            "scraped) or unified (a row per variant, same columns on both platforms). "
+            "scraped) or unified (a row per variant, same columns on every platform). "
             "CSV and XLSX are always unified.",
             rich_help_panel=OUTPUT_PANEL,
         ),
@@ -353,7 +354,34 @@ def scrape(
         bool | None,
         typer.Option(
             "--throttle/--no-throttle",
-            help=f"Auto-throttle requests (default: {_on_off(_DEFAULTS.throttle.enabled)}).",
+            help="Auto-throttle requests; --no-throttle drops the adaptive delay, "
+            "--min-delay and --image-delay, but robots.txt Crawl-delay and Retry-After "
+            "pauses still apply "
+            f"(default: {_on_off(_DEFAULTS.throttle.enabled)}).",
+            rich_help_panel=NETWORK_PANEL,
+        ),
+    ] = None,
+    min_delay: Annotated[
+        float | None,
+        typer.Option(
+            "--min-delay",
+            min=0.0,
+            metavar="SECONDS",
+            help="Minimum seconds between page and API requests to one host while "
+            "throttling; 1 means at most 1 request per second "
+            f"(default: {_DEFAULTS.throttle.min_delay:g}).",
+            rich_help_panel=NETWORK_PANEL,
+        ),
+    ] = None,
+    image_delay: Annotated[
+        float | None,
+        typer.Option(
+            "--image-delay",
+            min=0.0,
+            metavar="SECONDS",
+            help="Minimum seconds between image downloads from one host while "
+            "throttling; 0.25 means at most 4 per second "
+            f"(default: {_DEFAULTS.throttle.image_delay:g}).",
             rich_help_panel=NETWORK_PANEL,
         ),
     ] = None,
@@ -436,7 +464,7 @@ def scrape(
         ),
     ] = False,
 ) -> None:
-    """Scrape products and collections from Shopify and WooCommerce stores."""
+    """Scrape products and collections from Shopify, WooCommerce and Magento stores."""
     # Load config file (or defaults)
     config = load_config(config_path)
 
@@ -457,6 +485,8 @@ def scrape(
         schema=schema,
         concurrent=concurrent,
         throttle=throttle,
+        min_delay=min_delay,
+        image_delay=image_delay,
         limit=limit,
         user_agent=user_agent,
         impersonate=impersonate,
@@ -481,17 +511,18 @@ def scrape(
         raise typer.Exit(1)
     _exit_on_invalid(lambda: _check_options(config, peek))
 
-    # Warn about Shopify-only flags used with WooCommerce
-    if config.scrape.platform == Platform.woocommerce:
+    # Warn about Shopify-only flags used with another platform
+    if config.scrape.platform != Platform.shopify:
+        name = _PLATFORM_NAMES[config.scrape.platform.value]
         if collections is True:
             err_console.print(
-                "[yellow]Warning: --collections has no effect with WooCommerce "
+                f"[yellow]Warning: --collections has no effect with {name} "
                 "(collections are not supported).[/yellow]"
             )
         if products is False:
             err_console.print(
-                "[yellow]Warning: --no-products has no effect with WooCommerce "
-                "(WooCommerce always scrapes products).[/yellow]"
+                f"[yellow]Warning: --no-products has no effect with {name} "
+                f"({name} always scrapes products).[/yellow]"
             )
 
     # Get URLs
@@ -596,6 +627,8 @@ def apply_cli_overrides(
     insecure: bool = False,
     max_stores: int | None = None,
     proxy: str | None = None,
+    min_delay: float | None = None,
+    image_delay: float | None = None,
 ) -> Config:
     """Apply CLI argument overrides to config. ``None`` keeps the config value."""
     scrape_dict = config.scrape.model_dump() | _given(
@@ -621,7 +654,9 @@ def apply_cli_overrides(
         network_dict["respect_robots_txt"] = False
     if insecure:
         network_dict["verify_tls"] = False
-    throttle_dict = config.throttle.model_dump() | _given(enabled=throttle)
+    throttle_dict = config.throttle.model_dump() | _given(
+        enabled=throttle, min_delay=min_delay, image_delay=image_delay
+    )
 
     return Config(
         scrape=scrape_dict,
@@ -997,6 +1032,11 @@ def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
     if StoreStatus.stopped in present:
         hints.append("Stopped before every store finished.")
     for s in stores:
+        if s.query_disallowed and s.status == StoreStatus.robots_blocked:
+            hints.append(
+                f"{escape(_host(s.input_url))}'s robots.txt disallows URLs with query "
+                "strings, which covers the GraphQL query."
+            )
         if s.suggested_platform:
             name = _PLATFORM_NAMES.get(s.suggested_platform, s.suggested_platform)
             hints.append(

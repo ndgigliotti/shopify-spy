@@ -26,6 +26,10 @@ def no_jitter(monkeypatch):
 
 
 def slot(**throttle) -> HostSlot:
+    # No minimum gap unless a test asks for one, so the Scrapy AutoThrottle
+    # transcription tests see the algorithm itself
+    throttle.setdefault("min_delay", 0.0)
+    throttle.setdefault("image_delay", 0.0)
     return HostSlot(16, ThrottleSettings(**throttle))
 
 
@@ -88,6 +92,127 @@ def test_disabled_throttle_has_zero_delay_and_ignores_adjust():
     assert s.delay == 0.0
     s.adjust(10.0, 200)
     assert s.delay == 0.0
+
+
+# --- HostSlot minimum gap -------------------------------------------------------------
+
+
+@pytest.fixture
+def low_jitter(monkeypatch):
+    monkeypatch.setattr(policy.random, "uniform", lambda a, b: 0.5)
+
+
+def test_default_min_delay_is_one_second():
+    assert ThrottleSettings().min_delay == 1.0
+
+
+def test_min_delay_floors_the_spacing_not_the_adaptive_delay():
+    s = slot(min_delay=1.0)
+    for _ in range(20):
+        s.adjust(0.01, 200)
+    assert s.delay < 0.1  # AutoThrottle's pace, which images keep down to image_delay
+    assert s._min_gap() == 1.0
+
+
+async def test_wait_turn_never_closer_than_min_delay(low_jitter):
+    s = slot(start_delay=0.2, min_delay=0.2)
+    loop = asyncio.get_running_loop()
+    async with asyncio.timeout(2):
+        await s.wait_turn()
+        t1 = loop.time()
+        await s.wait_turn()
+        t2 = loop.time()
+    # Jitter alone would allow 0.1 s
+    assert t2 - t1 >= 0.19
+
+
+def test_default_image_delay_is_a_quarter_second():
+    assert ThrottleSettings().image_delay == 0.25
+
+
+async def test_image_wait_turn_spaced_by_image_delay_not_min_delay(low_jitter):
+    s = slot(start_delay=0.0, min_delay=5.0, image_delay=0.2)
+    loop = asyncio.get_running_loop()
+    async with asyncio.timeout(2):
+        await s.wait_turn(image=True)
+        t1 = loop.time()
+        await s.wait_turn(image=True)
+        t2 = loop.time()
+    assert 0.19 <= t2 - t1 < 1.0
+
+
+async def test_image_wait_turn_still_honors_crawl_delay(low_jitter):
+    s = slot(start_delay=0.0, min_delay=5.0, image_delay=0.0)
+    s.set_crawl_delay(0.2)
+    loop = asyncio.get_running_loop()
+    async with asyncio.timeout(2):
+        await s.wait_turn(image=True)
+        t1 = loop.time()
+        await s.wait_turn(image=True)
+        t2 = loop.time()
+    assert t2 - t1 >= 0.19
+
+
+def test_min_delay_above_max_delay_acts_as_max_delay():
+    s = slot(min_delay=5.0, max_delay=2.0)
+    assert s._min_gap() == 2.0
+
+
+def test_image_delay_above_max_delay_acts_as_max_delay():
+    s = slot(image_delay=5.0, max_delay=2.0)
+    assert s._min_gap(image=True) == 2.0
+
+
+async def test_min_delay_not_applied_without_throttle():
+    s = slot(enabled=False, min_delay=5.0)
+    assert s.delay == 0.0
+    s.adjust(0.01, 200)
+    assert s.delay == 0.0
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    async with asyncio.timeout(2):
+        await s.wait_turn()
+        await s.wait_turn()
+    assert loop.time() - t0 < 0.05
+
+
+async def test_image_delay_not_applied_without_throttle():
+    s = slot(enabled=False, image_delay=5.0)
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    async with asyncio.timeout(2):
+        await s.wait_turn(image=True)
+        await s.wait_turn(image=True)
+    assert loop.time() - t0 < 0.05
+
+
+async def test_crawl_delay_spaces_requests_without_throttle():
+    s = slot(enabled=False)
+    s.set_crawl_delay(0.2)
+    assert s.delay == 0.0
+    loop = asyncio.get_running_loop()
+    async with asyncio.timeout(2):
+        await s.wait_turn()
+        t1 = loop.time()
+        await s.wait_turn()
+        t2 = loop.time()
+    assert t2 - t1 >= 0.19
+
+
+def test_adjust_never_goes_below_crawl_delay():
+    s = slot(start_delay=1.0)
+    s.set_crawl_delay(3.0)
+    assert s.delay == 3.0
+    for _ in range(10):
+        s.adjust(0.01, 200)
+    assert s.delay == 3.0
+
+
+def test_set_crawl_delay_keeps_the_larger_value():
+    s = slot()
+    s.set_crawl_delay(4.0)
+    s.set_crawl_delay(2.0)
+    assert s.crawl_delay == 4.0
 
 
 # --- HostSlot.wait_turn ---------------------------------------------------------------
@@ -328,6 +453,15 @@ def test_retry_delay_capped_by_cap(no_jitter):
     assert retry.delay(0, 100.0, 0.0) == 0.0
 
 
+def test_retry_after_too_long():
+    retry = RetryPolicy()
+    assert not retry.retry_after_too_long(None, None)
+    assert not retry.retry_after_too_long(60.0, None)  # exactly the limit is waited out
+    assert retry.retry_after_too_long(61.0, None)
+    assert retry.retry_after_too_long(20.0, 10.0)
+    assert not RetryPolicy(backoff=False).retry_after_too_long(30.0, None)
+
+
 def test_should_retry_status():
     retry = RetryPolicy(retries=2)
     assert retry.should_retry_status(503, 0)
@@ -422,6 +556,35 @@ def test_robots_specific_group_beats_star():
     assert not rules.allowed("https://a.com/a", "shopify-spy")
     assert rules.allowed("https://a.com/b", "shopify-spy")
     assert not rules.allowed("https://a.com/b", "OtherBot")
+
+
+def test_crawl_delay_token_group_beats_star():
+    rules = RobotsRules(
+        "User-agent: shopify-spy\nCrawl-delay: 2\n\nUser-agent: *\nCrawl-delay: 9\n"
+    )
+    assert rules.crawl_delay() == 2.0
+
+
+def test_crawl_delay_falls_back_to_star():
+    rules = RobotsRules("User-agent: OtherBot\nCrawl-delay: 7\n\nUser-agent: *\nCrawl-delay: 1.5\n")
+    assert rules.crawl_delay() == 1.5
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        None,
+        "User-agent: *\nDisallow: /a\n",
+        "User-agent: *\nCrawl-delay: 0\n",
+        "User-agent: *\nCrawl-delay: -3\n",
+        "User-agent: *\nCrawl-delay: abc\n",
+        "User-agent: *\nCrawl-delay: nan\n",
+        "User-agent: *\nCrawl-delay: inf\n",
+    ],
+    ids=["no-robots", "no-directive", "zero", "negative", "junk", "nan", "inf"],
+)
+def test_crawl_delay_unusable_is_none(text):
+    assert RobotsRules(text).crawl_delay() is None
 
 
 def test_robots_html_page_has_no_rules():
