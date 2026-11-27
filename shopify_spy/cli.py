@@ -360,7 +360,8 @@ def scrape(
             "--min-delay",
             min=0.0,
             metavar="SECONDS",
-            help="Minimum seconds between requests to one host while throttling "
+            help="Minimum seconds between page and API requests to one host while "
+            "throttling; 1 means at most 1 request per second "
             f"(default: {_DEFAULTS.throttle.min_delay:g}).",
             rich_help_panel=NETWORK_PANEL,
         ),
@@ -371,7 +372,8 @@ def scrape(
             "--image-delay",
             min=0.0,
             metavar="SECONDS",
-            help="Minimum seconds between image downloads from one host while throttling "
+            help="Minimum seconds between image downloads from one host while "
+            "throttling; 0.25 means at most 4 per second "
             f"(default: {_DEFAULTS.throttle.image_delay:g}).",
             rich_help_panel=NETWORK_PANEL,
         ),
