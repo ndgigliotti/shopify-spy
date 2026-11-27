@@ -465,6 +465,10 @@ def test_impersonate_from_flag_and_config_reaches_library(cli, monkeypatch, tmp_
     assert seen["impersonate"] == "chrome"
 
     seen.clear()
+    cli(shop("shop.test", 1), "shop.test", "-I", "firefox")
+    assert seen["impersonate"] == "firefox"
+
+    seen.clear()
     config_file = tmp_path / "spy.yaml"
     config_file.write_text("network:\n  impersonate: chrome\n")
     cli(shop("shop.test", 1), "shop.test", "-c", str(config_file))

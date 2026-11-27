@@ -399,6 +399,7 @@ def scrape(
         str | None,
         typer.Option(
             "--impersonate",
+            "-I",
             metavar="BROWSER",
             help="Send requests with a browser's TLS fingerprint and headers through "
             "curl_cffi: chrome, firefox, safari, ... (needs the shopify-spy[impersonate] "

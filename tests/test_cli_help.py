@@ -86,8 +86,8 @@ def test_piped_help_lists_options_by_task():
     assert out.index("--limit") < out.index("--output") < out.index("--concurrent")
     assert out.index("--ignore-robots") < out.index("--bail") < out.index("--quiet")
     network = out[out.index("Network:") : out.index("Run control:")]
-    assert network.index("--user-agent") < network.index("--impersonate BROWSER")
-    assert network.index("--impersonate BROWSER") < network.index("--proxy")
+    assert network.index("--user-agent") < network.index("-I, --impersonate BROWSER")
+    assert network.index("-I, --impersonate BROWSER") < network.index("--proxy")
 
 
 def test_terminal_help_renders_rich_panels(monkeypatch):

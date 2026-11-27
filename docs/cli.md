@@ -59,7 +59,7 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 - `--min-delay SECONDS`: the minimum gap between page and API requests to one host while throttling (default: 1, at most 1 request per second per host). It's a strict gap, not an average: requests never bunch up to catch up.
 - `--image-delay SECONDS`: the minimum gap between image downloads from one host while throttling, the store's own host included (default: 0.25, at most 4 images per second per host).
 - `--user-agent, -A TEXT`: a fixed User-Agent header, never swapped (default: a random browser user agent per store, swapped after a 403 or 429). Can't be combined with `--impersonate`.
-- `--impersonate BROWSER`: send requests with a browser's TLS fingerprint and headers (default: off; needs the `impersonate` extra). See [Impersonation](#impersonation).
+- `--impersonate, -I BROWSER`: send requests with a browser's TLS fingerprint and headers (default: off; needs the `impersonate` extra). See [Impersonation](#impersonation).
 - `--proxy URL`: send every request through this proxy; see [Proxies](#proxies).
 - `--insecure`: don't verify TLS certificates.
 - `--ignore-robots, -i`: ignore robots.txt restrictions.

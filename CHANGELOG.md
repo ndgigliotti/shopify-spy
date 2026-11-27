@@ -4,7 +4,7 @@
 
 ### Added
 
-- `--impersonate BROWSER`, `network.impersonate` in the config file and
+- `--impersonate BROWSER` (`-I`), `network.impersonate` in the config file and
   `impersonate=` on `scrape`/`scrape_async` send requests through curl_cffi with a
   real browser's TLS and HTTP/2 fingerprint and headers. Some sites refuse clients
   that don't look like a browser. It needs the new `impersonate` extra
