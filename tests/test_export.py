@@ -1057,3 +1057,20 @@ def test_item_platform_names_jsonld():
     assert item_platform(JSONLD_PRODUCT) == "jsonld"
     assert item_platform(JSONLD_GROUP) == "jsonld"
     assert item_platform({"platform": "jsonld", "name": "x"}) is None
+
+
+def test_csv_jsonld_text_unescaped_until_stable(tmp_path):
+    variant = _jl_variant("TEE-S", "S", "10") | {"name": "Tee &amp;amp; Co\n S"}
+    del variant["size"]
+    item = JSONLD_GROUP | {
+        "name": "Tee &amp;amp;\n  Co",
+        "description": "Soft&amp;nbsp;cotton &amp;lt;b&amp;gt;tee&amp;lt;/b&amp;gt;",
+        "brand": "Acme &amp;amp; Sons",
+        "hasVariant": [variant],
+    }
+    path = tmp_path / "out.csv"
+    write_items([item], path)
+    (row,) = read_csv(path)
+    assert (row["title"], row["vendor"]) == ("Tee & Co", "Acme & Sons")
+    assert row["description"] == "Soft cotton tee"
+    assert row["variant_title"] == "Tee & Co S"

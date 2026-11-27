@@ -225,13 +225,12 @@ def jsonld_id(node: dict[str, Any], keys: tuple[str, ...]) -> str | None:
 
 def _jsonld(item: dict[str, Any]) -> ItemSummary:
     low, high, currency = jsonld_prices(item)
-    name = item.get("name")
     urls = item.get("image_urls") or jsonld.image_urls(item.get("image"), item.get("html_url"))
     return ItemSummary(
         kind="product",
         platform="jsonld",
         id=jsonld_id(item, ("productID", "productGroupID", "sku", "@id")),
-        title=html.unescape(name) if isinstance(name, str) else jsonld.text(name),
+        title=jsonld.name(item.get("name")),
         min_price=low,
         max_price=high,
         currency=currency,

@@ -528,7 +528,7 @@ def page_item(
         "permalink": url,
         # With no SKU, WooCommerce's JSON-LD gives the product ID in its place
         "sku": sku if (sku := jsonld.text(product.get("sku"))) != str(post_id) else None,
-        "description": jsonld.text(product.get("description")),
+        "description": jsonld.unescaped(product.get("description")),
         "images": [{"src": src} for src in jsonld.image_urls(product.get("image"), url)],
         "prices": prices,
         "on_sale": (
@@ -586,17 +586,10 @@ def _variations(
 
 def _name(name: str | None, site: str | None) -> str | None:
     """The product's name, escaped once like the Store API's, without the site name
-    an SEO plugin may have added to the JSON-LD's (``Hat - Shop``).
-
-    JSON-LD names should be plain text but come escaped, sometimes twice
-    (``&amp;amp;``), so they're unescaped until they stop changing.
-    """
+    an SEO plugin may have added to the JSON-LD's (``Hat - Shop``)."""
+    name = jsonld.name(name)
     if name is None:
         return None
-    for _ in range(3):
-        if (plain := html.unescape(name)) == name:
-            break
-        name = plain
     return _escape(jsonld.strip_site_name(name, site) or name)
 
 

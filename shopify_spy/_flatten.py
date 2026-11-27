@@ -377,7 +377,7 @@ def _jsonld(item: dict[str, Any]) -> list[dict[str, Any]]:
         "vendor": _jsonld_names(item.get("brand")),
         "categories": _jsonld_names(item.get("category")),
         "options": _join(names) if variants else None,
-        "description": _text(item.get("description")),
+        "description": _text(jsonld.unescaped(item.get("description"))),
         "html_url": item.get("html_url"),
         "image_url": images[0] if images else None,
         "image_count": len(images),
@@ -393,7 +393,7 @@ def _jsonld(item: dict[str, Any]) -> list[dict[str, Any]]:
             product
             | {
                 "variant_id": jsonld_id(offer, ("sku", "@id", "url")),
-                "variant_title": _unescape(jsonld.text(offer.get("name"))),
+                "variant_title": jsonld.name(offer.get("name")),
                 "sku": jsonld.text(offer.get("sku")),
             }
             | _jsonld_offer(offer)
@@ -408,7 +408,7 @@ def _jsonld_variant(
     """A ``hasVariant`` Product's row; option1-3 follow ``variesBy``."""
     values = [_jsonld_value(variant.get(name)) for name in names]
     images = jsonld.image_urls(variant.get("image"), product.get("html_url"))
-    title = " / ".join(v for v in values if v) or _unescape(jsonld.text(variant.get("name")))
+    title = " / ".join(v for v in values if v) or jsonld.name(variant.get("name"))
     return (
         product
         | {
@@ -446,7 +446,7 @@ def _jsonld_value(value: Any) -> str | None:
     """A variant's value for a ``variesBy`` property: text, or a dict's ``name``."""
     if isinstance(value, dict):
         value = value.get("name")
-    return _unescape(jsonld.text(value))
+    return jsonld.name(value)
 
 
 def _jsonld_names(value: Any) -> str:

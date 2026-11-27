@@ -137,6 +137,23 @@ def text(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def unescaped(value: Any) -> str | None:
+    """A text field unescaped until it stops changing: JSON-LD should be plain text,
+    but pages escape it, sometimes twice (``&amp;amp;``, ``&amp;nbsp;``)."""
+    found = text(value)
+    for _ in range(3):
+        if found is None or (plain := html.unescape(found)) == found:
+            break
+        found = plain
+    return found
+
+
+def name(value: Any) -> str | None:
+    """A name field, unescaped, on one line (some pages break names with newlines)."""
+    found = unescaped(value)
+    return " ".join(found.split()) if found is not None else None
+
+
 def listify(value: Any) -> list[Any]:
     return value if isinstance(value, list) else [value]
 

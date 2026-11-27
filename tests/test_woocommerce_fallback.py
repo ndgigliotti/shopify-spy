@@ -972,3 +972,13 @@ def test_page_item_resolves_relative_images():
         f"{STORE}/media/hat.jpg",
         "https://cdn.test/b.jpg",
     ]
+
+
+def test_page_item_text_unescaped_until_stable():
+    product = {
+        "@type": "Product",
+        "name": "Hat\n &amp;amp; Scarf",
+        "description": "Wool&amp;nbsp;blend",
+    }
+    item = page_item(product, f"{STORE}/product/hat/", None)
+    assert (item["name"], item["description"]) == ("Hat &amp; Scarf", "Wool\xa0blend")
