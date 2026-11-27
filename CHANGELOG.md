@@ -13,6 +13,20 @@
   disallows URLs with query strings (`Disallow: /*?`) gets a hint saying so
   ([#89](https://github.com/ndgigliotti/shopify-spy/issues/89)).
 
+### Changed
+
+- Throttling is more conservative by default. A robots.txt `Crawl-delay` (for the
+  `shopify-spy` group, else `*`) spaces that host's requests, capped at the
+  throttle's `max_delay` and applied even with `--no-throttle`. Throttled page and
+  API requests to one host are at least 1 second apart, set by the new
+  `--min-delay` option, config `throttle.min_delay` and library option
+  `throttle_min_delay`. Throttled image downloads from one host, the store's own
+  included, are at least 0.25 seconds apart, set by the new `--image-delay`
+  option, config `throttle.image_delay` and library option `throttle_image_delay`. A `Retry-After` longer than 60 seconds is no longer
+  retried after 60 seconds: the host is paused for the whole `Retry-After` and the
+  request ends as if its retries had run out, so a store with no successful
+  response ends `rate_limited` for a 429 (`unavailable` for a 503).
+
 ## 0.5.1
 
 ### Security
