@@ -2,6 +2,18 @@
 
 ## 0.5.1
 
+### Security
+
+- Requests to loopback, private-network, link-local (including cloud metadata),
+  shared, multicast and reserved addresses are refused, along with their
+  robots.txt, unless the store's own URL is on such an address. This covers
+  redirects, image URLs and every other URL a store supplies, given as a literal IP,
+  a `localhost` name or a hostname that resolves to one. Through a proxy, only
+  literal IPs and `localhost` names are checked. A warning names each refused URL
+  ([#96](https://github.com/ndgigliotti/shopify-spy/issues/96)).
+- The "unsupported format" image warning no longer includes the response's first
+  bytes; they are logged at debug level.
+
 ### Changed
 
 - `--help` is plain text when stdout isn't a terminal, as when an agent or script
