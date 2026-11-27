@@ -285,6 +285,15 @@ async def test_pause_sets_a_floor_that_eases_back_down():
     assert s.floor == pytest.approx(0.5, abs=0.02)  # only successes lower it
 
 
+@pytest.mark.parametrize("min_delay", [1.0, 5.0])
+def test_pause_doubles_from_min_delay_when_the_delay_is_below_it(clock, min_delay):
+    # The refused pace was min_delay, not the lower adaptive delay
+    s = slot(start_delay=1.0, min_delay=min_delay)
+    s.delay = 0.2
+    s.pause(0)
+    assert s.delay == s.floor == 2 * min_delay
+
+
 @pytest.mark.parametrize("pause", [5.0, 0.0], ids=["backoff", "no-pause"])
 def test_refusals_without_an_answer_between_double_once(clock, pause):
     # In-flight stragglers and a cooldown that refuses everything are one signal:

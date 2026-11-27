@@ -150,7 +150,9 @@ class HostSlot:
         if not self.answered_since_slowdown:
             return
         if self.throttle.enabled:
-            doubled = max(self.delay * 2, self.throttle.start_delay, self.MIN_RATE_LIMITED_DELAY)
+            # Double the refused pace: min_delay can hold the spacing above the delay
+            pace = max(self.delay, self._min_gap())
+            doubled = max(pace * 2, self.throttle.start_delay, self.MIN_RATE_LIMITED_DELAY)
             self.delay = self.floor = min(doubled, self.throttle.max_delay)
         self.slowed_at = now()
         self.answered_since_slowdown = False
