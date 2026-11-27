@@ -25,6 +25,19 @@ def test_config_defaults():
     assert config.network.concurrent_requests == 16
     assert config.throttle.enabled is True
     assert config.throttle.start_delay == 1.0
+    assert config.throttle.min_delay == 1.0
+    assert config.to_kwargs()["throttle_min_delay"] == 1.0
+
+
+def test_config_file_min_delay_reaches_kwargs(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("throttle:\n  min_delay: 0.5\n")
+    assert load_config_from_file(path).to_kwargs()["throttle_min_delay"] == 0.5
+
+
+def test_negative_min_delay_rejected():
+    with pytest.raises(ValidationError):
+        Config(throttle={"min_delay": -1})
 
 
 def test_config_images_dir():

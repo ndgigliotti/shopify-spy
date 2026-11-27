@@ -74,6 +74,7 @@ class ScrapeOptions(BaseModel):
     throttle: bool = True
     throttle_start_delay: float = Field(default=1.0, ge=0)
     throttle_max_delay: float = Field(default=60.0, ge=0)
+    throttle_min_delay: float = Field(default=1.0, ge=0)
     throttle_target_concurrency: float = Field(default=1.0, ge=0.1)
     on_failure: Literal["raise", "warn", "ignore"] = "raise"
     strict: bool = False
@@ -156,6 +157,7 @@ def _config(opts: ScrapeOptions, backoff: bool) -> RunConfig:
             enabled=opts.throttle,
             start_delay=opts.throttle_start_delay,
             max_delay=opts.throttle_max_delay,
+            min_delay=opts.throttle_min_delay,
             target_concurrency=opts.throttle_target_concurrency,
         ),
         backoff=backoff,
@@ -456,17 +458,25 @@ _SCRAPE_DOC = """
         bail: Give up on a store that yields no item within this many seconds
             (default {bail}; None or 0 disables). Waits a server asks for with
             Retry-After don't count, for each request, so a rate-limited store can
-            take minutes or hours to fail.
+            take minutes or hours to fail. A Retry-After longer than 60s isn't
+            waited out or retried: it pauses that host for the whole Retry-After
+            (not excused from bail) and the request ends rate limited.
         concurrent_requests: Max concurrent requests per host across the run
             (default {concurrent_requests}).
         request_timeout: Seconds allowed for one request, not the whole run
             (default {request_timeout}).
         retries: Retries for 403/429/5xx responses and network errors (default
             {retries}). A 429 also swaps the user agent, and a 429 or 503 pauses and slows
-            every request to that host.
+            every request to that host. A Retry-After up to 60s is waited out before
+            the retry; a longer one isn't retried early: the host is paused for it,
+            the store's ``StoreResult.status`` is ``rate_limited``, and the pause is
+            logged as a WARNING on the ``shopify_spy`` logger (which prints nothing
+            until the caller configures logging).
         user_agent: Fixed User-Agent, never swapped; by default each store gets a
             random browser UA, swapped after a 403 or 429.
-        respect_robots_txt: Obey robots.txt (default {respect_robots_txt}).
+        respect_robots_txt: Obey robots.txt (default {respect_robots_txt}), including
+            its Crawl-delay as a minimum gap between requests to that host, capped
+            at ``throttle_max_delay`` and applied even with ``throttle=False``.
         verify_tls: Verify TLS certificates (default {verify_tls}).
         proxy: A fixed proxy URL for every request: http://, https:// or socks5://.
             It overrides HTTPS_PROXY, HTTP_PROXY and ALL_PROXY, which are otherwise
@@ -477,10 +487,14 @@ _SCRAPE_DOC = """
             against the refusal of non-public addresses.
         max_concurrent_stores: Stores scraped at once (default {max_concurrent_stores};
             None = no limit).
-        throttle, throttle_start_delay, throttle_max_delay,
+        throttle, throttle_start_delay, throttle_max_delay, throttle_min_delay,
         throttle_target_concurrency: AutoThrottle settings. Defaults: {throttle};
-            {throttle_start_delay}s start and {throttle_max_delay}s max delay; target
-            concurrency {throttle_target_concurrency}.
+            {throttle_start_delay}s start, {throttle_min_delay}s min and
+            {throttle_max_delay}s max delay; target concurrency
+            {throttle_target_concurrency}. ``throttle_min_delay`` is the shortest gap
+            between requests to one host, image downloads included; it doesn't apply
+            with ``throttle=False``, while robots.txt Crawl-delay and Retry-After
+            pauses still do.
         on_failure: What to do when stores fail, checked once iteration ends:
             "raise" (default) raises ScrapeFailed if every store failed; "warn"
             issues a ScrapeWarning; "ignore" leaves it to ``run.result``.

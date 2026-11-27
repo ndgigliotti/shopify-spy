@@ -91,6 +91,17 @@ def test_unknown_kwarg_rejected():
         spy.scrape(STORE, limit=5)
 
 
+def test_negative_min_delay_rejected():
+    with pytest.raises(ValueError, match="throttle_min_delay"):
+        spy.scrape(STORE, throttle_min_delay=-1)
+
+
+def test_min_delay_defaults_to_one_second():
+    from shopify_spy._api import ScrapeOptions
+
+    assert ScrapeOptions().throttle_min_delay == 1.0
+
+
 def test_nothing_runs_until_iteration():
     fetcher = FakeFetcher(ok_routes())
     spy.scrape(STORE, fetcher_factory=lambda: fetcher, **FAST)

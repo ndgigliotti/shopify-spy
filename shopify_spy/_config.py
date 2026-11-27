@@ -73,6 +73,7 @@ class ThrottleConfig(BaseModel):
     enabled: bool = True
     start_delay: float = Field(default=1.0, ge=0)
     max_delay: float = Field(default=60.0, ge=0)
+    min_delay: float = Field(default=1.0, ge=0)
     target_concurrency: float = Field(default=1.0, ge=0.1)
 
 
@@ -105,6 +106,7 @@ class Config(BaseModel):
             "throttle": self.throttle.enabled,
             "throttle_start_delay": self.throttle.start_delay,
             "throttle_max_delay": self.throttle.max_delay,
+            "throttle_min_delay": self.throttle.min_delay,
             "throttle_target_concurrency": self.throttle.target_concurrency,
         }
 
@@ -148,6 +150,7 @@ throttle:
   enabled: true            # Auto-throttle based on server response
   start_delay: 1           # Initial download delay (seconds)
   max_delay: 60            # Maximum download delay (seconds)
+  min_delay: 1             # Minimum seconds between requests to one host
   target_concurrency: 1.0  # Target concurrent requests (higher = faster)
 """
 
