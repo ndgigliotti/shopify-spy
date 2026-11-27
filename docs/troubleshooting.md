@@ -15,7 +15,7 @@ Every store ends with a status, which the CLI lists when a store fails and the [
 | `403 Forbidden` | `forbidden` | The store returned 403s and no successful response |
 | `404 Not Found` | `not_found` | The store returned 404s and no successful response; check the URL and `--platform` |
 | `blocked by robots.txt` | `robots_blocked` | robots.txt forbade the store's requests; try `--ignore-robots` |
-| `rate limited (429)` | `rate_limited` | The store answered 429 (Too Many Requests) after retries and no successful response, or a 429 whose `Retry-After` was longer than 60 s, or a 429 its retries didn't get past held it until `--bail` fired with no items; retry later with a lower `--concurrent` (see [Rate limiting](#rate-limiting)) |
+| `rate limited (429)` | `rate_limited` | The store answered 429 (Too Many Requests) after retries, or with a `Retry-After` longer than 60 s, and no successful response, or a 429 its retries didn't get past held it until `--bail` fired with no items; retry later with a lower `--concurrent` (see [Rate limiting](#rate-limiting)) |
 | `unavailable (5xx)` | `unavailable` | The store answered 5xx server errors (often an outage or maintenance) and no successful response; retry later |
 | `TLS error` | `tls_error` | The certificate failed verification; try `--insecure` |
 | `no response` | `no_response` | The store never answered (DNS, connection or network failure), a proxy refused the request (407), or the store's own address was refused (see the `Refused request to` warning and [Refused requests to non-public addresses](#refused-requests-to-non-public-addresses)); with a proxy in use, the library's `StoreResult.hint` says to check it (see [Proxies](cli.md#proxies)) |

@@ -10,8 +10,9 @@
   to one host are at least 1 second apart, image downloads included; the new
   `--min-delay` option, config `throttle.min_delay` and library option
   `throttle_min_delay` set it. A `Retry-After` longer than 60 seconds is no longer
-  retried after 60 seconds: the host is paused for the whole `Retry-After`, the
-  request isn't retried, and a 429 leaves the store `rate_limited`.
+  retried after 60 seconds: the host is paused for the whole `Retry-After` and the
+  request ends as if its retries had run out, so a store with no successful
+  response ends `rate_limited` for a 429 (`unavailable` for a 503).
 
 ## 0.5.1
 

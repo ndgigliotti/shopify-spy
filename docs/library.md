@@ -59,7 +59,7 @@ The options match the CLI: `platform`, `products`, `collections`, `images` (with
 
 - `max_items_per_store` is per store; use `itertools.islice` for a total.
 - `throttle_min_delay` (default 1.0) is the shortest gap between requests to one host, image downloads included. It doesn't apply with `throttle=False`. A robots.txt `Crawl-delay` is honored either way, capped at `throttle_max_delay`.
-- A `Retry-After` longer than 60 seconds isn't retried early: the host is paused for it and the store ends `rate_limited` in its `StoreResult`. The pause is logged as a `Pausing requests to ...` warning on the `shopify_spy` logger, which shows once you configure logging (the package attaches a `NullHandler`, so nothing prints by default).
+- A `Retry-After` longer than 60 seconds isn't retried early: the host is paused for it and the request ends as if its retries had run out, so a store with no successful response ends `rate_limited` for a 429 (`unavailable` for a 503). The pause is logged as a `Pausing requests to ...` warning on the `shopify_spy` logger, which shows once you configure logging (the package attaches a `NullHandler`, so nothing prints by default).
 - `proxy=` sends every request through one proxy, overriding the environment variables. See [Proxies](cli.md#proxies) for the URL forms, credentials and when a proxy helps. Through a proxy, only literal IP addresses and `localhost` names are checked against the [non-public address rule](troubleshooting.md#refused-requests-to-non-public-addresses).
 
 ## Images

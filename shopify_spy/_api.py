@@ -460,7 +460,7 @@ _SCRAPE_DOC = """
             Retry-After don't count, for each request, so a rate-limited store can
             take minutes or hours to fail. A Retry-After longer than 60s isn't
             waited out or retried: it pauses that host for the whole Retry-After
-            (not excused from bail) and the request ends rate limited.
+            (not excused from bail) and the request ends as if its retries ran out.
         concurrent_requests: Max concurrent requests per host across the run
             (default {concurrent_requests}).
         request_timeout: Seconds allowed for one request, not the whole run
@@ -469,9 +469,10 @@ _SCRAPE_DOC = """
             {retries}). A 429 also swaps the user agent, and a 429 or 503 pauses and slows
             every request to that host. A Retry-After up to 60s is waited out before
             the retry; a longer one isn't retried early: the host is paused for it,
-            the store's ``StoreResult.status`` is ``rate_limited``, and the pause is
-            logged as a WARNING on the ``shopify_spy`` logger (which prints nothing
-            until the caller configures logging).
+            the request ends as if its retries ran out (a store with no successful
+            response is ``rate_limited`` after a 429, ``unavailable`` after a 503),
+            and the pause is logged as a WARNING on the ``shopify_spy`` logger (which
+            prints nothing until the caller configures logging).
         user_agent: Fixed User-Agent, never swapped; by default each store gets a
             random browser UA, swapped after a 403 or 429.
         respect_robots_txt: Obey robots.txt (default {respect_robots_txt}), including
