@@ -143,7 +143,7 @@ class _HelpCommand(_AdaptiveHelp, TyperCommand):
 app = typer.Typer(
     name="shopify-spy",
     cls=_HelpGroup,
-    help="Scrape product and collection data from Shopify and WooCommerce stores.",
+    help="Scrape product and collection data from Shopify, WooCommerce and Magento stores.",
     epilog=f"{LIBRARY_EPILOG}\n\n{DOCS_EPILOG}",
     no_args_is_help=True,
     context_settings=CONTEXT_SETTINGS,
@@ -219,7 +219,7 @@ def main(
         ),
     ] = None,
 ) -> None:
-    """Shopify Spy - Scrape product data from Shopify and WooCommerce stores."""
+    """Shopify Spy - Scrape product data from Shopify, WooCommerce and Magento stores."""
 
 
 @app.command(cls=_HelpCommand, epilog=SCRAPE_EPILOG)
@@ -244,7 +244,7 @@ def scrape(
         typer.Option(
             "--platform",
             "-p",
-            help="Ecommerce platform: shopify or woocommerce "
+            help="Ecommerce platform: shopify, woocommerce or magento "
             f"(default: {_DEFAULTS.scrape.platform.value}).",
             rich_help_panel=SCRAPE_PANEL,
         ),
@@ -253,7 +253,7 @@ def scrape(
         bool | None,
         typer.Option(
             "--products/--no-products",
-            help="Scrape products. Shopify only; WooCommerce always does "
+            help="Scrape products. Shopify only; WooCommerce and Magento always do "
             f"(default: {_on_off(_DEFAULTS.scrape.products)}).",
             rich_help_panel=SCRAPE_PANEL,
         ),
@@ -311,7 +311,7 @@ def scrape(
             "--schema",
             help="Item shape (default: "
             f"{schema_for(_DEFAULTS.output.format, _DEFAULTS.output.schema_)}): native (as "
-            "scraped) or unified (a row per variant, same columns on both platforms). "
+            "scraped) or unified (a row per variant, same columns on every platform). "
             "CSV and XLSX are always unified.",
             rich_help_panel=OUTPUT_PANEL,
         ),
@@ -418,7 +418,7 @@ def scrape(
         ),
     ] = False,
 ) -> None:
-    """Scrape products and collections from Shopify and WooCommerce stores."""
+    """Scrape products and collections from Shopify, WooCommerce and Magento stores."""
     # Load config file (or defaults)
     config = load_config(config_path)
 
@@ -462,17 +462,18 @@ def scrape(
         raise typer.Exit(1)
     _exit_on_invalid(lambda: _check_options(config, peek))
 
-    # Warn about Shopify-only flags used with WooCommerce
-    if config.scrape.platform == Platform.woocommerce:
+    # Warn about Shopify-only flags used with another platform
+    if config.scrape.platform != Platform.shopify:
+        name = _PLATFORM_NAMES[config.scrape.platform.value]
         if collections is True:
             err_console.print(
-                "[yellow]Warning: --collections has no effect with WooCommerce "
+                f"[yellow]Warning: --collections has no effect with {name} "
                 "(collections are not supported).[/yellow]"
             )
         if products is False:
             err_console.print(
-                "[yellow]Warning: --no-products has no effect with WooCommerce "
-                "(WooCommerce always scrapes products).[/yellow]"
+                f"[yellow]Warning: --no-products has no effect with {name} "
+                f"({name} always scrapes products).[/yellow]"
             )
 
     # Get URLs
@@ -959,6 +960,11 @@ def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
     if StoreStatus.stopped in present:
         hints.append("Stopped before every store finished.")
     for s in stores:
+        if s.query_disallowed and s.status == StoreStatus.robots_blocked:
+            hints.append(
+                f"{escape(_host(s.input_url))}'s robots.txt disallows URLs with query "
+                "strings, which covers the GraphQL query."
+            )
         if s.suggested_platform:
             name = _PLATFORM_NAMES.get(s.suggested_platform, s.suggested_platform)
             hints.append(

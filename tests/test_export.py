@@ -678,3 +678,149 @@ def test_failed_header_write_leaves_no_file(tmp_path, monkeypatch):
         # The next write starts the file again, header first
         writer.write(SHOPIFY_PRODUCT)
     assert path.read_text(encoding="utf-8").startswith("platform,kind,")
+
+
+def _mg_price(final, regular=None, currency="EUR"):
+    regular = final if regular is None else regular
+    money = {
+        "regular_price": {"value": regular, "currency": currency},
+        "final_price": {"value": final, "currency": currency},
+    }
+    return {"minimum_price": money, "maximum_price": money}
+
+
+def _mg_variant(uid, sku, color, size, price, stock="IN_STOCK"):
+    return {
+        # Listed out of configurable_options order on purpose
+        "attributes": [
+            {"code": "size", "label": size, "value_index": 2},
+            {"code": "color", "label": color, "value_index": 1},
+        ],
+        "product": {
+            "uid": uid,
+            "sku": sku,
+            "stock_status": stock,
+            "image": {"url": f"https://m.test/{sku}.jpg"},
+            "price_range": {"minimum_price": _mg_price(price, 30)["minimum_price"]},
+        },
+    }
+
+
+MAGENTO_CONFIGURABLE = {
+    "__typename": "ConfigurableProduct",
+    "uid": "MTA=",
+    "sku": "TEE",
+    "name": "Tee",
+    "url_key": "tee",
+    "url_suffix": ".html",
+    "stock_status": "IN_STOCK",
+    "description": {"html": "<p>Soft</p><p>cotton</p>"},
+    "short_description": {"html": "Short"},
+    "categories": [{"name": "Men"}, {"name": "Tops"}],
+    "price_range": {
+        "minimum_price": _mg_price(20, 30)["minimum_price"],
+        "maximum_price": _mg_price(30)["maximum_price"],
+    },
+    "media_gallery": [
+        {"url": "https://m.test/2.jpg", "position": 2, "disabled": False},
+        {"url": "https://m.test/0.jpg", "position": 0, "disabled": True},
+        {"url": "https://m.test/1.jpg", "position": 1, "disabled": False},
+    ],
+    "configurable_options": [
+        {"attribute_code": "color", "label": "Color", "values": []},
+        {"attribute_code": "size", "label": "Size", "values": []},
+    ],
+    "variants": [
+        _mg_variant("MTE=", "TEE-R-S", "Red", "S", 20),
+        _mg_variant("MTI=", "TEE-B-L", "Blue", "L", 30, stock="OUT_OF_STOCK"),
+    ],
+    "store": "m.test",
+    "platform": "magento",
+    "html_url": "https://m.test/tee.html",
+    "image_urls": [],
+}
+
+MAGENTO_SIMPLE = {
+    "__typename": "SimpleProduct",
+    "uid": "OTk=",
+    "sku": "MUG",
+    "name": "Mug",
+    "url_key": "mug",
+    "stock_status": "OUT_OF_STOCK",
+    "price_range": _mg_price(8, 10),
+    "media_gallery": [],
+    "store": "m.test",
+    "platform": "magento",
+    "html_url": "https://m.test/mug",
+    "image_urls": [],
+}
+
+
+def test_csv_magento_configurable_rows(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([MAGENTO_CONFIGURABLE], path)
+    rows = read_csv(path)
+    assert [r["variant_id"] for r in rows] == ["MTE=", "MTI="]
+    assert [r["sku"] for r in rows] == ["TEE-R-S", "TEE-B-L"]
+    assert [(r["variant_title"], r["option1"], r["option2"]) for r in rows] == [
+        ("Red / S", "Red", "S"),
+        ("Blue / L", "Blue", "L"),
+    ]
+    assert [(r["price"], r["compare_at_price"]) for r in rows] == [("20", "30"), ("30", "")]
+    assert [r["available"] for r in rows] == ["true", "false"]
+    assert rows[0]["variant_image_url"] == "https://m.test/TEE-R-S.jpg"
+    row = rows[0]
+    assert (row["platform"], row["kind"], row["store"]) == ("magento", "product", "m.test")
+    assert (row["id"], row["handle"], row["title"]) == ("MTA=", "tee", "Tee")
+    assert (row["categories"], row["options"]) == ("Men, Tops", "Color, Size")
+    assert (row["description"], row["short_description"]) == ("Soft cotton", "Short")
+    assert row["html_url"] == "https://m.test/tee.html"
+    assert (row["image_url"], row["image_count"]) == ("https://m.test/1.jpg", "2")
+    assert (row["currency"], row["min_price"], row["max_price"]) == ("EUR", "20", "30")
+    assert row["variant_count"] == "2"
+    assert (row["vendor"], row["url"], row["source"]) == ("", "", "")
+
+
+def test_csv_magento_variant_without_price_keeps_product_price(tmp_path):
+    variant = _mg_variant("MTE=", "TEE-R-S", "Red", "S", 20)
+    del variant["product"]["price_range"]
+    path = tmp_path / "out.csv"
+    write_items([MAGENTO_CONFIGURABLE | {"variants": [variant]}], path)
+    (row,) = read_csv(path)
+    assert (row["sku"], row["price"], row["compare_at_price"]) == ("TEE-R-S", "20", "30")
+
+
+def test_csv_magento_option_without_label_keeps_its_place(tmp_path):
+    options = [
+        {"attribute_code": "color", "label": None},
+        {"attribute_code": "size", "label": "Size"},
+    ]
+    path = tmp_path / "out.csv"
+    write_items([MAGENTO_CONFIGURABLE | {"configurable_options": options}], path)
+    row = read_csv(path)[0]
+    assert (row["options"], row["option1"], row["option2"]) == ("color, Size", "Red", "S")
+
+
+def test_csv_magento_simple_product_row(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([MAGENTO_SIMPLE], path)
+    (row,) = read_csv(path)
+    assert (row["sku"], row["price"], row["compare_at_price"]) == ("MUG", "8", "10")
+    assert (row["available"], row["variant_count"], row["variant_id"]) == ("false", "0", "")
+    assert (row["image_url"], row["image_count"]) == ("", "0")
+
+
+def test_csv_holds_every_platform(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([WOO_PRODUCT, SHOPIFY_PRODUCT, MAGENTO_SIMPLE], path)
+    rows = read_csv(path)
+    assert [r["platform"] for r in rows] == ["woocommerce"] * 2 + ["shopify"] * 2 + ["magento"]
+
+
+def test_item_platform_names_magento():
+    from shopify_spy._flatten import item_platform
+
+    assert item_platform(MAGENTO_SIMPLE) == "magento"
+    assert item_platform(WOO_PRODUCT) == "woocommerce"
+    assert item_platform(SHOPIFY_PRODUCT) == "shopify"
+    assert item_platform({"platform": "magento", "name": "x"}) is None
