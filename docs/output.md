@@ -133,7 +133,7 @@ With `--platform jsonld`, each line holds the schema.org `Product` or `ProductGr
 - **Fields:** whatever the page's node has. Common ones are `name`, `sku`, `brand`, `category`, `description`, `image` and `offers` (an `Offer`, an `AggregateOffer` with `lowPrice`/`highPrice`, or a list of offers). Prices are strings or numbers as the page wrote them.
 - **`html_url`** is the page the node came from, without its fragment.
 - **Images:** `image_urls` and the unified `image_url` and `variant_image_url` columns resolve a relative `image` (`/media/tee.jpg`) against the page's URL; the node's own `image` stays as written.
-- **Variants:** a `ProductGroup` keeps its `hasVariant` Products inside it, each with its own `sku` and `offers`. Many stores publish a single Product with one offer or a price range instead, so variants are often missing.
+- **Variants:** a `ProductGroup` keeps its `hasVariant` Products inside it, each with its own `sku` and `offers` (the unified schema skips entries with neither). Many stores publish a single Product with one offer or a price range instead, so variants are often missing.
 - **Currencies:** pages come from the store's sitemaps, so a store with regional sections (such as vitamix.com's `/ca/en_us/` pages) can give items in several currencies. Each item's price carries its own currency (the offers' `priceCurrency`, and the unified `currency` column).
 - **Fidelity:** a store's JSON-LD is written for search engines, not as a catalog, so it can leave out fields the native platforms have (tags, stock counts, variant options). See [JSON-LD stores](troubleshooting.md#json-ld-stores).
 - **XML:** keys that aren't valid element names (such as `@type`) have their invalid characters replaced with `_`.
@@ -186,7 +186,7 @@ The unified schema has one row per variant and a plain value in every cell (no e
 | `currency` | | `currency_code` | the minimum final price's `currency` | the first offer's `priceCurrency` |
 | `min_price`, `max_price` | the lowest and highest variant price (products only) | the price range | the minimum and maximum final price | the lowest and highest offer price, across variants (an `AggregateOffer`'s `lowPrice` and `highPrice`) |
 | `on_sale`, `is_purchasable`, `average_rating`, `review_count` | | yes | | |
-| `variant_count` | variants | variations | `variants` | `hasVariant` entries, or the offers in a list of offers |
+| `variant_count` | variants | variations | `variants` | `hasVariant` entries with `offers` or a `sku`, or the offers in a list of offers |
 | `variant_id` | the variant's ID | the variation's ID | the variant product's `uid` | the variant's `productID`, `sku` or `@id`; an offer's `sku`, `@id` or `url` |
 | `variant_title` | such as `Red / S` | the variation's attribute values, such as `Red / S` | the variant's option labels, such as `Red / S` | the variant's `variesBy` values, such as `Red / S`, else its `name`; an offer's `name` |
 | `option1`-`option3` | the variant's option values | the variation's attribute values, in the product's attribute order | the variant's option labels, in `configurable_options` order | the variant's `variesBy` values, in `variesBy` order |
@@ -202,7 +202,7 @@ The unified schema has one row per variant and a plain value in every cell (no e
 - **Prices** are decimal amounts, with WooCommerce's minor units converted. `min_price` and `max_price` are the product's price range on each of its rows. In JSON, prices are strings.
 - **WooCommerce variation rows** have the variation's own `sku`, `price`, `compare_at_price` and `available`. If the store refuses the variation listing, they're the product's.
 - **Magento variant rows** have the variant's own `sku`, `price`, `compare_at_price` and `available`. A product without `variants` gets one row with its own.
-- **JSON-LD variant rows:** a `ProductGroup` gets a row per `hasVariant` Product, with the variant's own `sku`, `price` and `available`; a variant without a price keeps the product's. A Product with a list of offers gets a row per offer, with each offer's `sku`, `price` and `available`. A single `Offer` or an `AggregateOffer` gives one row.
+- **JSON-LD variant rows:** a `ProductGroup` gets a row per `hasVariant` Product, with the variant's own `sku`, `price` and `available`; a variant without a price keeps the product's. Entries with neither `offers` nor a `sku`, which some stores use to link the product's other colours, get no row. A Product with a list of offers gets a row per offer, with each offer's `sku`, `price` and `available`. A single `Offer` or an `AggregateOffer` gives one row.
 - **Left out:** WooCommerce's `type` (`simple`, `variable`, ...) and descriptive attributes are only in the native schema. So are Magento's `__typename` and option `value_index` codes, and JSON-LD properties without a column (`gtin`, `aggregateRating`, ...). Without `--images`, the `image_paths` column is left out; with it, the column lists the downloaded files, relative to the images directory.
 - **Values:** booleans are `true`/`false` in JSON, CSV and unified XML. In CSV and XML, an empty cell means no value.
 - **Old CSV files:** appending to a CSV written by 0.3.0 or earlier, which had a column per item field, is refused; start a new file.

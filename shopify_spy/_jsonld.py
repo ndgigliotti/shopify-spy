@@ -145,6 +145,15 @@ def _dicts(value: Any) -> list[dict[str, Any]]:
     return [v for v in listify(value) if isinstance(v, dict)]
 
 
+def variants(node: dict[str, Any]) -> list[dict[str, Any]]:
+    """A ProductGroup's ``hasVariant`` Products: a list, or a lone one.
+
+    Entries with neither ``offers`` nor ``sku`` are left out: stores list the
+    product's other colourways that way, as a bare ``url``, and they aren't variants
+    of this product."""
+    return [v for v in _dicts(node.get("hasVariant")) if v.get("offers") or text(v.get("sku"))]
+
+
 def image_urls(value: Any, base: Any = None) -> list[str]:
     """URLs from ``image``: a URL, an ImageObject, or a list of either; resolved
     against ``base`` (the page's URL), if it's a string."""

@@ -201,9 +201,8 @@ def _magento(item: dict[str, Any]) -> ItemSummary:
 
 
 def jsonld_variants(item: dict[str, Any]) -> list[dict[str, Any]]:
-    """A ProductGroup's ``hasVariant`` Products: a list, or a lone one."""
-    variants = item.get("hasVariant")
-    return [variants] if isinstance(variants, dict) else dicts(variants)
+    """A ProductGroup's ``hasVariant`` Products (see ``_jsonld.variants``)."""
+    return jsonld.variants(item)
 
 
 def jsonld_prices(item: dict[str, Any]) -> tuple[Decimal | None, Decimal | None, str | None]:

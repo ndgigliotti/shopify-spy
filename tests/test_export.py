@@ -960,6 +960,25 @@ def test_csv_jsonld_variant_without_price_keeps_product_price(tmp_path):
     assert (row["sku"], row["price"], row["compare_at_price"]) == ("TEE-S", "20.00", "30.00")
 
 
+def test_csv_jsonld_stub_variants_are_not_rows(tmp_path):
+    # Allbirds lists the product's other colourways as bare variants
+    stubs = [{"@type": "Product", "url": "https://j.test/tee-blue?size=s"}, {"@type": "Product"}]
+    group = JSONLD_GROUP | {"hasVariant": [*JSONLD_GROUP["hasVariant"], *stubs]}
+    path = tmp_path / "out.csv"
+    write_items([group], path)
+    rows = read_csv(path)
+    assert [r["sku"] for r in rows] == ["TEE-S", "TEE-L"]
+    assert rows[0]["variant_count"] == "2"
+
+
+def test_csv_jsonld_only_stub_variants_give_one_product_row(tmp_path):
+    stub = {"@type": "Product", "url": "https://j.test/tee-blue"}
+    path = tmp_path / "out.csv"
+    write_items([JSONLD_GROUP | {"hasVariant": [stub], "offers": JSONLD_PRODUCT["offers"]}], path)
+    (row,) = read_csv(path)
+    assert (row["variant_count"], row["variant_id"], row["price"]) == ("0", "", "20.00")
+
+
 def test_csv_jsonld_offers_list_rows(tmp_path):
     offers = [
         {
