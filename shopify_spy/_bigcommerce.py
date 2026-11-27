@@ -19,6 +19,7 @@ import base64
 import json
 import logging
 import re
+import time
 import urllib.parse
 from typing import Any
 
@@ -36,6 +37,7 @@ PAGE_SIZE = 50  # BigCommerce's maximum for ``first``
 # A prerequisite, not the data: its 200 must not make diagnose() call a store whose
 # /graphql then fails ``empty``. Not deduped, so a 401 can fetch it again
 HOMEPAGE = RequestKind("homepage", dedupe=False, success=False)
+EXPIRED = "only expired tokens"
 
 # Three base64url parts; the first two are JSON objects, so they start with "eyJ"
 _JWT = re.compile(r"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
@@ -46,6 +48,9 @@ _STENCIL = re.compile(
 # of N out of 10000", but it wasn't seen live, so the match is broad
 _COMPLEXITY_ERROR = re.compile(r"complex", re.I)
 
+# The ``sub`` of the token Stencil issues for the theme (``storefront_api.token``);
+# apps and merchant scripts get tokens whose ``sub`` is their client ID
+STENCIL_SUB = "BC"
 # Every field was checked live on three stores: an unknown one fails the whole query
 _QUERY = " ".join(
     """
@@ -94,24 +99,41 @@ def get_api_url(store_url: str) -> str:
     return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, API_PATH, "", "", ""))
 
 
-def find_token(html: str, site: str) -> str | None:
-    """The page's BigCommerce-issued JWT (``iss`` "BC"), preferring one whose
-    ``cors`` names ``site``.
+def find_token(html: str, site: str, now: float | None = None) -> str | None:
+    """The page's best unexpired BigCommerce-issued JWT (``iss`` "BC"), or None.
 
     The claims, not a setting name, pick it out: themes call the setting
     ``graphQLToken``, ``storefrontApiToken`` or ``BC_GraphQL_Token``, and pages can
-    carry other JWTs and base64 JSON that also start with "eyJ".
+    carry other JWTs and base64 JSON that also start with "eyJ". See ``_tokens`` for
+    the order.
     """
-    issued = []
+    tokens, _ = _tokens(html, site, time.time() if now is None else now)
+    return tokens[0] if tokens else None
+
+
+def _tokens(html: str, site: str, now: float) -> tuple[list[str], int]:
+    """The page's unexpired BigCommerce tokens, best first, and how many expired.
+
+    One whose ``cors`` names ``site`` comes first, then Stencil's own (``sub`` "BC")
+    over an app's or a merchant script's, which can be scoped differently; ties keep
+    page order. A token past its ``eat`` (seconds) is left out: themes can hard-code
+    one that has long expired beside the one Stencil renders.
+    """
+    ranked: dict[str, tuple[bool, bool]] = {}
+    expired: set[str] = set()
     for match in _JWT.finditer(html):
-        claims = _claims(match.group())
-        if claims is None or claims.get("iss") != "BC":
+        jwt = match.group()
+        claims = _claims(jwt)
+        if jwt in ranked or claims is None or claims.get("iss") != "BC":
+            continue
+        eat = claims.get("eat")
+        if isinstance(eat, (int, float)) and not isinstance(eat, bool) and eat <= now:
+            expired.add(jwt)
             continue
         cors = claims.get("cors")
-        if isinstance(cors, list) and site in cors:
-            return match.group()
-        issued.append(match.group())
-    return issued[0] if issued else None
+        named = isinstance(cors, list) and site in cors
+        ranked[jwt] = (not named, claims.get("sub") != STENCIL_SUB)
+    return sorted(ranked, key=ranked.__getitem__), len(expired)
 
 
 def _claims(jwt: str) -> dict[str, Any] | None:
@@ -130,12 +152,14 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
     BigCommerceError, so the store reports ``error`` with the reason rather than
     ``empty``.
     """
-    response, token, _ = await _homepage(ctx)
+    response, token, why = await _homepage(ctx)
     if response is None or not response.ok:
         return False  # diagnose() reports the homepage's status
     site = origin(response.url)  # past apex-to-www and http-to-https redirects
     if token is None:
-        if _STENCIL.search(response.text):
+        if why == EXPIRED:
+            reason = " (only expired ones)"
+        elif _STENCIL.search(response.text):
             reason = " (a Stencil theme that doesn't expose one)"
         else:
             reason = (
@@ -162,8 +186,10 @@ async def _homepage(
         return None, None, "robots.txt"
     if not response.ok:
         return response, None, f"HTTP {response.status}"
-    token = find_token(response.text, site or origin(response.url))
-    return response, token, "" if token else "no token"
+    tokens, expired = _tokens(response.text, site or origin(response.url), time.time())
+    if tokens:
+        return response, tokens[0], ""
+    return response, None, EXPIRED if expired else "no token"
 
 
 class _Pager:
@@ -235,15 +261,22 @@ class _Pager:
         return self._failed(f"{self.api}: {problem}")
 
     async def _unauthorized(self, response: Response) -> bool | None:
-        message = _first_error(response.json_or_none()) or "no GraphQL message"
-        rejected = f"{self.api}: Storefront API token rejected (401): {message}"
+        rejected = _rejected(self.api, response)
+        why = await self._refresh()
+        return None if why is None else self._failed(f"{rejected}{why}")
+
+    async def _refresh(self) -> str | None:
+        """Swap in a fresh token from the homepage; None if it did, else why not
+        (to append to the 401's message)."""
         if self.refreshed:
-            return self._failed(rejected)
+            return ""  # a second 401 in a row
         self.refreshed = True
         # No probes and no no-token error here: this store is BigCommerce
         _, token, why = await _homepage(self.ctx, self.site)
         if token is None:
-            return self._failed(f"{rejected}; fetching the homepage again gave no token ({why})")
+            return f"; fetching the homepage again gave no token ({why})"
+        if token == self.token:
+            return "; fetching the homepage again gave the same token"
         logger.info("BigCommerce token rejected at %s; retrying with a new one", self.where)
         self.token = token
         return None
@@ -292,6 +325,11 @@ class _Pager:
         self.cursor = cursor
         self.page += 1
         return None
+
+
+def _rejected(api: str, response: Response) -> str:
+    message = _first_error(response.json_or_none()) or "no GraphQL message"
+    return f"{api}: Storefront API token rejected (401): {message}"
 
 
 def _read(response: Response) -> tuple[dict[str, Any] | None, str | None]:

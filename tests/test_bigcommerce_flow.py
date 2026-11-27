@@ -5,7 +5,7 @@ import logging
 
 import pytest
 
-from shopify_spy._bigcommerce import _QUERY, PAGE_SIZE
+from shopify_spy._bigcommerce import _QUERY, PAGE_SIZE, find_token
 from shopify_spy._fetch import FetchConnectionError, Seq
 from tests.flow_support import STORE, bc_token, bigcommerce_api, redirect, scrape
 
@@ -139,6 +139,83 @@ def test_token_whose_cors_names_the_site_is_preferred():
     elsewhere = bc_token(cors=["https://other.test"])
     _, _, _, graphql = scrape_bc({None: page(1)}, home=homepage(elsewhere, TOKEN))
     assert graphql.tokens == [TOKEN]
+
+
+def jscontext(token):
+    """Stencil's escaped jsContext, as the theme renders ``storefront_api.token``."""
+    settings = {"storefront_api": {"token": token}}
+    return f"<script>var jsContext = JSON.parse({json.dumps(json.dumps(settings))});</script>"
+
+
+def test_stencil_token_preferred_over_an_earlier_app_token():
+    # As on crabplace.com: an app's token, with a client ID ``sub``, comes first
+    app = bc_token(sub="plr01xvcbfpin1v9wgvockqmqvv4pzp", cors=[STORE, "https://www.shop.test"])
+    home = (200, f"<html><script>window.CPX_GRID_SF_TOKEN='{app}';</script>{jscontext(TOKEN)}")
+    _, result, _, graphql = scrape_bc({None: page(1)}, home=home)
+    assert graphql.tokens == [TOKEN]
+    assert result.stores[0].status == "ok"
+
+
+def test_app_token_used_without_a_stencil_one():
+    app = bc_token(sub="client-id")
+    _, _, _, graphql = scrape_bc({None: page(1)}, home=homepage(bc_token(iss="x"), app))
+    assert graphql.tokens == [app]
+
+
+def test_cors_outranks_stencil_sub():
+    elsewhere = bc_token(cors=["https://other.test"])
+    app = bc_token(sub="client-id")
+    assert find_token(homepage(elsewhere, app)[1], STORE) == app
+
+
+def test_expired_token_skipped():
+    # As on erskinedental.com: a theme script hard-codes a long-expired token
+    expired = bc_token(sid=3, eat=1_747_400_000)
+    script = f"<script>const storeUrl = '/graphql';\nconst apiToken = '{expired}';</script>"
+    home = (200, f"<html>{STENCIL}{script}{jscontext(TOKEN)}</html>")
+    _, result, _, graphql = scrape_bc({None: page(1)}, home=home)
+    assert graphql.tokens == [TOKEN]
+    assert result.stores[0].status == "ok"
+
+
+def test_expiry_is_checked_against_now():
+    token = bc_token(eat=1_000)
+    assert find_token(homepage(token)[1], STORE, now=999) == token
+    assert find_token(homepage(token)[1], STORE, now=1_000) is None
+
+
+def test_only_expired_tokens_is_an_error():
+    home = homepage(bc_token(sid=3, eat=1_000), bc_token(sid=4, eat=2_000))
+    items, result, fetcher, _ = scrape_bc({}, home=home)
+    assert items == []
+    store = result.stores[0]
+    assert store.status == "error"
+    assert "no Storefront API token on the homepage (only expired ones)" in store.errors[-1]
+    assert fetcher.count(API, "POST") == 0
+
+
+def test_refresh_skips_an_expired_token():
+    expired = bc_token(sid=3, eat=1_000)
+    graphql = GraphQL({None: page(2, 0, "c1"), "c1": Seq([REJECTED, page(2, 2)])})
+    home = Seq([homepage(TOKEN), homepage(expired, FRESH)])
+    items, result, _, _ = scrape_bc(graphql, home=home)
+    assert graphql.tokens == [TOKEN, TOKEN, FRESH]
+    assert len(items) == 4
+    assert result.stores[0].status == "ok"
+
+
+def test_refresh_to_the_same_token_stops():
+    graphql = GraphQL({None: page(2, 0, "c1"), "c1": REJECTED})
+    items, result, _, _ = scrape_bc(graphql, home=homepage(TOKEN))
+    assert graphql.tokens == [TOKEN, TOKEN]
+    assert len(items) == 2
+    assert result.stores[0].status == "partial"
+
+
+def test_refresh_to_the_same_token_on_the_first_page_is_an_error():
+    _, result, _, graphql = scrape_bc({None: REJECTED}, home=homepage(TOKEN))
+    assert graphql.tokens == [TOKEN]
+    assert "gave the same token" in result.stores[0].errors[-1]
 
 
 def test_api_and_html_url_follow_a_homepage_redirect():
