@@ -189,8 +189,6 @@ class HostRegistry:
         if requested is None:
             return
         applied = min(requested, self.throttle.max_delay)
-        if applied <= 0:
-            return
         if applied < requested:
             logger.warning(
                 "robots.txt Crawl-delay of %gs for %s is over the %gs maximum; using %gs",
