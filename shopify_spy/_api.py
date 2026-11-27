@@ -56,7 +56,7 @@ class ScrapeOptions(BaseModel):
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
-    platform: Literal["shopify", "woocommerce"] = "shopify"
+    platform: Literal["shopify", "woocommerce", "magento"] = "shopify"
     products: bool = True
     collections: bool = False
     images: bool = False
@@ -87,7 +87,9 @@ def _prepare(
 ) -> tuple[list[tuple[str, str]], ScrapeOptions, bool]:
     backoff = options.pop("_backoff", True)
     if options.get("platform") == "auto":
-        raise ValueError("auto-detection isn't supported yet; use 'shopify' or 'woocommerce'")
+        raise ValueError(
+            "auto-detection isn't supported yet; use 'shopify', 'woocommerce' or 'magento'"
+        )
     proxy = options.get("proxy")
     if proxy is not None and not isinstance(proxy, str):
         # Checked here so pydantic never echoes the value, which may hold credentials
@@ -442,12 +444,14 @@ _SCRAPE_DOC = """
     Args:
         urls: A store URL or an iterable of them. Only the host matters; paths are
             ignored. One platform per call.
-        platform: "shopify" or "woocommerce" (default {platform}). When a
+        platform: "shopify", "woocommerce" or "magento" (default {platform}). When a
             WooCommerce store's Store API is unavailable, its product pages are
             read instead: partial items in the Store API's shape with
-            ``source="product_page"``.
+            ``source="product_page"``. Magento stores are read through the
+            storefront GraphQL API at ``/graphql``, in the default store view and
+            its currency; there are no Magento collections.
         products: Scrape products (default {products}). Shopify only; WooCommerce
-            always does.
+            and Magento always scrape products.
         collections: Also scrape collections (default {collections}). Shopify only.
         images: Download product images into ``images_dir/full/`` (default {images}).
             Requires ``images_dir``. Each item gains ``scraped_images`` records
@@ -509,7 +513,9 @@ _SCRAPE_DOC = """
             Hostnames aren't resolved for the refusal of non-public addresses.
 
     Failures: a store fails when it is blocked (403, robots.txt), rate limited
-    (429), not found, unavailable (5xx), times out, can't be reached, or errors;
+    (429), not found, unavailable (5xx), times out, can't be reached, or errors
+    (status ``error``: an unexpected error, or a Magento store whose ``/graphql``
+    answered without products, with the GraphQL message in ``StoreResult.errors``);
     ``run.result.failed`` lists them with a status and, sometimes, a ``hint`` (e.g.
     a likely wrong ``platform``). An empty store is not a failure. A store's
     ``hint`` and ``products_from`` also name the ``myshopify.com`` domain a headless
@@ -518,9 +524,10 @@ _SCRAPE_DOC = """
     metadata) are refused with a warning unless the store's own URL is on one.
 
     Items are each platform's native shape plus ``store``, ``platform``
-    ("shopify" or "woocommerce") and ``image_urls`` (see ``ShopifyProductItem``,
-    ``WooCommerceProductItem``); ``write_items(..., schema="unified")`` flattens them
-    into one row per variant with the same columns on both platforms.
+    ("shopify", "woocommerce" or "magento") and ``image_urls`` (Magento items also
+    get ``html_url``; see ``ShopifyProductItem``, ``WooCommerceProductItem``,
+    ``MagentoProductItem``); ``write_items(..., schema="unified")`` flattens them
+    into one row per variant with the same columns on every platform.
 
     Nothing is written to disk unless ``images=True``, and no config file is read.
 """.format_map(

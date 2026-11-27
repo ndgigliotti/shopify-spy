@@ -1,8 +1,8 @@
 """``summarize()``: the same handful of fields from any item, without changing it.
 
-Provisional API. Shopify and WooCommerce items have different shapes (Shopify wraps
-the payload in "product"/"collection"; WooCommerce is flat, with prices in minor
-units); this reads either.
+Provisional API. Each platform's items have their own shape (Shopify wraps the
+payload in "product"/"collection"; WooCommerce is flat, with prices in minor units;
+Magento is flat, with prices in ``price_range``); this reads any of them.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from shopify_spy._magento import gallery_urls
 from shopify_spy._utils import dicts
 
 logger = logging.getLogger("shopify_spy")
@@ -24,7 +25,7 @@ logger = logging.getLogger("shopify_spy")
 @dataclass(frozen=True)
 class ItemSummary:
     kind: str  # "product" or "collection"
-    platform: str  # "shopify" or "woocommerce"
+    platform: str  # "shopify", "woocommerce" or "magento"
     id: Any
     title: str | None
     min_price: Decimal | None
@@ -93,10 +94,18 @@ def _images(item: dict[str, Any], payload: dict[str, Any]) -> list[str]:
     return [u for u in urls if isinstance(u, str)]
 
 
+def is_magento(item: dict[str, Any]) -> bool:
+    """Whether ``item`` is a scraped Magento product (``summarize().asdict()`` has a
+    ``platform`` but no ``price_range``)."""
+    return item.get("platform") == "magento" and isinstance(item.get("price_range"), dict)
+
+
 def summarize(item: dict[str, Any]) -> ItemSummary:
-    """Summarize a Shopify or WooCommerce item from ``scrape()``."""
+    """Summarize a Shopify, WooCommerce or Magento item from ``scrape()``."""
     if isinstance(item.get("product"), dict) or isinstance(item.get("collection"), dict):
         return _shopify(item)
+    if is_magento(item):
+        return _magento(item)
     return _woocommerce(item)
 
 
@@ -148,4 +157,34 @@ def _woocommerce(item: dict[str, Any]) -> ItemSummary:
         html_url=item.get("permalink"),
         store=item.get("store"),
         image_urls=_images(item, item),
+    )
+
+
+def magento_price(
+    price_range: Any, bound: str = "minimum_price", kind: str = "final_price"
+) -> tuple[Decimal | None, str | None]:
+    """The amount and currency at ``price_range[bound][kind]``, or Nones if absent."""
+    level = price_range.get(bound) if isinstance(price_range, dict) else None
+    money = level.get(kind) if isinstance(level, dict) else None
+    if not isinstance(money, dict):
+        return None, None
+    currency = money.get("currency")
+    return _decimal(money.get("value")), currency if isinstance(currency, str) else None
+
+
+def _magento(item: dict[str, Any]) -> ItemSummary:
+    low, currency = magento_price(item.get("price_range"))
+    high, high_currency = magento_price(item.get("price_range"), "maximum_price")
+    urls = item.get("image_urls") or gallery_urls(item)
+    return ItemSummary(
+        kind="product",
+        platform="magento",
+        id=item.get("uid"),
+        title=item.get("name"),
+        min_price=low,
+        max_price=high,
+        currency=currency or high_currency,
+        html_url=item.get("html_url"),
+        store=item.get("store"),
+        image_urls=[u for u in urls if isinstance(u, str)],
     )

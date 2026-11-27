@@ -17,7 +17,7 @@ for store in run.result.failed:
 
 # Learn the schema from one item
 item = spy.scrape("a.com").first()
-print(spy.summarize(item))  # title, prices as Decimal, URL: same fields on both platforms
+print(spy.summarize(item))  # title, prices as Decimal, URL: same fields on every platform
 
 # Filter across platforms and write a CSV
 rows = (spy.summarize(i) for i in spy.scrape(urls))
@@ -29,7 +29,7 @@ blocked = [s.input_url for s in result.failed if s.status == "robots_blocked"]
 spy.write_items(spy.scrape(blocked, respect_robots_txt=False), "products.jsonl", append=True)
 ```
 
-Items are plain dicts with typed definitions (`ShopifyProductItem`, `ShopifyCollectionItem`, `WooCommerceProductItem`), in the native shapes described under [Output](output.md#shopify-items). `summarize()` gives the same fields on both platforms.
+Items are plain dicts with typed definitions (`ShopifyProductItem`, `ShopifyCollectionItem`, `WooCommerceProductItem`, `MagentoProductItem`), in the native shapes described under [Output](output.md#shopify-items). Pass `platform="woocommerce"` or `platform="magento"` for those stores; Shopify is the default. `summarize()` gives the same fields on every platform.
 
 ## A workflow for coding agents
 
@@ -68,7 +68,7 @@ The options match the CLI: `platform`, `products`, `collections`, `images` (with
 
 ## Schemas
 
-`write_items(run, "products.jsonl")` writes items as scraped. With `schema="unified"`, it writes the same one-row-per-variant records as the CLI's `--schema unified`, shared by both platforms (see [Unified schema](output.md#unified-schema)), so items from Shopify and WooCommerce runs can go in one file.
+`write_items(run, "products.jsonl")` writes items as scraped. With `schema="unified"`, it writes the same one-row-per-variant records as the CLI's `--schema unified`, shared by every platform (see [Unified schema](output.md#unified-schema)), so items from Shopify, WooCommerce and Magento runs can go in one file.
 
 - CSV and Excel are always unified; `schema="native"` raises `ValueError`.
 - `fields=[...]` picks unified columns. A name that isn't one of them is logged and left empty.

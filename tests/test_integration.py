@@ -32,3 +32,10 @@ def test_woocommerce_store_live():
     assert item["name"]
     assert item["store"] == "porterandyork.com"
     assert spy.summarize(item).currency
+
+
+def test_magento_store_live():
+    item = spy.scrape("https://www.vitamix.com", platform="magento", max_items_per_store=1).first()
+    assert item["name"]
+    assert item["store"] == "www.vitamix.com"
+    assert spy.summarize(item).currency
