@@ -151,4 +151,4 @@ spy scrape --impersonate chrome https://www.example.com
 - It is off by default and never turns itself on: a store that answers 403 ends as [`forbidden`](troubleshooting.md#store-statuses), and no hint suggests this option.
 - `BROWSER` is any target the installed curl_cffi accepts, such as `chrome`, `firefox` or `safari`, which pick its newest profile for that browser, or a pinned profile such as `chrome150`. An unknown value is rejected before the run starts.
 - One profile serves the whole run. The profile sets the user agent, so `--user-agent` can't be combined with it, and a 403 or 429 retries with the same profile instead of swapping the user agent.
-- robots.txt, throttling, `Retry-After`, `--concurrent`, `--proxy` and `--insecure` work as they do without it.
+- robots.txt and its `Crawl-delay`, throttling (`--min-delay`, `--image-delay`), `Retry-After`, `--concurrent`, `--proxy` and `--insecure` work as they do without it.

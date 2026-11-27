@@ -511,8 +511,8 @@ _SCRAPE_DOC = """
             the installed curl_cffi accepts: "chrome", "firefox", "safari", or a pinned
             profile such as "chrome150". The profile sets the user agent, and one
             profile serves the whole run; a 403 or 429 retries with the same one.
-            robots.txt and throttling apply as usual. Needs the ``impersonate``
-            extra. Ignored with a custom ``fetcher_factory``.
+            robots.txt, its Crawl-delay and throttling apply as usual. Needs the
+            ``impersonate`` extra. Ignored with a custom ``fetcher_factory``.
         max_concurrent_stores: Stores scraped at once (default {max_concurrent_stores};
             None = no limit).
         throttle, throttle_start_delay, throttle_max_delay, throttle_min_delay,
