@@ -1140,3 +1140,34 @@ async def test_image_429s_do_not_count_as_rate_limits():
     await get(session, f"{STORE}/probe", kind=PROBE)
     await get(session, f"{STORE}/image", kind=IMAGE)
     assert session.stats.rate_limits == 1
+
+
+# --- image_delay ----------------------------------------------------------------------
+
+
+def throttled_session():
+    registry = HostRegistry(
+        concurrent_requests=16,
+        throttle=ThrottleSettings(start_delay=0.0, min_delay=0.4, image_delay=0.1),
+        respect_robots_txt=False,
+    )
+    return make_session(
+        {f"{STORE}/a": (200, "x"), f"{STORE}/b": (200, "x")},
+        registry=registry,
+    )[0]
+
+
+async def test_image_requests_are_spaced_by_image_delay():
+    session = throttled_session()
+    started = now()
+    await get(session, f"{STORE}/a", kind=IMAGE)
+    await get(session, f"{STORE}/b", kind=IMAGE)
+    assert 0.09 <= now() - started < 0.35
+
+
+async def test_store_requests_are_spaced_by_min_delay():
+    session = throttled_session()
+    started = now()
+    await get(session, f"{STORE}/a")
+    await get(session, f"{STORE}/b")
+    assert now() - started >= 0.39

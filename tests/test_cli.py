@@ -452,6 +452,20 @@ def test_negative_min_delay_exits_with_an_error(cli):
     assert "min-delay" in run.result.output
 
 
+def test_image_delay_overrides_config(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("throttle:\n  image_delay: 2\n")
+    config = load_config(path)
+    assert _overrides(config).to_kwargs()["throttle_image_delay"] == 2.0
+    assert _overrides(config, image_delay=0.5).to_kwargs()["throttle_image_delay"] == 0.5
+
+
+def test_negative_image_delay_exits_with_an_error(cli):
+    run = cli(None, "--image-delay", "-1", "shop.test")
+    assert run.exit_code != 0
+    assert "image-delay" in run.result.output
+
+
 def test_get_urls_single_url():
     assert get_urls(["https://example.com"], None) == ["https://example.com"]
 

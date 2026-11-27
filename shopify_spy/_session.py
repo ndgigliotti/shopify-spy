@@ -71,11 +71,13 @@ class RequestKind:
     rate_limits: bool = True
     # A slot shared by every URL of this kind, instead of one per origin
     slot: str | None = None
+    # Spaced by the throttle's image_delay instead of min_delay
+    image: bool = False
 
 
 STORE = RequestKind("store")
 ROBOTS = RequestKind("robots", check_robots=False, counted=False, dedupe=False)
-IMAGE = RequestKind("image", counted=False, dedupe=False, rate_limits=False)
+IMAGE = RequestKind("image", counted=False, dedupe=False, rate_limits=False, image=True)
 PROBE = RequestKind("probe", counted=False, dedupe=False)  # e.g. a wrong-platform check
 # A fallback source, e.g. WooCommerce product pages: if it finds nothing, the store's
 # diagnosis still explains why the primary source failed
@@ -534,7 +536,7 @@ class StoreSession:
                 response: Response | None = None
                 error: FetchError | None = None
                 async with self._store_slots, slot.semaphore:
-                    sent_at = await slot.wait_turn()
+                    sent_at = await slot.wait_turn(kind.image)
                     self.stats.requests += 1
                     sent = self.identity.current
                     try:

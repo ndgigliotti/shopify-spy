@@ -123,6 +123,7 @@ def test_help_defaults_come_from_config():
         "max_stores": str(defaults.network.max_concurrent_stores),
         "throttle": on_off[defaults.throttle.enabled],
         "min_delay": f"{defaults.throttle.min_delay:g}",
+        "image_delay": f"{defaults.throttle.image_delay:g}",
         "bail": str(defaults.scrape.bail),
     }
     for name, value in expected.items():
@@ -142,13 +143,15 @@ def test_scrape_doc_defaults_come_from_scrape_options():
 def test_no_throttle_help_says_crawl_delay_still_applies():
     helps = {p.name: " ".join((p.help or "").split()) for p in _scrape_command().params}
     assert "robots.txt Crawl-delay and Retry-After pauses still apply" in helps["throttle"]
-    assert "--min-delay" in helps["images"]
+    assert "--image-delay" in helps["images"]
 
 
-def test_scrape_doc_covers_min_delay_and_crawl_delay():
+def test_scrape_doc_covers_min_delay_image_delay_and_crawl_delay():
     doc = " ".join(inspect.getdoc(spy.scrape).split())
     assert "throttle_min_delay" in doc
     assert "1s min" in doc
+    assert "throttle_image_delay" in doc
+    assert "0.25s image" in doc
     assert "Crawl-delay" in doc
 
 

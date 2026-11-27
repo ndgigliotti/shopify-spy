@@ -29,6 +29,7 @@ def slot(**throttle) -> HostSlot:
     # No minimum gap unless a test asks for one, so the Scrapy AutoThrottle
     # transcription tests see the algorithm itself
     throttle.setdefault("min_delay", 0.0)
+    throttle.setdefault("image_delay", 0.0)
     return HostSlot(16, ThrottleSettings(**throttle))
 
 
@@ -105,11 +106,12 @@ def test_default_min_delay_is_one_second():
     assert ThrottleSettings().min_delay == 1.0
 
 
-def test_adjust_never_goes_below_min_delay():
+def test_min_delay_floors_the_spacing_not_the_adaptive_delay():
     s = slot(min_delay=1.0)
     for _ in range(20):
         s.adjust(0.01, 200)
-    assert s.delay == 1.0
+    assert s.delay < 0.1  # AutoThrottle's pace, which images keep down to image_delay
+    assert s._min_gap() == 1.0
 
 
 async def test_wait_turn_never_closer_than_min_delay(low_jitter):
@@ -124,16 +126,41 @@ async def test_wait_turn_never_closer_than_min_delay(low_jitter):
     assert t2 - t1 >= 0.19
 
 
-def test_start_delay_below_min_delay_starts_at_min_delay():
-    assert slot(start_delay=0.1, min_delay=0.5).delay == 0.5
+def test_default_image_delay_is_a_quarter_second():
+    assert ThrottleSettings().image_delay == 0.25
+
+
+async def test_image_wait_turn_spaced_by_image_delay_not_min_delay(low_jitter):
+    s = slot(start_delay=0.0, min_delay=5.0, image_delay=0.2)
+    loop = asyncio.get_running_loop()
+    async with asyncio.timeout(2):
+        await s.wait_turn(image=True)
+        t1 = loop.time()
+        await s.wait_turn(image=True)
+        t2 = loop.time()
+    assert 0.19 <= t2 - t1 < 1.0
+
+
+async def test_image_wait_turn_still_honors_crawl_delay(low_jitter):
+    s = slot(start_delay=0.0, min_delay=5.0, image_delay=0.0)
+    s.set_crawl_delay(0.2)
+    loop = asyncio.get_running_loop()
+    async with asyncio.timeout(2):
+        await s.wait_turn(image=True)
+        t1 = loop.time()
+        await s.wait_turn(image=True)
+        t2 = loop.time()
+    assert t2 - t1 >= 0.19
 
 
 def test_min_delay_above_max_delay_acts_as_max_delay():
     s = slot(min_delay=5.0, max_delay=2.0)
-    assert s.delay == 2.0
-    s.adjust(0.01, 200)
-    assert s.delay == 2.0
     assert s._min_gap() == 2.0
+
+
+def test_image_delay_above_max_delay_acts_as_max_delay():
+    s = slot(image_delay=5.0, max_delay=2.0)
+    assert s._min_gap(image=True) == 2.0
 
 
 async def test_min_delay_not_applied_without_throttle():
@@ -146,6 +173,16 @@ async def test_min_delay_not_applied_without_throttle():
     async with asyncio.timeout(2):
         await s.wait_turn()
         await s.wait_turn()
+    assert loop.time() - t0 < 0.05
+
+
+async def test_image_delay_not_applied_without_throttle():
+    s = slot(enabled=False, image_delay=5.0)
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    async with asyncio.timeout(2):
+        await s.wait_turn(image=True)
+        await s.wait_turn(image=True)
     assert loop.time() - t0 < 0.05
 
 

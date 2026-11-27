@@ -27,6 +27,8 @@ def test_config_defaults():
     assert config.throttle.start_delay == 1.0
     assert config.throttle.min_delay == 1.0
     assert config.to_kwargs()["throttle_min_delay"] == 1.0
+    assert config.throttle.image_delay == 0.25
+    assert config.to_kwargs()["throttle_image_delay"] == 0.25
 
 
 def test_config_file_min_delay_reaches_kwargs(tmp_path):
@@ -38,6 +40,17 @@ def test_config_file_min_delay_reaches_kwargs(tmp_path):
 def test_negative_min_delay_rejected():
     with pytest.raises(ValidationError):
         Config(throttle={"min_delay": -1})
+
+
+def test_config_file_image_delay_reaches_kwargs(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("throttle:\n  image_delay: 0.5\n")
+    assert load_config_from_file(path).to_kwargs()["throttle_image_delay"] == 0.5
+
+
+def test_negative_image_delay_rejected():
+    with pytest.raises(ValidationError):
+        Config(throttle={"image_delay": -1})
 
 
 def test_config_images_dir():

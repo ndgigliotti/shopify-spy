@@ -75,6 +75,7 @@ class ScrapeOptions(BaseModel):
     throttle_start_delay: float = Field(default=1.0, ge=0)
     throttle_max_delay: float = Field(default=60.0, ge=0)
     throttle_min_delay: float = Field(default=1.0, ge=0)
+    throttle_image_delay: float = Field(default=0.25, ge=0)
     throttle_target_concurrency: float = Field(default=1.0, ge=0.1)
     on_failure: Literal["raise", "warn", "ignore"] = "raise"
     strict: bool = False
@@ -158,6 +159,7 @@ def _config(opts: ScrapeOptions, backoff: bool) -> RunConfig:
             start_delay=opts.throttle_start_delay,
             max_delay=opts.throttle_max_delay,
             min_delay=opts.throttle_min_delay,
+            image_delay=opts.throttle_image_delay,
             target_concurrency=opts.throttle_target_concurrency,
         ),
         backoff=backoff,
@@ -489,13 +491,15 @@ _SCRAPE_DOC = """
         max_concurrent_stores: Stores scraped at once (default {max_concurrent_stores};
             None = no limit).
         throttle, throttle_start_delay, throttle_max_delay, throttle_min_delay,
-        throttle_target_concurrency: AutoThrottle settings. Defaults: {throttle};
-            {throttle_start_delay}s start, {throttle_min_delay}s min and
+        throttle_image_delay, throttle_target_concurrency: AutoThrottle settings.
+            Defaults: {throttle}; {throttle_start_delay}s start,
+            {throttle_min_delay}s min, {throttle_image_delay}s image and
             {throttle_max_delay}s max delay; target concurrency
             {throttle_target_concurrency}. ``throttle_min_delay`` is the shortest gap
-            between requests to one host, image downloads included; it doesn't apply
-            with ``throttle=False``, while robots.txt Crawl-delay and Retry-After
-            pauses still do.
+            between page and API requests to one host, ``throttle_image_delay`` the
+            shortest between image downloads from one host. Neither applies with
+            ``throttle=False``, while robots.txt Crawl-delay and Retry-After pauses
+            still do.
         on_failure: What to do when stores fail, checked once iteration ends:
             "raise" (default) raises ScrapeFailed if every store failed; "warn"
             issues a ScrapeWarning; "ignore" leaves it to ``run.result``.

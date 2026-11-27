@@ -74,6 +74,7 @@ class ThrottleConfig(BaseModel):
     start_delay: float = Field(default=1.0, ge=0)
     max_delay: float = Field(default=60.0, ge=0)
     min_delay: float = Field(default=1.0, ge=0)
+    image_delay: float = Field(default=0.25, ge=0)
     target_concurrency: float = Field(default=1.0, ge=0.1)
 
 
@@ -107,6 +108,7 @@ class Config(BaseModel):
             "throttle_start_delay": self.throttle.start_delay,
             "throttle_max_delay": self.throttle.max_delay,
             "throttle_min_delay": self.throttle.min_delay,
+            "throttle_image_delay": self.throttle.image_delay,
             "throttle_target_concurrency": self.throttle.target_concurrency,
         }
 
@@ -151,6 +153,7 @@ throttle:
   start_delay: 1           # Initial download delay (seconds)
   max_delay: 60            # Maximum download delay (seconds)
   min_delay: 1             # Minimum seconds between requests to one host
+  image_delay: 0.25        # Minimum seconds between image downloads from one host
   target_concurrency: 1.0  # Target concurrent requests (higher = faster)
 """
 

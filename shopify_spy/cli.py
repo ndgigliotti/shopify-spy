@@ -272,8 +272,8 @@ def scrape(
         typer.Option(
             "--images/--no-images",
             help=f"Download product images into {_IMAGES_DIR} "
-            f"(default: {_on_off(_DEFAULTS.scrape.images)}). Downloads are spaced by "
-            "--min-delay per image host.",
+            f"(default: {_on_off(_DEFAULTS.scrape.images)}). Downloads from one host are "
+            "spaced by --image-delay.",
             rich_help_panel=SCRAPE_PANEL,
         ),
     ] = None,
@@ -347,8 +347,9 @@ def scrape(
         bool | None,
         typer.Option(
             "--throttle/--no-throttle",
-            help="Auto-throttle requests; --no-throttle drops the adaptive delay and "
-            "--min-delay, but robots.txt Crawl-delay and Retry-After pauses still apply "
+            help="Auto-throttle requests; --no-throttle drops the adaptive delay, "
+            "--min-delay and --image-delay, but robots.txt Crawl-delay and Retry-After "
+            "pauses still apply "
             f"(default: {_on_off(_DEFAULTS.throttle.enabled)}).",
             rich_help_panel=NETWORK_PANEL,
         ),
@@ -361,6 +362,17 @@ def scrape(
             metavar="SECONDS",
             help="Minimum seconds between requests to one host while throttling "
             f"(default: {_DEFAULTS.throttle.min_delay:g}).",
+            rich_help_panel=NETWORK_PANEL,
+        ),
+    ] = None,
+    image_delay: Annotated[
+        float | None,
+        typer.Option(
+            "--image-delay",
+            min=0.0,
+            metavar="SECONDS",
+            help="Minimum seconds between image downloads from one host while throttling "
+            f"(default: {_DEFAULTS.throttle.image_delay:g}).",
             rich_help_panel=NETWORK_PANEL,
         ),
     ] = None,
@@ -454,6 +466,7 @@ def scrape(
         concurrent=concurrent,
         throttle=throttle,
         min_delay=min_delay,
+        image_delay=image_delay,
         limit=limit,
         user_agent=user_agent,
         ignore_robots=ignore_robots,
@@ -575,6 +588,7 @@ def apply_cli_overrides(
     max_stores: int | None = None,
     proxy: str | None = None,
     min_delay: float | None = None,
+    image_delay: float | None = None,
 ) -> Config:
     """Apply CLI argument overrides to config. ``None`` keeps the config value."""
     scrape_dict = config.scrape.model_dump() | _given(
@@ -599,7 +613,9 @@ def apply_cli_overrides(
         network_dict["respect_robots_txt"] = False
     if insecure:
         network_dict["verify_tls"] = False
-    throttle_dict = config.throttle.model_dump() | _given(enabled=throttle, min_delay=min_delay)
+    throttle_dict = config.throttle.model_dump() | _given(
+        enabled=throttle, min_delay=min_delay, image_delay=image_delay
+    )
 
     return Config(
         scrape=scrape_dict,
