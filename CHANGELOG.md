@@ -9,7 +9,8 @@
   API at `/graphql` without a token. Items are the GraphQL products plus `store`,
   `platform`, `html_url` and `image_urls` (`MagentoProductItem`), and the unified
   schema has a row per configurable variant. A store whose `/graphql` answers
-  without products reports `failed` with Magento's message
+  without products reports `failed` with Magento's message, and one whose robots.txt
+  disallows URLs with query strings (`Disallow: /*?`) gets a hint saying so
   ([#89](https://github.com/ndgigliotti/shopify-spy/issues/89)).
 
 ## 0.5.1

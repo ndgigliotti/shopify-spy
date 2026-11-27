@@ -960,6 +960,11 @@ def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
     if StoreStatus.stopped in present:
         hints.append("Stopped before every store finished.")
     for s in stores:
+        if s.query_disallowed and s.status == StoreStatus.robots_blocked:
+            hints.append(
+                f"{escape(_host(s.input_url))}'s robots.txt disallows URLs with query "
+                "strings, which covers the GraphQL query."
+            )
         if s.suggested_platform:
             name = _PLATFORM_NAMES.get(s.suggested_platform, s.suggested_platform)
             hints.append(

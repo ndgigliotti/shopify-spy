@@ -258,6 +258,8 @@ class StoreContext:
     item_limit: int | None = None  # the runner stops the store at this many items
     suggested_platform: str | None = None  # set when the store looks like another platform
     products_from: str | None = None  # the host bulk products came from, if not the store's
+    # robots.txt disallowed the platform's query URL but not its path (Magento's GraphQL)
+    query_disallowed: bool = False
 
     @property
     def items_left(self) -> int | None:

@@ -1004,6 +1004,14 @@ def test_diagnose_robots(cli):
     assert "--ignore-robots" in run.stdout
 
 
+def test_diagnose_magento_query_string_rule(cli):
+    routes = {"https://store.com/robots.txt": (200, "User-agent: *\nDisallow: /*?")}
+    run = cli(routes, "--platform", "magento", "store.com")
+
+    assert _single_status(run) == "blocked by robots.txt"
+    assert "store.com's robots.txt disallows URLs with query strings" in run.stdout
+
+
 def test_ignore_robots_bypasses_block(cli):
     routes = merge({"https://store.com/robots.txt": (200, DISALLOW_ALL)}, shop("store.com", 2))
     run = cli(routes, "-i", "store.com")

@@ -13,7 +13,7 @@ import urllib.parse
 
 import pytest
 
-from tests.test_e2e_diagnosis import _free_port, _run
+from tests.test_e2e_diagnosis import _free_port, _run, _run_verbose
 
 pytestmark = pytest.mark.e2e
 
@@ -95,6 +95,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if path == "/robots.txt":
             if s == "robots_disallow":
                 return self._send(200, b"User-agent: *\nDisallow: /graphql\n", "text/plain")
+            if s == "robots_query_strings":
+                return self._send(200, b"User-agent: *\nDisallow: /*?\n", "text/plain")
             return self._send(404)
         if path != "/graphql":
             return self._send(404)
@@ -139,6 +141,7 @@ EXPECTED = {
     "graphql_404": "404 Not Found",
     "graphql_503": "unavailable (5xx)",
     "robots_disallow": "blocked by robots.txt",
+    "robots_query_strings": "blocked by robots.txt",
     "errors_only": "failed",
 }
 
@@ -152,6 +155,14 @@ def test_magento_diagnosis(tmp_path, stores):
     port = urls["page_size_3"].rsplit(":", 1)[1]
     capped = sorted(i["uid"] for i in items if i["store"].endswith(f":{port}"))
     assert capped == sorted(p["uid"] for p in CATALOG)
+
+
+def test_magento_query_string_rule_hint(tmp_path, stores):
+    url = stores("robots_query_strings")
+    host = urllib.parse.urlsplit(url).netloc
+    result, status = _run_verbose(tmp_path, [url], "--platform", "magento")
+    assert status["urls"][0]["status"] == "blocked by robots.txt"
+    assert f"{host}'s robots.txt disallows URLs with query strings" in result.stdout
 
 
 def test_magento_variant_rows_in_csv(tmp_path, stores):
