@@ -260,6 +260,8 @@ class StoreContext:
     # Why the store has no item yet, reported if --bail stops it
     no_item_reason: str | None = None
     products_from: str | None = None  # the host bulk products came from, if not the store's
+    # robots.txt disallowed the platform's query URL but not its path (Magento's GraphQL)
+    query_disallowed: bool = False
 
     @property
     def items_left(self) -> int | None:

@@ -90,6 +90,9 @@ class StoreResult:
     # The host products came from when the store's own /products.json was a 404, e.g.
     # "acme.myshopify.com" for a headless store
     products_from: str | None = None
+    # robots.txt disallowed the GraphQL query URL but not /graphql itself, as rules
+    # against query strings (``Disallow: /*?``) do
+    query_disallowed: bool = False
     responses_by_status: dict[int, int] = field(default_factory=dict)
     robots_disallowed: int = 0
     # Requests that ended on a 429, of any kind but images (robots.txt's too)
@@ -114,6 +117,11 @@ class StoreResult:
             if self.responses_by_status.get(407):
                 return "the proxy refused its credentials (407); check the proxy URL"
             return "requests went through a proxy; check that it is reachable"
+        if self.query_disallowed and self.status == StoreStatus.robots_blocked:
+            return (
+                "the store's robots.txt disallows URLs with query strings, which covers "
+                "the GraphQL query, so its catalog can't be read with robots.txt obeyed"
+            )
         if self.products_from is not None:
             return (
                 f"products came from {self.products_from}; "

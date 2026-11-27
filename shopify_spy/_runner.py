@@ -117,6 +117,7 @@ class StoreState:
             finish_reason=reason,
             suggested_platform=self.ctx.suggested_platform if self.ctx else None,
             products_from=self.ctx.products_from if self.ctx else None,
+            query_disallowed=self.ctx.query_disallowed if self.ctx else False,
             responses_by_status=dict(stats.by_status),
             robots_disallowed=stats.robots_disallowed,
             rate_limited_requests=stats.rate_limits,
