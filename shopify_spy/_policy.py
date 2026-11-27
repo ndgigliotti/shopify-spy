@@ -196,15 +196,16 @@ class RetryPolicy:
         delay = base * (2**attempt) * random.uniform(0.5, 1.5)
         if retry_after is not None:
             delay = max(delay, retry_after)
-        return max(0.0, min(delay, self._limit(cap)))
+        return max(0.0, min(delay, self.limit(cap)))
 
-    def _limit(self, cap: float | None) -> float:
+    def limit(self, cap: float | None) -> float:
+        """The longest wait before a retry, given the caller's ``cap`` (if any)."""
         return self.max_delay if cap is None else min(self.max_delay, cap)
 
     def retry_after_too_long(self, retry_after: float | None, cap: float | None) -> bool:
         """Whether a Retry-After asks for longer than we'd wait before a retry; such
         a request isn't retried early."""
-        return retry_after is not None and retry_after > self._limit(cap)
+        return retry_after is not None and retry_after > self.limit(cap)
 
 
 def retry_policy_for(capabilities: FetcherCapabilities, retries: int, backoff: bool) -> RetryPolicy:

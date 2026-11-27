@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import time
 import urllib.parse
 from collections import Counter
 from collections.abc import Awaitable, Callable
@@ -174,7 +175,34 @@ class HostRegistry:
         """
         key = origin(url)
         robots_kind = dataclasses.replace(ROBOTS, rotate=kind.rotate, slot=kind.slot)
-        return await self._robots.get(key, lambda: _fetch_robots(key, session, robots_kind))
+
+        async def fetch() -> RobotsRules:
+            rules = await _fetch_robots(key, session, robots_kind)
+            self._apply_crawl_delay(key, kind.slot, rules)
+            return rules
+
+        return await self._robots.get(key, fetch)
+
+    def _apply_crawl_delay(self, key: str, slot_key: str | None, rules: RobotsRules) -> None:
+        """Space the slot's requests by the robots.txt Crawl-delay, capped at the
+        throttle's max_delay; called once per origin."""
+        requested = rules.crawl_delay()
+        if requested is None:
+            return
+        applied = min(requested, self.throttle.max_delay)
+        if applied <= 0:
+            return
+        if applied < requested:
+            logger.warning(
+                "robots.txt Crawl-delay of %gs for %s is over the %gs maximum; using %gs",
+                requested,
+                key,
+                self.throttle.max_delay,
+                applied,
+            )
+        else:
+            logger.info("Using robots.txt Crawl-delay of %gs for %s", applied, key)
+        self.slot(key, slot_key).set_crawl_delay(applied)
 
     async def resolved(self, url: str, timeout: float) -> list[IPAddress]:
         """The addresses the URL's host resolves to, looked up once per origin per run;
@@ -430,9 +458,53 @@ class StoreSession:
         """The wait before a retry, and when its bail excusal ends if it has one; a
         server's Retry-After isn't cut short by --bail."""
         excused = rate_limited and retry_after is not None
-        cap = None if excused else self.bail_time_left()
+        cap = self._retry_cap(retry_after, rate_limited)
         delay = self.retry.delay(attempt, retry_after, cap, rate_limited)
         return delay, self._excuse_from_bail(delay) if excused else None
+
+    def _retry_cap(self, retry_after: float | None, rate_limited: bool) -> float | None:
+        """The --bail limit on a retry wait; None for a server's Retry-After on a rate
+        limit, which is excused from bail."""
+        return None if rate_limited and retry_after is not None else self.bail_time_left()
+
+    def _end_without_retry(
+        self,
+        url: str,
+        response: Response,
+        slot: HostSlot,
+        attempt: int,
+        retry_after: float | None,
+        too_long: bool,
+        will_retry: bool,
+    ) -> None:
+        """Back off from a response that ends the request.
+
+        A Retry-After longer than we'd wait isn't retried early: a rate limit pauses
+        the host for all of it, without excusing the pause from --bail.
+        """
+        rate_limited = response.status in RATE_LIMIT_STATUSES
+        if not too_long:
+            if rate_limited:  # no retry left, but the host still has to back off
+                slot.pause(self._retry_delay(attempt, retry_after, True)[0])
+            return
+        assert retry_after is not None
+        if rate_limited:
+            slot.pause(retry_after)
+            until = time.strftime("%H:%M", time.localtime(time.time() + retry_after))
+            logger.warning(
+                "Pausing requests to %s for %.0fs (until about %s) on Retry-After; not retrying %s",
+                origin(url),
+                retry_after,
+                until,
+                url,
+            )
+        elif will_retry:
+            logger.info(
+                "Not retrying %s: Retry-After %.0fs is longer than the %.0fs wait allowed",
+                url,
+                retry_after,
+                self.retry.limit(self._retry_cap(retry_after, rate_limited)),
+            )
 
     async def _cleared(self, url: str, kind: RequestKind) -> bool:
         """Whether the request may be sent; False if robots.txt disallows it."""
@@ -491,9 +563,16 @@ class StoreSession:
                     rate_limited = response.status in RATE_LIMIT_STATUSES
                     # Whatever the transport rotates on, a 403 to such a kind is final
                     refused = not kind.rotate and response.status == 403
-                    if refused or not self.retry.should_retry_status(response.status, attempt):
-                        if rate_limited:  # no retry left, but the host still has to back off
-                            slot.pause(self._retry_delay(attempt, retry_after, True)[0])
+                    will_retry = not refused and self.retry.should_retry_status(
+                        response.status, attempt
+                    )
+                    too_long = self.retry.retry_after_too_long(
+                        retry_after, self._retry_cap(retry_after, rate_limited)
+                    )
+                    if too_long or not will_retry:
+                        self._end_without_retry(
+                            url, response, slot, attempt, retry_after, too_long, will_retry
+                        )
                         return response
                     # A concurrent refusal of the same agent may have swapped it already
                     if (
