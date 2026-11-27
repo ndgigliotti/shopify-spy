@@ -20,6 +20,7 @@ from shopify_spy._runner import _direct_resolver
 from shopify_spy._session import (
     IMAGE,
     MAX_REDIRECTS,
+    MYSHOPIFY,
     PROBE,
     HostRegistry,
     RequestFailed,
@@ -802,6 +803,72 @@ async def test_slots_keyed_by_origin():
     assert registry.slot("https://a.test/x") is registry.slot("https://A.test/y")
     assert registry.slot("https://a.test/x") is not registry.slot("http://a.test:8080/y")
     assert registry.slot("https://a.test/x") is not registry.slot("https://b.test/x")
+
+
+async def test_keyed_slot_is_shared_across_origins_with_one_request_at_a_time():
+    registry = HostRegistry(
+        concurrent_requests=16, throttle=ThrottleSettings(enabled=False), respect_robots_txt=True
+    )
+    shared = registry.slot("https://a.myshopify.com/x", MYSHOPIFY.slot)
+    assert shared is registry.slot("https://b.myshopify.com/y", MYSHOPIFY.slot)
+    assert shared is not registry.slot("https://a.myshopify.com/x")
+    assert shared.semaphore._value == 1
+    assert registry.slot("https://a.myshopify.com/x").semaphore._value == 16
+
+
+async def test_myshopify_requests_share_one_slot_including_robots():
+    in_flight = peak = 0
+
+    async def slow(request):
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+        return 200, "ok"
+
+    routes = {
+        f"https://{h}.myshopify.com/{p}": slow for h in ("a", "b") for p in ("robots.txt", "p")
+    }
+    session, fetcher = make_session(routes)
+    async with asyncio.timeout(2):
+        await asyncio.gather(
+            session.get("https://a.myshopify.com/p", kind=MYSHOPIFY),
+            session.get("https://b.myshopify.com/p", kind=MYSHOPIFY),
+        )
+    assert len(fetcher.requests) == 4
+    assert peak == 1
+
+
+@pytest.mark.parametrize("status", [403, 429])
+async def test_myshopify_refusal_keeps_the_user_agent(status):
+    url = "https://a.myshopify.com/p"
+    session, fetcher = make_session(
+        {url: Seq([(status, ""), (200, "ok")])},
+        robots=False,
+        identity=IdentityPool(agents=["ua-1", "ua-2"]),
+    )
+    await get(session, url, kind=MYSHOPIFY)
+    agents = {r.identity.user_agent for r in fetcher.requests}
+    assert len(agents) == 1
+    assert agents == {session.identity.current.user_agent}
+
+
+@pytest.mark.parametrize("status", [403, 429])
+async def test_myshopify_robots_refusal_keeps_the_user_agent(status):
+    robots = "https://a.myshopify.com/robots.txt"
+    session, fetcher = make_session(
+        {robots: Seq([(status, ""), (200, "")]), "https://a.myshopify.com/p": (200, "ok")},
+        identity=IdentityPool(agents=["ua-1", "ua-2"]),
+    )
+    assert (await get(session, "https://a.myshopify.com/p", kind=MYSHOPIFY)).status == 200
+    assert len({r.identity.user_agent for r in fetcher.requests}) == 1
+
+
+async def test_store_robots_fetch_keeps_its_own_slot():
+    session, _ = make_session({f"{STORE}/p": (200, "ok")})
+    await get(session, f"{STORE}/p")
+    assert set(session.registry._slots) == {STORE}
 
 
 async def test_single_flight_shares_one_fetch_and_survives_owner_cancellation():

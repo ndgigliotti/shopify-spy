@@ -167,6 +167,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             if self.scenario == "products_429_sitemap_hang":
                 return self._send(429, headers={"Retry-After": "0"})
             return self._send(404)
+        if path == "/":  # names no myshopify.com domain, so the sitemap comes next
+            return self._send(200, b"<html></html>", {"Content-Type": "text/html"})
         if path == "/sitemap.xml":
             index = (
                 b'<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/'
@@ -215,6 +217,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         assert "parent=1&" in self.path, self.path
         return self._send(200, json.dumps(WOO_VARIATIONS).encode())
 
+    def _headless_myshopify(self, path, count):
+        # A headless storefront: no /products.json, but the homepage names the shop's
+        # myshopify.com domain (served by _MyshopifyProxy)
+        if path == "/":
+            body = b'<html><a href="https://acme.myshopify.com/cart">cart</a></html>'
+            return self._send(200, body, {"Content-Type": "text/html"})
+        return self._send(404)
+
 
 SCENARIOS = {
     "robots_disallow": _Handler._robots_disallow,
@@ -228,6 +238,7 @@ SCENARIOS = {
     "transient_403_then_hang": _Handler._transient_403_then_hang,
     "products_404_sitemap_hang": _Handler._products_failed_sitemap_hang,
     "products_429_sitemap_hang": _Handler._products_failed_sitemap_hang,
+    "headless_myshopify": _Handler._headless_myshopify,
     "rate_limited": _Handler._rate_limited_or_unavailable,
     "unavailable": _Handler._rate_limited_or_unavailable,
     "woo_rate_limited": _Handler._rate_limited_or_unavailable,
@@ -463,6 +474,61 @@ def test_proxy_sees_every_request(tmp_path, stores, forwarding_proxy):
     assert f"Using proxy http://u:***@127.0.0.1:{port}" in log_text
     for text in (result.stdout, result.stderr, json.dumps(status), log_text):
         assert "secret" not in text
+
+
+class _MyshopifyProxy(_ForwardingProxy):
+    """A forwarding proxy that plays acme.myshopify.com itself."""
+
+    def do_GET(self):  # noqa: N802
+        target = urllib.parse.urlsplit(self.path)
+        if target.hostname != "acme.myshopify.com":
+            return super().do_GET()
+        self.records.append((self.path, None))
+        products = []
+        if target.path == "/products.json" and "page=1" in target.query.split("&"):
+            products = [{"id": i, "handle": f"p{i}", "title": f"P{i}"} for i in range(3)]
+        status = 200 if target.path == "/products.json" else 404
+        body = json.dumps({"products": products}).encode() if status == 200 else b""
+        self.send_response(status)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+@pytest.fixture
+def myshopify_proxy():
+    handler = type("Proxy", (_MyshopifyProxy,), {"records": []})
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", _free_port()), handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield server.server_address[1], handler.records
+    server.shutdown()
+
+
+def test_headless_store_products_come_from_its_myshopify_domain(tmp_path, stores, myshopify_proxy):
+    """A 404 on the store's own /products.json is retried on the myshopify.com domain
+    its homepage names; items keep the store's own URL."""
+    port, records = myshopify_proxy
+    url = stores("headless_myshopify")
+    # Without --no-throttle the shared slot's first delay (~1 s) can outlast the half
+    # of the short e2e --bail the attempt gets
+    proxy = f"http://127.0.0.1:{port}"
+    _, status = _run_verbose(tmp_path, [url], "--proxy", proxy, "--no-throttle")
+    assert status["urls"] == [
+        {
+            "url": url,
+            "items": 3,
+            "status": "ok",
+            "code": "ok",
+            "products_from": "acme.myshopify.com",
+        }
+    ]
+    assert "http://acme.myshopify.com/products.json?limit=250&page=1" in [p for p, _ in records]
+    [output] = (tmp_path / "out").rglob("*.jsonl")
+    items = [json.loads(line) for line in output.read_text().splitlines()]
+    assert [i["url"] for i in items] == [f"{url}/products/p{i}.json" for i in range(3)]
+    hits = stores.servers["headless_myshopify"].RequestHandlerClass.hits
+    assert "/sitemap.xml" not in hits
 
 
 def test_non_public_redirect_refused(tmp_path, stores, forwarding_proxy):

@@ -51,7 +51,7 @@ With nothing to install, an agent can learn a store's item shape and then write 
 
 Failures are never silent. By default `scrape()` raises `ScrapeFailed`, listing each store's status, when every store failed. `on_failure="warn"` or `"ignore"` relax that, and `strict=True` raises when any store failed, counting `partial` stores as failures.
 
-Each `StoreResult` has a `status`, an item count and sometimes a `hint`, such as a likely wrong `platform`. A store that only answered 429s, or that 429s held up until `bail` fired, is `rate_limited`, and one that only answered 5xx errors is `unavailable`; both are failures worth retrying later. [Troubleshooting](troubleshooting.md#store-statuses) lists every status and what to do about it.
+Each `StoreResult` has a `status`, an item count and sometimes a `hint`, such as a likely wrong `platform`. `products_from` names the `myshopify.com` domain a [headless store](troubleshooting.md#headless-shopify-stores)'s products came from, and is `None` otherwise. A store that only answered 429s, or that 429s held up until `bail` fired, is `rate_limited`, and one that only answered 5xx errors is `unavailable`; both are failures worth retrying later. [Troubleshooting](troubleshooting.md#store-statuses) lists every status and what to do about it.
 
 ## Options
 

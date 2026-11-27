@@ -10,6 +10,7 @@ rules, resolved addresses, concurrency and throttle slots), keyed by origin
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import urllib.parse
 from collections import Counter
@@ -68,6 +69,8 @@ class RequestKind:
     # A 429 counts toward StoreStats.rate_limits: its pause holds up the store's data
     # (images come after the data they belong to)
     rate_limits: bool = True
+    # A slot shared by every URL of this kind, instead of one per origin
+    slot: str | None = None
 
 
 STORE = RequestKind("store")
@@ -77,6 +80,10 @@ PROBE = RequestKind("probe", counted=False, dedupe=False)  # e.g. a wrong-platfo
 # A fallback source, e.g. WooCommerce product pages: if it finds nothing, the store's
 # diagnosis still explains why the primary source failed
 FALLBACK = RequestKind("fallback", counted=False)
+# A headless store's products read from its *.myshopify.com domain (issue #92). Those
+# hosts belong to Shopify, not the store: one run-wide slot keeps a run over many
+# stores from bursting at them, and a refusal there doesn't change the store's agent
+MYSHOPIFY = RequestKind("myshopify", counted=False, rotate=False, slot="*.myshopify.com")
 
 
 class RequestFailed(Exception):
@@ -148,17 +155,26 @@ class HostRegistry:
         self.resolver = resolver
         self._resolved: SingleFlight[list[IPAddress]] = SingleFlight()
 
-    def slot(self, url: str) -> HostSlot:
-        key = origin(url)
-        slot = self._slots.get(key)
+    def slot(self, url: str, key: str | None = None) -> HostSlot:
+        """The URL's origin slot, or the shared slot ``key``, which sends one request
+        at a time."""
+        name = origin(url) if key is None else key
+        slot = self._slots.get(name)
         if slot is None:
-            slot = self._slots[key] = HostSlot(self.concurrent_requests, self.throttle)
+            concurrency = self.concurrent_requests if key is None else 1
+            slot = self._slots[name] = HostSlot(concurrency, self.throttle)
         return slot
 
-    async def robots(self, url: str, session: StoreSession) -> RobotsRules:
-        """Return robots.txt rules for the URL's origin, fetching them once per run."""
+    async def robots(
+        self, url: str, session: StoreSession, kind: RequestKind = STORE
+    ) -> RobotsRules:
+        """Return robots.txt rules for the URL's origin, fetching them once per run.
+
+        The fetch takes the slot and rotation of the ``kind`` that asked.
+        """
         key = origin(url)
-        return await self._robots.get(key, lambda: _fetch_robots(key, session))
+        robots_kind = dataclasses.replace(ROBOTS, rotate=kind.rotate, slot=kind.slot)
+        return await self._robots.get(key, lambda: _fetch_robots(key, session, robots_kind))
 
     async def resolved(self, url: str, timeout: float) -> list[IPAddress]:
         """The addresses the URL's host resolves to, looked up once per origin per run;
@@ -181,9 +197,9 @@ class HostRegistry:
         return await self._resolved.get(origin(url), lookup)
 
 
-async def _fetch_robots(key: str, session: StoreSession) -> RobotsRules:
+async def _fetch_robots(key: str, session: StoreSession, kind: RequestKind) -> RobotsRules:
     try:
-        response = await session.get(f"{key}/robots.txt", kind=ROBOTS)
+        response = await session.get(f"{key}/robots.txt", kind=kind)
     except (RequestFailed, FetchError) as exc:
         logger.debug("robots.txt unavailable for %s: %s", key, exc)
         return RobotsRules(None)
@@ -241,6 +257,7 @@ class StoreContext:
     items: int = 0  # items emitted so far (maintained by the runner)
     item_limit: int | None = None  # the runner stops the store at this many items
     suggested_platform: str | None = None  # set when the store looks like another platform
+    products_from: str | None = None  # the host bulk products came from, if not the store's
 
     @property
     def items_left(self) -> int | None:
@@ -356,7 +373,7 @@ class StoreSession:
     async def _allowed(self, url: str, kind: RequestKind) -> bool:
         if not kind.check_robots or not self.registry.respect_robots_txt:
             return True
-        rules = await self.registry.robots(url, self)
+        rules = await self.registry.robots(url, self, kind)
         if rules.allowed(url, self.robots_agent):
             return True
         if kind.counted:
@@ -429,7 +446,7 @@ class StoreSession:
     async def _fetch_with_retries(self, url: str, kind: RequestKind) -> Response | None:
         if not await self._cleared(url, kind):
             return None
-        slot = self.registry.slot(url)
+        slot = self.registry.slot(url, kind.slot)
         # Whether a 429 is this request's last word: retries used up, or a shutdown (or
         # --bail, for a wait without Retry-After) cut its wait short
         limited = False

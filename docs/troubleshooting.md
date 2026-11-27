@@ -40,7 +40,7 @@ Each run except `--peek` writes a status file to `<output>/status/`, with each U
   "items_scraped": 47,
   "items_written": 47,
   "urls": [
-    {"url": "https://store.com", "items": 47, "status": "ok", "code": "ok"}
+    {"url": "https://store.com", "items": 47, "status": "ok", "code": "ok", "products_from": null}
   ],
   "finish_reason": "finished",
   "duration_seconds": 12.3,
@@ -48,6 +48,8 @@ Each run except `--peek` writes a status file to `<output>/status/`, with each U
   "output_error": null
 }
 ```
+
+`products_from` is `null` unless a store's products came from another host, such as the `myshopify.com` domain of a [headless store](#headless-shopify-stores).
 
 `finish_reason` summarizes the run: `finished`, `item_limit` (a store reached `--limit`), `bail` (a store hit the `--bail` timeout), `crawler_failed` (a store raised an unexpected error), or `shutdown` (interrupted). `items_written` is how many items the data file holds. A crash or a killed process writes no status file.
 
@@ -88,6 +90,15 @@ Shopify's `products.json` stops paging at 25,000 items (100 pages of 250), so a 
 - Collections are paged only while they can save requests. They're skipped when fewer products are missing than they have pages, and they stop once every listed product is found or they find less than one new product per request.
 - On a 65,718-product store, bulk paging and collections together found 99.7% of the catalog, and the whole scrape took about 1,700 requests, against about 41,000 with bulk paging and the sitemap alone ([#30](https://github.com/ndgigliotti/shopify-spy/issues/30)).
 - Catalogs whose collections are far larger than 25,000 products (some print-on-demand stores list over a million) stay mostly out of reach; use `--limit` to sample them.
+
+## Headless Shopify stores
+
+A headless Shopify store runs its storefront on a custom frontend (Hydrogen or another framework), so its own domain answers 404 to `/products.json`. When that happens, the scraper reads the store's homepage for the shop's `<handle>.myshopify.com` domain, which the HTML usually names in checkout links or analytics config, and pages `/products.json` there before trying the sitemap ([#92](https://github.com/ndgigliotti/shopify-spy/issues/92)). Items keep the store's own domain in `url` and `store`, and with `--collections` the collections come from the same domain. The status file's `products_from`, `StoreResult.products_from` and the CLI's end-of-run summary name the `myshopify.com` domain the products came from.
+
+- The `myshopify.com` domain is used only when the homepage names exactly one; none or several (an app or marketplace domain, say) go straight to the sitemap.
+- A `myshopify.com` domain behind a password page (a redirect to `/password`), or one that fails in any other way, falls back to the sitemap as before.
+- Requests to `*.myshopify.com`, robots.txt included, go one at a time across the whole run, since those hosts are Shopify's rather than the store's. A 403 or 429 there doesn't swap the store's user agent.
+- With `--bail`, the homepage and the wait for the first item take at most half of the store's remaining bail time before the sitemap is tried with the rest.
 
 ## WooCommerce stores
 

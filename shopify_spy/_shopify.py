@@ -1,18 +1,32 @@
-"""Shopify: bulk /products.json first, then collections past the 25,000 limit, then the sitemap."""
+"""Shopify: bulk /products.json first, then collections past the 25,000 limit, then the sitemap.
+
+A store whose own /products.json is a 404 (a headless storefront) is tried on the
+*.myshopify.com domain its homepage names before the sitemap.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import enum
 import logging
+import re
 import urllib.parse
 from collections import deque
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any, NamedTuple
 
 from shopify_spy import _sitemap as sitemap
-from shopify_spy._session import Emit, RequestFailed, StoreContext
-from shopify_spy._utils import find_all_values, next_page_url, normalize_url, origin
+from shopify_spy._fetch import Response
+from shopify_spy._session import (
+    FALLBACK,
+    MYSHOPIFY,
+    STORE,
+    Emit,
+    RequestFailed,
+    RequestKind,
+    StoreContext,
+)
+from shopify_spy._utils import find_all_values, hostname, next_page_url, normalize_url, origin
 
 logger = logging.getLogger("shopify_spy")
 
@@ -34,6 +48,14 @@ SKIPPED_CHILD_SITEMAPS = (
     "sitemap_blogs_",
     "sitemap_agentic_discovery",
     "sitemap_collections_",
+)
+
+# A shop's Shopify domain, as a headless frontend's HTML names it (checkout links,
+# Shop Pay or analytics config). The handle starts after a non-handle character or
+# a %XX or \uXXXX escape, so "%2f%2facme" and "/acme" don't capture the
+# escape's tail
+MYSHOPIFY_HANDLE = re.compile(
+    r"(?:(?<=%[0-9a-f]{2})|(?<=\\u[0-9a-f]{4})|(?<![a-z0-9%\\-]))([a-z0-9-]+)\.myshopify\.com"
 )
 
 next_bulk_page_url = next_page_url
@@ -100,45 +122,153 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
     """
     seen_handles: set[str] = set()
     covered = True
-    bulk = Paging.FAILED
+    own_bulk = Paging.FAILED  # the store's own /products.json
     base = ctx.url
+    # Lists read from the myshopify.com domain, once it found products, use its kind
+    # and emit items under the store's own domain
+    kind = STORE
+    listing_emit = emit
     collections: list[ListedCollection] | None = None
     if ctx.products:
         paged = await _page_products(
             ctx, emit, seen_handles, get_bulk_products_url(ctx.url), "Bulk"
         )
-        bulk, base = paged.outcome, paged.origin
-        if bulk is not Paging.COMPLETE:
-            covered, collections = await _past_bulk(ctx, emit, seen_handles, paged)
+        own_bulk = paged.outcome
+        if own_bulk is Paging.NOT_FOUND and not hostname(ctx.url).endswith(".myshopify.com"):
+            rehosted = await _myshopify_bulk(ctx, emit, seen_handles, paged.origin)
+            if rehosted is not None:
+                paged, listing_emit = rehosted
+                kind = MYSHOPIFY
+        base = paged.origin
+        if paged.outcome is not Paging.COMPLETE:
+            covered, collections = await _past_bulk(
+                ctx, emit, seen_handles, paged, kind=kind, listing_emit=listing_emit
+            )
     if ctx.collections:
         if collections is None:
-            collections = await _collection_list(ctx, base)
-        await _emit_collections(ctx, emit, collections)
-    if ctx.items == 0 and bulk is Paging.NOT_FOUND:
+            collections = await _collection_list(ctx, base, kind=kind)
+        await _emit_collections(ctx, listing_emit, collections)
+    if ctx.items == 0 and own_bulk is Paging.NOT_FOUND:
         await ctx.probe_platform("/wp-json/", _looks_like_woocommerce, "woocommerce")
     return covered
 
 
+async def _myshopify_bulk(
+    ctx: StoreContext, emit: Emit, seen: set[str], own_origin: str
+) -> tuple[Paged, Emit] | None:
+    """Page /products.json on the myshopify.com domain the homepage names (issue #92).
+
+    Returns how paging went and the emit that puts items under ``own_origin``, or None
+    if it found no products. With --bail, the homepage and the wait for the first item
+    are limited to half the store's remaining bail time, since the homepage may be slow
+    and the shared myshopify.com slot busy or paused by other stores; the rest is left
+    to the sitemap.
+    """
+    scheme = urllib.parse.urlsplit(ctx.url).scheme
+    left = ctx.session.bail_time_left()
+    budget = None if left is None else left / 2
+    deadline = asyncio.timeout(budget)
+    host = None
+
+    def on_first() -> None:
+        ctx.products_from = host
+        deadline.reschedule(None)  # never cut short a paging that produces items
+
+    listing_emit = _rehosted(emit, own_origin, on_first)
+    try:
+        async with deadline:
+            handle = await _myshopify_handle(ctx, own_origin)
+            if handle is None:
+                return None
+            host = f"{handle}.myshopify.com"
+            url = get_bulk_products_url(f"{scheme}://{host}")
+            paged = await _page_products(
+                ctx, listing_emit, seen, url, "myshopify.com bulk", kind=MYSHOPIFY
+            )
+    except TimeoutError:
+        if not deadline.expired():
+            raise
+        source = host or f"{own_origin}/"
+        logger.info(
+            "%s: no answer from %s within %.1fs, using the sitemap", ctx.url, source, budget
+        )
+        return None
+    return (paged, listing_emit) if paged.found > 0 else None
+
+
+async def _myshopify_handle(ctx: StoreContext, base: str) -> str | None:
+    """The one myshopify.com handle the homepage names, or None if it names none or several."""
+    url = f"{base}/"
+    try:
+        response = await ctx.session.get(url, kind=FALLBACK)
+    except RequestFailed as exc:
+        logger.info("Homepage failed for %s: %s", url, exc)
+        return None
+    if response is None or not response.ok:
+        status = "skipped" if response is None else f"returned {response.status}"
+        logger.info("Homepage %s for %s", status, url)
+        return None
+    handles = sorted(set(MYSHOPIFY_HANDLE.findall(response.text.lower())))
+    if len(handles) != 1:
+        named = ", ".join(f"{h}.myshopify.com" for h in handles) or "none"
+        logger.info("Homepage %s names %d myshopify.com domains (%s)", url, len(handles), named)
+        return None
+    logger.info("Trying %s.myshopify.com for the products of %s", handles[0], base)
+    return handles[0]
+
+
+def _rehosted(emit: Emit, own_origin: str, on_first: Callable[[], None]) -> Emit:
+    """Emit items under ``own_origin``, whatever host they were read from.
+
+    ``on_first`` runs before the first item is emitted, so what it records survives
+    the StopStore or ShutdownRequested that emitting may raise.
+    """
+    own = urllib.parse.urlsplit(own_origin)
+    first = True
+
+    async def rehost(item: dict[str, Any]) -> None:
+        nonlocal first
+        parts = urllib.parse.urlsplit(item["url"])
+        item["url"] = urllib.parse.urlunsplit(parts._replace(scheme=own.scheme, netloc=own.netloc))
+        item["store"] = own.netloc
+        if first:
+            first = False
+            on_first()
+        await emit(item)
+
+    return rehost
+
+
 async def _past_bulk(
-    ctx: StoreContext, emit: Emit, seen: set[str], paged: Paged
+    ctx: StoreContext,
+    emit: Emit,
+    seen: set[str],
+    paged: Paged,
+    *,
+    kind: RequestKind = STORE,
+    listing_emit: Emit | None = None,
 ) -> tuple[bool, list[ListedCollection] | None]:
     """Find the products bulk didn't reach: collections past the limit, then the sitemap.
 
+    Collections are read with ``kind`` and emitted with ``listing_emit`` (default
+    ``emit``); the sitemap is always the store's own.
+
     Returns whether the catalog was covered, and the collection list if it was read.
     """
+    listing_emit = listing_emit or emit
     collections = None
     if paged.outcome is Paging.CAPPED and ctx.item_limit is None:
         # List the sitemap first, so collections know which products are missing
         walk = _sitemap_walk(ctx)
         locs = [loc async for loc in _product_locs(walk)]
         listed = {h for loc in locs if (h := _listed_handle(loc))} if walk.root_ok else None
-        collections = await _collections(ctx, emit, seen, paged.origin, listed)
+        collections = await _collections(ctx, listing_emit, seen, paged.origin, listed, kind=kind)
         await _fetch_documents(ctx, emit, _each(locs), seen)
         return walk.root_ok, collections
     if paged.outcome is Paging.CAPPED:
         # With an item limit the catalog may be far bigger than needed (millions of
         # products), so don't read the whole sitemap up front; it's streamed below
-        collections = await _collections(ctx, emit, seen, paged.origin, None)
+        collections = await _collections(ctx, listing_emit, seen, paged.origin, None, kind=kind)
     walk = _sitemap_walk(ctx)
     await _fetch_documents(ctx, emit, _product_locs(walk), seen)
     return not seen or walk.root_ok, collections
@@ -153,6 +283,7 @@ async def _page_products(
     *,
     overlapping: bool = False,
     remaining: set[str] | None = None,
+    kind: RequestKind = STORE,
 ) -> Paged:
     """Page through a product list from its first page.
 
@@ -175,7 +306,7 @@ async def _page_products(
 
     while True:
         try:
-            response = await ctx.session.get(url)
+            response = await ctx.session.get(url, kind=kind)
         except RequestFailed as exc:
             pages += 1
             logger.info("%s failed for %s: %s", label, url, exc)
@@ -186,9 +317,8 @@ async def _page_products(
         pages += 1
         first = pages == 1
         base = origin(response.url)
-        if not response.ok:
-            logger.info("%s returned %d for %s", label, response.status, url)
-            return done(Paging.NOT_FOUND if first and response.status == 404 else Paging.FAILED)
+        if (unlisted := _unlisted(response, label, url, first)) is not None:
+            return done(unlisted)
         data = response.json_or_none()
         products = data.get("products") if isinstance(data, dict) else None
         if products == [] and not first:
@@ -240,8 +370,25 @@ async def _page_products(
         url = next_page_url(response.url)
 
 
+def _unlisted(response: Response, label: str, url: str, first: bool) -> Paging | None:
+    """How paging ends on a response that can't be a product list, or None if it can."""
+    if urllib.parse.urlsplit(response.url).path == "/password":
+        logger.info("%s is password protected at %s", label, response.url)
+        return Paging.FAILED
+    if not response.ok:
+        logger.info("%s returned %d for %s", label, response.status, url)
+        return Paging.NOT_FOUND if first and response.status == 404 else Paging.FAILED
+    return None
+
+
 async def _collections(
-    ctx: StoreContext, emit: Emit, seen: set[str], base: str, listed: set[str] | None
+    ctx: StoreContext,
+    emit: Emit,
+    seen: set[str],
+    base: str,
+    listed: set[str] | None,
+    *,
+    kind: RequestKind = STORE,
 ) -> list[ListedCollection] | None:
     """Get past the bulk limit through collections, each with its own 25,000 limit.
 
@@ -270,14 +417,14 @@ async def _collections(
     async def page(path: str, label: str) -> Paged:
         url = get_bulk_products_url(base, path=path)
         return await _page_products(
-            ctx, emit, seen, url, label, overlapping=True, remaining=remaining
+            ctx, emit, seen, url, label, overlapping=True, remaining=remaining, kind=kind
         )
 
     await page("/collections/all/products.json", "Collection all")
     if remaining == set():
         logger.info("Collections found every product in the sitemap")
         return None
-    collections = await _collection_list(ctx, base)
+    collections = await _collection_list(ctx, base, kind=kind)
     queue = deque(_collection_handles(collections))
     recent: deque[Paged] = deque(maxlen=YIELD_WINDOW)
 
@@ -307,7 +454,9 @@ async def _collections(
     return collections
 
 
-async def _collection_list(ctx: StoreContext, base: str) -> list[ListedCollection]:
+async def _collection_list(
+    ctx: StoreContext, base: str, *, kind: RequestKind = STORE
+) -> list[ListedCollection]:
     """Every entry of the paged /collections.json, once per handle.
 
     A failed page is logged and ends the list with what was read so far.
@@ -316,7 +465,7 @@ async def _collection_list(ctx: StoreContext, base: str) -> list[ListedCollectio
     previous: list[Any] = []
     url = get_bulk_products_url(base, path="/collections.json")
     for _ in range(MAX_PAGES):
-        fetched = await _collection_page(ctx, url)
+        fetched = await _collection_page(ctx, url, kind=kind)
         if fetched is None:
             break
         page, page_url = fetched
@@ -334,10 +483,12 @@ async def _collection_list(ctx: StoreContext, base: str) -> list[ListedCollectio
     return list(collections.values())
 
 
-async def _collection_page(ctx: StoreContext, url: str) -> tuple[list[Any], str] | None:
+async def _collection_page(
+    ctx: StoreContext, url: str, *, kind: RequestKind = STORE
+) -> tuple[list[Any], str] | None:
     """One page of /collections.json and its URL after redirects, or None if it failed."""
     try:
-        response = await ctx.session.get(url)
+        response = await ctx.session.get(url, kind=kind)
     except RequestFailed as exc:
         logger.info("Collection list failed for %s: %s", url, exc)
         return None
