@@ -73,6 +73,7 @@ WOO_VARIATIONS = [
 
 class _Handler(http.server.BaseHTTPRequestHandler):
     scenario = ""
+    redirect_to = ""  # redirect_to_loopback: the origin to send every request to
     hits: dict
     agents: list  # user agents in the order first seen
 
@@ -95,7 +96,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if agent not in self.agents:
             self.agents.append(agent)
 
-    def _user_agent_rate_limited(self, path):
+    def _user_agent_rate_limited(self, path, count):
         # Shopify on 2026-11-14 (#62): one user agent is refused for longer than
         # --bail, any other is served
         if path == "/robots.txt":
@@ -105,7 +106,61 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         page = [{"id": 1, "handle": "p1", "title": "P1"}] if "page=1" in self.path else []
         return self._send(200, json.dumps({"products": page}).encode())
 
-    def _products_fail_sitemap_hang(self, path, host):
+    def do_GET(self):  # noqa: N802
+        path = self.path.split("?")[0]
+        count = self.hits[path] = self.hits.get(path, 0) + 1
+        self._record_agent()
+        scenario = SCENARIOS.get(self.scenario)
+        if scenario is None:
+            raise AssertionError(f"unknown scenario {self.scenario}")
+        return scenario(self, path, count)
+
+    def _robots_disallow(self, path, count):
+        return self._send(200, DISALLOW_ALL) if path == "/robots.txt" else self._send(200)
+
+    def _robots_redirect_disallow(self, path, count):
+        if path == "/robots.txt":
+            return self._send(301, headers={"Location": "/real-robots.txt"})
+        if path == "/real-robots.txt":
+            return self._send(200, DISALLOW_ALL)
+        return self._send(200, b"{}")
+
+    def _host_redirect_disallow(self, path, count):
+        # 127.0.0.1 allows everything but redirects the store to localhost,
+        # whose robots.txt disallows everything
+        host = self.headers.get("Host", "")
+        if host.startswith("127.0.0.1"):
+            if path == "/robots.txt":
+                return self._send(404)
+            port = host.split(":")[1]
+            return self._send(301, headers={"Location": f"http://localhost:{port}{self.path}"})
+        return self._send(200, DISALLOW_ALL) if path == "/robots.txt" else self._send(200)
+
+    def _redirect_to_loopback(self, path, count):
+        if path == "/robots.txt":
+            return self._send(404)
+        return self._send(302, headers={"Location": f"{self.redirect_to}{self.path}"})
+
+    def _loopback_target(self, path, count):
+        return self._send(200, b'{"products": []}')
+
+    def _robots_403_hang(self, path, count):
+        return self._send(403) if path == "/robots.txt" else self._hang()
+
+    def _robots_404_hang(self, path, count):
+        return self._send(404) if path == "/robots.txt" else self._hang()
+
+    def _store_403(self, path, count):
+        return self._send(404) if path == "/robots.txt" else self._send(403)
+
+    def _transient_403_then_hang(self, path, count):
+        if path == "/robots.txt":
+            return self._send(404)
+        if path == "/products.json":
+            return self._send(403) if count == 1 else self._send(200, b'{"products": []}')
+        return self._hang()
+
+    def _products_failed_sitemap_hang(self, path, count):
         if path == "/robots.txt":
             return self._send(404)
         if path == "/products.json":
@@ -118,13 +173,51 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             index = (
                 b'<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/'
                 b'schemas/sitemap/0.9"><sitemap><loc>http://'
-                + host.encode()
+                + self.headers.get("Host", "").encode()
                 + b"/sitemap_products_1.xml</loc></sitemap></sitemapindex>"
             )
             return self._send(200, index, {"Content-Type": "application/xml"})
         return self._hang()
 
-    def _headless_myshopify(self, path):
+    def _rate_limited_or_unavailable(self, path, count):
+        if path == "/robots.txt":
+            return self._send(404)
+        status = 429 if "rate_limited" in self.scenario else 503
+        return self._send(status, headers={"Retry-After": "0"})
+
+    def _woo_fallback_rate_limited(self, path, count):
+        if path == "/robots.txt" or path.startswith("/wp-json/wc/store/"):
+            return self._send(404)
+        return self._send(429, headers={"Retry-After": "0"})
+
+    def _robots_rate_limited(self, path, count):
+        # Shopify per IP, from robots.txt on: the Retry-After waits (3 x 3 x 2 s)
+        # outlast --bail but don't count against it, so the retries run out first
+        return self._send(429, headers={"Retry-After": "2"})
+
+    def _rate_limited_no_retry_after(self, path, count):
+        # Stupell (#30): 429s without Retry-After; retries wait until --bail
+        return self._send(404) if path == "/robots.txt" else self._send(429)
+
+    def _forbidden_then_rate_limited(self, path, count):
+        if path == "/robots.txt":
+            return self._send(404)
+        return self._send(403) if count == 1 else self._send(429, headers={"Retry-After": "0"})
+
+    def _woo_variations(self, path, count):
+        if path == "/robots.txt":
+            return self._send(404)
+        if "type=variation" not in self.path:
+            page = [WOO_VARIABLE] if "page=1&" in self.path else []
+            return self._send(200, json.dumps(page).encode())
+        if self.scenario == "woo_variations_hang":
+            return self._hang()
+        if self.scenario == "woo_variations_403":
+            return self._send(403, b"<html>Forbidden</html>")
+        assert "parent=1&" in self.path, self.path
+        return self._send(200, json.dumps(WOO_VARIATIONS).encode())
+
+    def _headless_myshopify(self, path, count):
         # A headless storefront: no /products.json, but the homepage names the shop's
         # myshopify.com domain (served by _MyshopifyProxy)
         if path == "/":
@@ -132,81 +225,33 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return self._send(200, body, {"Content-Type": "text/html"})
         return self._send(404)
 
-    def do_GET(self):  # noqa: C901 - one branch per scenario
-        path = self.path.split("?")[0]
-        count = self.hits[path] = self.hits.get(path, 0) + 1
-        self._record_agent()
-        host = self.headers.get("Host", "")
-        s = self.scenario
 
-        if s == "robots_disallow":
-            return self._send(200, DISALLOW_ALL) if path == "/robots.txt" else self._send(200)
-        if s == "robots_redirect_disallow":
-            if path == "/robots.txt":
-                return self._send(301, headers={"Location": "/real-robots.txt"})
-            if path == "/real-robots.txt":
-                return self._send(200, DISALLOW_ALL)
-            return self._send(200, b"{}")
-        if s == "host_redirect_disallow":
-            # 127.0.0.1 allows everything but redirects the store to localhost,
-            # whose robots.txt disallows everything
-            if host.startswith("127.0.0.1"):
-                if path == "/robots.txt":
-                    return self._send(404)
-                port = host.split(":")[1]
-                return self._send(301, headers={"Location": f"http://localhost:{port}{self.path}"})
-            return self._send(200, DISALLOW_ALL) if path == "/robots.txt" else self._send(200)
-        if s == "robots_403_hang":
-            return self._send(403) if path == "/robots.txt" else self._hang()
-        if s == "robots_404_hang":
-            return self._send(404) if path == "/robots.txt" else self._hang()
-        if s == "store_403":
-            return self._send(404) if path == "/robots.txt" else self._send(403)
-        if s == "transient_403_then_hang":
-            if path == "/robots.txt":
-                return self._send(404)
-            if path == "/products.json":
-                return self._send(403) if count == 1 else self._send(200, b'{"products": []}')
-            return self._hang()
-        if s in ("products_404_sitemap_hang", "products_429_sitemap_hang"):
-            return self._products_fail_sitemap_hang(path, host)
-        if s == "headless_myshopify":
-            return self._headless_myshopify(path)
-        if s in ("rate_limited", "unavailable", "woo_rate_limited", "woo_unavailable"):
-            if path == "/robots.txt":
-                return self._send(404)
-            status = 429 if "rate_limited" in s else 503
-            return self._send(status, headers={"Retry-After": "0"})
-        if s == "woo_fallback_rate_limited":
-            if path == "/robots.txt" or path.startswith("/wp-json/wc/store/"):
-                return self._send(404)
-            return self._send(429, headers={"Retry-After": "0"})
-        if s == "robots_rate_limited":
-            # Shopify per IP, from robots.txt on: the Retry-After waits (3 x 3 x 2 s)
-            # outlast --bail but don't count against it, so the retries run out first
-            return self._send(429, headers={"Retry-After": "2"})
-        if s == "user_agent_rate_limited":
-            return self._user_agent_rate_limited(path)
-        if s == "rate_limited_no_retry_after":
-            # Stupell (#30): 429s without Retry-After; retries wait until --bail
-            return self._send(404) if path == "/robots.txt" else self._send(429)
-        if s == "forbidden_then_rate_limited":
-            if path == "/robots.txt":
-                return self._send(404)
-            return self._send(403) if count == 1 else self._send(429, headers={"Retry-After": "0"})
-        if s in ("woo_variations_ok", "woo_variations_403", "woo_variations_hang"):
-            if path == "/robots.txt":
-                return self._send(404)
-            if "type=variation" not in self.path:
-                page = [WOO_VARIABLE] if "page=1&" in self.path else []
-                return self._send(200, json.dumps(page).encode())
-            if s == "woo_variations_hang":
-                return self._hang()
-            if s == "woo_variations_403":
-                return self._send(403, b"<html>Forbidden</html>")
-            assert "parent=1&" in self.path, self.path
-            return self._send(200, json.dumps(WOO_VARIATIONS).encode())
-        raise AssertionError(f"unknown scenario {s}")
+SCENARIOS = {
+    "robots_disallow": _Handler._robots_disallow,
+    "robots_redirect_disallow": _Handler._robots_redirect_disallow,
+    "host_redirect_disallow": _Handler._host_redirect_disallow,
+    "redirect_to_loopback": _Handler._redirect_to_loopback,
+    "loopback_target": _Handler._loopback_target,
+    "robots_403_hang": _Handler._robots_403_hang,
+    "robots_404_hang": _Handler._robots_404_hang,
+    "store_403": _Handler._store_403,
+    "transient_403_then_hang": _Handler._transient_403_then_hang,
+    "products_404_sitemap_hang": _Handler._products_failed_sitemap_hang,
+    "products_429_sitemap_hang": _Handler._products_failed_sitemap_hang,
+    "headless_myshopify": _Handler._headless_myshopify,
+    "rate_limited": _Handler._rate_limited_or_unavailable,
+    "unavailable": _Handler._rate_limited_or_unavailable,
+    "woo_rate_limited": _Handler._rate_limited_or_unavailable,
+    "woo_unavailable": _Handler._rate_limited_or_unavailable,
+    "woo_fallback_rate_limited": _Handler._woo_fallback_rate_limited,
+    "robots_rate_limited": _Handler._robots_rate_limited,
+    "user_agent_rate_limited": _Handler._user_agent_rate_limited,
+    "rate_limited_no_retry_after": _Handler._rate_limited_no_retry_after,
+    "forbidden_then_rate_limited": _Handler._forbidden_then_rate_limited,
+    "woo_variations_ok": _Handler._woo_variations,
+    "woo_variations_403": _Handler._woo_variations,
+    "woo_variations_hang": _Handler._woo_variations,
+}
 
 
 @pytest.fixture
@@ -342,7 +387,8 @@ def test_woocommerce_variation_rows_in_csv(tmp_path, stores):
 
 
 class _ForwardingProxy(http.server.BaseHTTPRequestHandler):
-    """Relays absolute-form GETs to their target, recording (path, Proxy-Authorization)."""
+    """Relays absolute-form GETs to their target's port on 127.0.0.1, so it can serve
+    made-up hostnames, recording (path, Proxy-Authorization)."""
 
     records: list
 
@@ -357,7 +403,7 @@ class _ForwardingProxy(http.server.BaseHTTPRequestHandler):
             for k, v in self.headers.items()
             if k.lower() not in ("proxy-authorization", "proxy-connection", "connection")
         }
-        conn = http.client.HTTPConnection(target.hostname, target.port, timeout=30)
+        conn = http.client.HTTPConnection("127.0.0.1", target.port, timeout=30)
         try:
             path = target.path + (f"?{target.query}" if target.query else "")
             conn.request("GET", path, headers=headers)
@@ -483,3 +529,20 @@ def test_headless_store_products_come_from_its_myshopify_domain(tmp_path, stores
     assert [i["url"] for i in items] == [f"{url}/products/p{i}.json" for i in range(3)]
     hits = stores.servers["headless_myshopify"].RequestHandlerClass.hits
     assert "/sitemap.xml" not in hits
+
+
+def test_non_public_redirect_refused(tmp_path, stores, forwarding_proxy):
+    """Through a proxy only literal IPs are checked: a public-looking store's redirect
+    to 127.0.0.1 is refused before any request reaches it, robots.txt included."""
+    proxy_port, _ = forwarding_proxy
+    target = stores("loopback_target")
+    port = stores("redirect_to_loopback").rsplit(":", 1)[1]
+    stores.servers["redirect_to_loopback"].RequestHandlerClass.redirect_to = target
+    url = f"http://store.test:{port}"
+    _, status = _run_verbose(tmp_path, [url], "--proxy", f"http://127.0.0.1:{proxy_port}")
+    assert {e["url"]: e["status"] for e in status["urls"]} == {url: "0 items"}
+    assert stores.servers["loopback_target"].RequestHandlerClass.hits == {}
+    assert stores.servers["redirect_to_loopback"].RequestHandlerClass.hits
+    log_text = open(status["log_file"], encoding="utf-8").read()
+    assert f"Refused request to {target}/" in log_text
+    assert "127.0.0.1 is not a public address" in log_text

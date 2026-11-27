@@ -473,6 +473,8 @@ _SCRAPE_DOC = """
             honored (with NO_PROXY); an explicit proxy ignores NO_PROXY. Credentials
             in it are masked in logs and errors. It gives a fixed egress, not a way
             around a store's rate limits. Ignored with a custom ``fetcher_factory``.
+            Through a proxy, only literal IPs and localhost names are checked
+            against the refusal of non-public addresses.
         max_concurrent_stores: Stores scraped at once (default {max_concurrent_stores};
             None = no limit).
         throttle, throttle_start_delay, throttle_max_delay,
@@ -485,6 +487,7 @@ _SCRAPE_DOC = """
         strict: Count any failed (or partial) store, not only all of them
             (default {strict}).
         fetcher_factory: Provisional. A callable returning a custom transport.
+            Hostnames aren't resolved for the refusal of non-public addresses.
 
     Failures: a store fails when it is blocked (403, robots.txt), rate limited
     (429), not found, unavailable (5xx), times out, can't be reached, or errors;
@@ -492,7 +495,8 @@ _SCRAPE_DOC = """
     a likely wrong ``platform``). An empty store is not a failure. A store's
     ``hint`` and ``products_from`` also name the ``myshopify.com`` domain a headless
     store's products came from. Invalid URLs and options raise ValueError at call
-    time.
+    time. Requests to non-public addresses (loopback, private networks, cloud
+    metadata) are refused with a warning unless the store's own URL is on one.
 
     Items are each platform's native shape plus ``store``, ``platform``
     ("shopify" or "woocommerce") and ``image_urls`` (see ``ShopifyProductItem``,

@@ -18,7 +18,7 @@ Every store ends with a status, which the CLI lists when a store fails and the [
 | `rate limited (429)` | `rate_limited` | The store answered 429 (Too Many Requests) after retries and no successful response, or a 429 its retries didn't get past held it until `--bail` fired with no items; retry later with a lower `--concurrent` (see [Rate limiting](#rate-limiting)) |
 | `unavailable (5xx)` | `unavailable` | The store answered 5xx server errors (often an outage or maintenance) and no successful response; retry later |
 | `TLS error` | `tls_error` | The certificate failed verification; try `--insecure` |
-| `no response` | `no_response` | The store never answered (DNS, connection or network failure), or a proxy refused the request (407); with a proxy in use, the library's `StoreResult.hint` says to check it (see [Proxies](cli.md#proxies)) |
+| `no response` | `no_response` | The store never answered (DNS, connection or network failure), a proxy refused the request (407), or the store's own address was refused (see the `Refused request to` warning and [Refused requests to non-public addresses](#refused-requests-to-non-public-addresses)); with a proxy in use, the library's `StoreResult.hint` says to check it (see [Proxies](cli.md#proxies)) |
 | `failed` | `error` | An unexpected error (details in the [log file](#log-files)) |
 | `stopped` | `stopped` | Interrupted (Ctrl-C) before producing anything |
 | `invalid URL` | `invalid_url` | The URL was malformed and skipped before scraping |
@@ -70,6 +70,17 @@ Stores usually rate-limit by IP address: past some request rate they answer 429 
 - **User agents:** requests use a random browser user agent, and a 403 or 429 swaps it before the retry. Some stores rate-limit by user agent: Shopify answers 429 to every request from a plain Linux browser user agent (`X11; Linux x86_64`, as Chrome on Linux and headless Chrome send), so the built-in pool leaves those out. Avoid that token in a custom `--user-agent`.
 - **Bail and waits:** waiting out `Retry-After` doesn't count against `--bail`, and waits are excused for each request. So a store limited by IP can wait (retries + 1) × up to 60 seconds for every request it makes before its first item. That has no fixed bound: a Shopify store that answers 429 with `Retry-After` to each of the thousands of products its sitemap lists can run for hours before it fails.
 - **Proxies** don't get around rate limits; see [Proxies](cli.md#proxies).
+
+## Refused requests to non-public addresses
+
+Redirects, image URLs, sitemap entries and product links all come from the store, so a store could point the scraper at addresses on your own machine or network. Requests to loopback, private-network, link-local (which includes cloud metadata services), shared, multicast and reserved addresses are therefore refused before they are sent, along with their robots.txt. This covers literal IP addresses, `localhost` names and hostnames that resolve to any such address. The log file gets a warning for each one, such as `Refused request to http://169.254.169.254/...: 169.254.169.254 is not a public address`, and a refused image counts as a failed image.
+
+A store whose own URL is on a non-public address, such as `http://127.0.0.1:8000` or a LAN host whose name resolves only to private addresses, is exempt: its requests aren't checked. There is no option to turn the check off. A refused redirect or link usually leaves the store as `0 items`, since the store did answer. A refused store URL, such as a name with both public and private addresses, shows as `no response`.
+
+- **Proxies:** with `--proxy` or a proxy environment variable, the proxy resolves hostnames, so only literal IP addresses and `localhost` names are checked. See [Proxies](cli.md#proxies).
+- **Custom transports:** with the library's `fetcher_factory`, hostnames aren't resolved for the check; literal IPs and `localhost` names still are.
+- **Local DNS that answers with fake or blocking addresses:** some tools answer public names with addresses that aren't public, such as the 198.18.0.0/15 fake-IP range of TUN-mode proxy tools, or `0.0.0.0` from ad-blocking DNS. Those answers show up as refusals, or exempt a store whose every name gets one. Point the scraper at that tool's proxy with `--proxy` instead.
+- **What it doesn't cover:** the check runs before each request, so a name whose DNS answer changes between the check and the connection isn't caught.
 
 ## Large Shopify catalogs
 

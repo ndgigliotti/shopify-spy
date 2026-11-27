@@ -58,7 +58,7 @@ Each `StoreResult` has a `status`, an item count and sometimes a `hint`, such as
 The options match the CLI: `platform`, `products`, `collections`, `images` (with `images_dir`), `max_items_per_store`, `bail`, `concurrent_requests`, `request_timeout`, `retries`, `user_agent`, `respect_robots_txt`, `verify_tls`, `proxy`, `max_concurrent_stores`, `throttle` and the `throttle_*` settings. `help(spy.scrape)` gives each one's meaning and default.
 
 - `max_items_per_store` is per store; use `itertools.islice` for a total.
-- `proxy=` sends every request through one proxy, overriding the environment variables. See [Proxies](cli.md#proxies) for the URL forms, credentials and when a proxy helps.
+- `proxy=` sends every request through one proxy, overriding the environment variables. See [Proxies](cli.md#proxies) for the URL forms, credentials and when a proxy helps. Through a proxy, only literal IP addresses and `localhost` names are checked against the [non-public address rule](troubleshooting.md#refused-requests-to-non-public-addresses).
 
 ## Images
 

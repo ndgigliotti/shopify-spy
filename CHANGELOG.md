@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.5.1
+
+### Security
+
+- Requests to loopback, private-network, link-local (including cloud metadata),
+  shared, multicast and reserved addresses are refused, along with their
+  robots.txt, unless the store's own URL is on such an address. This covers
+  redirects, image URLs and every other URL a store supplies, given as a literal IP,
+  a `localhost` name or a hostname that resolves to one. Through a proxy, only
+  literal IPs and `localhost` names are checked. A warning names each refused URL
+  ([#96](https://github.com/ndgigliotti/shopify-spy/issues/96)).
+- The "unsupported format" image warning no longer includes the response's first
+  bytes; they are logged at debug level.
 
 ### Added
 
@@ -28,9 +40,15 @@
 - The reference documentation moved from the README into `docs/`: installation, the
   command line, output, the library and troubleshooting each have a page. The README
   keeps the quick start and links to them.
+- The README leads with use from scripts and AI agents, installs with uv first
+  (`uv tool install` for the CLI, `uv add` for the library), and has a Responsible
+  use section. User-agent rotation is described as a retry detail.
 
 ### Fixed
 
+- A product page whose JSON-LD has a trailing comma or a `//` or `/* */` comment
+  no longer loses its product in the WooCommerce sitemap fallback
+  ([#88](https://github.com/ndgigliotti/shopify-spy/issues/88)).
 - The robots.txt hint now says `--ignore-robots` ignores robots.txt, not that it
   "bypasses" it.
 - `help(spy.scrape)` and `help(spy.scrape_async)` no longer indent everything from

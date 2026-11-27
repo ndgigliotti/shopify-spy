@@ -2,14 +2,17 @@
 
 import asyncio
 import gc
+import ipaddress
 import subprocess
 import sys
 import time
+import urllib.parse
 import warnings
 
 import pytest
 
 import shopify_spy as spy
+from shopify_spy import _address, _runner
 from shopify_spy._fetch import FakeFetcher, FetchConnectionError, FetchTLSError, Seq
 from tests.flow_support import FAST, STORE, bulk_url, products, scrape, urlset, woo_url
 
@@ -574,6 +577,28 @@ def test_proxy_407_fails_store_without_leaking_credentials(
     assert "secret" not in str(info.value)
     assert "secret" not in caplog.text
     assert f"Using proxy http://u:***@127.0.0.1:{proxy.port}" in caplog.text
+
+
+def test_default_transport_resolves_hostnames_for_the_check(clean_proxy_env):
+    calls = []
+    table = {"shop.example": "8.8.8.8", "internal.test": "10.0.0.5"}
+
+    async def stub(url):
+        host = urllib.parse.urlsplit(url).hostname
+        calls.append(host)
+        return [ipaddress.ip_address(table[host])] if host in table else []
+
+    store = "https://shop.example"
+    fetcher = FakeFetcher({bulk_url(1, store): (302, "", {"Location": "https://internal.test/x"})})
+    clean_proxy_env.setattr(_address, "resolve", stub)
+    clean_proxy_env.setattr(_runner, "HttpxFetcher", lambda **kw: fetcher)
+    list(spy.scrape(store, **FAST))
+    assert set(calls) == {"shop.example", "internal.test"}
+    assert not [r.url for r in fetcher.requests if "internal.test" in r.url]
+
+    calls.clear()
+    list(spy.scrape(store, fetcher_factory=lambda: fetcher, **FAST))
+    assert calls == []
 
 
 def test_proxy_kept_out_of_option_reprs():
