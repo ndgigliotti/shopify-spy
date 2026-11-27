@@ -65,7 +65,7 @@ When a store's Store API is unavailable on its first page, Shopify Spy reads its
 
 - **When it happens:** the first Store API page returns an error status other than a 429 rate limit, the request fails, the answer isn't a product list, or robots.txt disallows it.
 - **How pages are found:** through the WordPress REST API's product list (`/wp-json/wp/v2/product`), or the product sitemaps (WordPress core's `/wp-sitemap.xml`, Yoast's or Rank Math's `/sitemap_index.xml`).
-- **What they carry:** only `id`, `name`, `slug`, `permalink`, `sku`, `description`, `images`, `prices`, `on_sale` and `is_in_stock` (plus the added `store`, `platform` and `image_urls`), and the page's original structured data in `json_ld`. There are no categories or tags.
+- **What they carry:** only `id`, `name`, `slug`, `permalink`, `sku`, `description`, `images`, `prices`, `on_sale` and `is_in_stock` (plus the added `store`, `platform` and `image_urls`), and the page's structured data in `json_ld` (with its `{"@id": ...}` references resolved). There are no categories or tags.
 - **Product groups:** a `ProductGroup` (Yoast's markup for a variable product) without offers of its own takes its price range from its variants' offers, and is in stock when any variant is.
 - **Cleanup:** relative image URLs are resolved against the page's URL, names and descriptions are unescaped until they stop changing (pages escape them, sometimes twice), names lose the site name an SEO plugin may append (`Hat - My Shop`), and a SKU that's really the product ID (WooCommerce's placeholder for a missing SKU) is set to `null`.
 - **Variations:** a variable product also gets `attributes` and `variations` from the page's variation form, each variation with its own `prices`, `sku` and `is_in_stock`, so the unified schema has a row per variation. WooCommerce embeds that form's data only for products with up to 30 variations (by default), so larger ones keep just the price range.
@@ -107,7 +107,7 @@ Each line holds a product as the storefront GraphQL `products` query at `/graphq
 
 ## JSON-LD items
 
-With `--platform jsonld`, each line holds the schema.org `Product` or `ProductGroup` node from one product page's JSON-LD, as the page has it, plus four added fields (`image_urls` is empty unless `--images` is given):
+With `--platform jsonld`, each line holds the schema.org `Product` or `ProductGroup` node from one product page's JSON-LD, as the page has it except that references to other nodes on the page (`{"@id": ...}`, as Yoast gives a product's images) are replaced by those nodes, plus four added fields (`image_urls` is empty unless `--images` is given):
 
 ```json
 {

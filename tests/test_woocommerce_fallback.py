@@ -982,3 +982,15 @@ def test_page_item_text_unescaped_until_stable():
     }
     item = page_item(product, f"{STORE}/product/hat/", None)
     assert (item["name"], item["description"]) == ("Hat &amp; Scarf", "Wool\xa0blend")
+
+
+def test_page_item_images_from_references():
+    # Yoast lists the group's images by @id: the first in the WebPage's script, the
+    # rest inside its variants
+    images = [i["src"] for i in nalgene_item()["images"]]
+    assert [i.rsplit("/", 1)[-1] for i in images] == [
+        "Sasquatch_Front-667x1000-1.jpg",
+        "Sasquatch_Back-667x1000-1.jpg",
+        "Aliens_Front-667x1000-1.jpg",
+        "Werewolf_Front-667x1000-1.jpg",
+    ]

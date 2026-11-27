@@ -5,7 +5,8 @@ The sitemaps are the robots.txt ``Sitemap:`` URLs on the store's site, else the 
 of ``/sitemap.xml``, ``/sitemap_index.xml`` and ``/xmlsitemap.php`` that parses. Of
 an index's children, only the product sitemaps are read when there are any. Each
 listed page is fetched, and one whose JSON-LD has a Product or ProductGroup for that
-page becomes an item: the node as found, plus ``store``, ``platform``, ``html_url``
+page becomes an item: the node as found, with its ``{"@id": ...}`` references to
+the page's other nodes resolved, plus ``store``, ``platform``, ``html_url``
 and ``image_urls``.
 
 A store whose pages have no Product data (it renders products in the browser, say)

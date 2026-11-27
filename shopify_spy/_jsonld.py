@@ -20,6 +20,7 @@ from typing import Any
 logger = logging.getLogger("shopify_spy")
 
 MAX_NODES = 10_000  # JSON-LD objects examined per page
+MAX_DEPTH = 64  # nesting below which a product's references are left unresolved
 _SCRIPT = re.compile(r"<script\b([^>]*)>(.*?)</script\s*>", re.I | re.S)
 _LD_TYPE = re.compile(r"""\btype\s*=\s*["']?\s*application/ld\+json""", re.I)
 _BODY_CLASS = re.compile(r"""<body\b[^>]*?\bclass\s*=\s*(["'])(.*?)\1""", re.I | re.S)
@@ -104,30 +105,109 @@ def parse_product_page(
 ) -> tuple[dict[str, Any] | None, int | None]:
     """Return (the page's schema.org Product, the WordPress post ID).
 
+    The Product is a copy whose ``{"@id": ...}`` references are replaced by the
+    nodes they name, from any of the page's scripts.
+
     With several products on the page (related products, say), the one whose
     ``url`` or ``@id`` is the page wins, else the first. ``groups`` also matches
     ``ProductGroup`` nodes. With ``fallback=False``, "else the first" applies only
     to a page with one candidate, or with exactly one ProductGroup among them.
     """
     products: list[dict[str, Any]] = []
+    scripts: list[Any] = []
     for attrs, script in _SCRIPT.findall(html):
         if not _LD_TYPE.search(attrs):
             continue
         try:
-            products += _products(_load(script), groups=groups)
+            scripts.append(_load(script))
         except (ValueError, RecursionError):
             logger.debug("Unparseable JSON-LD on %s", url)
+            continue
+        products += _products(scripts[-1], groups=groups)
     body = _BODY_CLASS.search(html)
     match = body and _POST_ID.search(body.group(2))
     post_id = int(match.group(1)) if match else None
     page = _strip_fragment(url)
-    for product in products:
-        if page and page in (
-            _strip_fragment(product.get("url")),
-            _strip_fragment(product.get("@id")),
-        ):
-            return product, post_id
-    return _unmatched(products, fallback=fallback), post_id
+    found = next(
+        (
+            product
+            for product in products
+            if page
+            and page in (_strip_fragment(product.get("url")), _strip_fragment(product.get("@id")))
+        ),
+        None,
+    )
+    found = found or _unmatched(products, fallback=fallback)
+    if found is None:
+        return None, post_id
+    return _Graph(scripts, url).resolve(found), post_id
+
+
+# Properties that point back at what holds the product (its page, its group), which
+# would inline the page's whole graph
+_BACK_REFERENCES = frozenset({"mainEntityOfPage", "isPartOf", "isVariantOf", "subjectOf"})
+
+
+def _is_reference(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("@id"), str)
+        and value.keys() <= {"@id", "@type"}
+    )
+
+
+class _Graph:
+    """The page's JSON-LD nodes by ``@id``, from every script, to resolve the
+    ``{"@id": ...}`` references a product makes to them (Yoast lists a product's
+    images that way)."""
+
+    def __init__(self, scripts: list[Any], url: str) -> None:
+        self.url = url
+        self.nodes: dict[str, dict[str, Any]] = {}
+        stack = list(scripts)
+        seen = 0
+        while stack and seen < MAX_NODES:
+            value = stack.pop()
+            seen += 1
+            if isinstance(value, list):
+                stack.extend(v for v in reversed(value) if isinstance(v, (dict, list)))
+            elif isinstance(value, dict):
+                if isinstance(value.get("@id"), str) and not _is_reference(value):
+                    self.nodes.setdefault(self._key(value["@id"]), value)
+                stack.extend(v for v in reversed(value.values()) if isinstance(v, (dict, list)))
+        self._budget = MAX_NODES
+
+    def _key(self, node_id: str) -> str:
+        try:
+            return urllib.parse.urljoin(self.url, node_id)
+        except ValueError:
+            return node_id
+
+    def resolve(self, product: dict[str, Any]) -> dict[str, Any]:
+        """The product with its references replaced by the nodes they name; a node
+        isn't inlined inside itself, and the copying is bounded."""
+        return self._copy(product, (), 0) if self.nodes else product
+
+    def _copy(self, value: Any, path: tuple[str, ...], depth: int) -> Any:
+        if not isinstance(value, (dict, list)):
+            return value
+        self._budget -= 1
+        if self._budget < 0 or depth > MAX_DEPTH:
+            return value
+        if _is_reference(value):
+            key = self._key(value["@id"])
+            target = self.nodes.get(key)
+            if target is None or key in path:
+                return value
+            return self._copy(target, path, depth + 1)
+        if isinstance(value, list):
+            return [self._copy(v, path, depth + 1) for v in value]
+        if isinstance(value.get("@id"), str):
+            path = (*path, self._key(value["@id"]))
+        return {
+            k: v if k in _BACK_REFERENCES else self._copy(v, path, depth + 1)
+            for k, v in value.items()
+        }
 
 
 def text(value: Any) -> str | None:

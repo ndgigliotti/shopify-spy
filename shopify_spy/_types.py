@@ -107,7 +107,8 @@ JsonLdProductItem = TypedDict(
 )
 # The functional form, since keys like "@type" aren't identifiers, can't take a docstring
 JsonLdProductItem.__doc__ = """A schema.org ``Product`` or ``ProductGroup`` node from a product
-page's JSON-LD, as found (only the common properties are listed), plus ``store``,
+page's JSON-LD, as found but with its ``{"@id": ...}`` references to the page's
+other nodes resolved (only the common properties are listed), plus ``store``,
 ``platform``, ``html_url`` and ``image_urls`` (and ``scraped_images`` with images
 enabled). schema.org has none of those four properties, so they can't collide.
 

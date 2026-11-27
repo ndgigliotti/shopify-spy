@@ -1,4 +1,5 @@
 import json
+import time
 
 from shopify_spy._jsonld import OUT_OF_STOCK, parse_product_page
 
@@ -113,3 +114,38 @@ def test_out_of_stock_still_importable_from_woocommerce():
 
     assert _woocommerce.OUT_OF_STOCK is OUT_OF_STOCK
     assert {"OutOfStock", "SoldOut", "Discontinued"} == OUT_OF_STOCK
+
+
+def test_references_resolved_across_scripts():
+    image = {"@type": "ImageObject", "@id": f"{PAGE}#primaryimage", "url": "https://cdn.test/a.jpg"}
+    webpage = {"@type": "WebPage", "@id": PAGE, "image": {"@id": image["@id"]}}
+    product = {
+        "@type": "Product",
+        "name": "Tee",
+        "image": [{"@id": image["@id"]}, {"@id": "#missing"}],
+        "brand": {"@type": "Brand", "@id": "#brand"},
+        "mainEntityOfPage": {"@id": PAGE},
+    }
+    brand = {"@type": "Brand", "@id": "#brand", "name": "Acme"}
+    html = ld_page({"@graph": [webpage, image]}, {"@graph": [product, brand]})
+    found = parse(html)
+    assert found["image"] == [image, {"@id": "#missing"}]
+    assert found["brand"] == brand  # a relative @id names the same node
+    assert found["mainEntityOfPage"] == {"@id": PAGE}  # the page isn't inlined
+    assert product["image"][0] == {"@id": image["@id"]}  # the page's data is left as is
+
+
+def test_reference_cycles_stay_references():
+    a = {"@type": "Product", "@id": "#a", "name": "A", "isRelatedTo": {"@id": "#b"}}
+    b = {"@type": "Thing", "@id": "#b", "name": "B", "isRelatedTo": {"@id": "#a"}}
+    found = parse(ld_page({"@graph": [a, b]}))
+    assert found["isRelatedTo"] == b | {"isRelatedTo": {"@id": "#a"}}
+
+
+def test_shared_references_resolve_quickly():
+    # Each level refers twice to the next, so a full expansion would be 2**40 nodes
+    nodes = [{"@id": f"#n{i}", "x": [{"@id": f"#n{i + 1}"}] * 2} for i in range(40)]
+    product = {"@type": "Product", "name": "Tee", "x": {"@id": "#n0"}}
+    start = time.perf_counter()
+    assert parse(ld_page({"@graph": [product, *nodes]}))["name"] == "Tee"
+    assert time.perf_counter() - start < 1
