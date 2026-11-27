@@ -157,7 +157,7 @@ With `--images`, each item gets a `scraped_images` field recording each download
 
 Images are saved in their original format, named by the SHA-1 of their URL, with the extension of the format their bytes are in. The `path` is relative to the images directory (`output/images/` by default). Files younger than 90 days are reused, with `"status": "uptodate"`.
 
-Supported formats are JPEG, PNG, GIF, WebP, AVIF, HEIC/HEIF, JPEG XL, JPEG 2000, BMP, TIFF and ICO. Anything else, such as an SVG or an error page served in place of an image, is logged and counted as a failed image instead of being saved.
+Supported formats are JPEG, PNG, GIF, WebP, AVIF, HEIC/HEIF, JPEG XL, JPEG 2000, BMP, TIFF and ICO. Anything else, such as an SVG or an error page served in place of an image, is logged and counted as a failed image instead of being saved (its first bytes are logged at debug level).
 
 ## Unified schema
 

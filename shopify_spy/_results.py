@@ -87,6 +87,9 @@ class StoreResult:
     complete: bool
     finish_reason: str  # finished, item_limit, bail, shutdown, closed, error
     suggested_platform: str | None = None  # set when the store looks like another platform
+    # The host products came from when the store's own /products.json was a 404, e.g.
+    # "acme.myshopify.com" for a headless store
+    products_from: str | None = None
     responses_by_status: dict[int, int] = field(default_factory=dict)
     robots_disallowed: int = 0
     # Requests that ended on a 429, of any kind but images (robots.txt's too)
@@ -111,6 +114,11 @@ class StoreResult:
             if self.responses_by_status.get(407):
                 return "the proxy refused its credentials (407); check the proxy URL"
             return "requests went through a proxy; check that it is reachable"
+        if self.products_from is not None:
+            return (
+                f"products came from {self.products_from}; "
+                "the store's own /products.json was not found"
+            )
         return None
 
 

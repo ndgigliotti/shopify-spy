@@ -599,6 +599,7 @@ def test_status_file_lists_skipped_urls(cli):
         "items": 0,
         "status": "invalid URL",
         "code": "invalid_url",
+        "products_from": None,
     }
 
 
@@ -734,6 +735,42 @@ def test_multi_url_success_shows_per_url_counts(cli):
     assert "store2.com: 5 items" in run.stdout
 
 
+def headless(host: str, handle: str, n: int) -> dict:
+    """A store whose own /products.json is a 404 and whose homepage names its
+    myshopify.com domain, which lists n products."""
+    return {
+        products_url(host): (404, ""),
+        f"https://{host}/": (200, f'<a href="https://{handle}.myshopify.com/cart">cart</a>'),
+        products_url(f"{handle}.myshopify.com"): bulk(n),
+    }
+
+
+def test_multi_url_names_the_myshopify_host_products_came_from(cli):
+    routes = merge(headless("store1.com", "acme", 3), shop("store2.com", 5))
+    run = cli(routes, "https://store1.com", "https://store2.com")
+
+    assert run.exit_code == 0
+    assert "store1.com: 3 items (from acme.myshopify.com)" in run.stdout
+    assert "store2.com: 5 items\n" in run.stdout
+    assert [u["products_from"] for u in run.status()["urls"]] == ["acme.myshopify.com", None]
+
+
+def test_single_store_names_the_myshopify_host_products_came_from(cli):
+    run = cli(headless("store1.com", "acme", 3), "https://store1.com")
+
+    assert run.exit_code == 0
+    lines = run.stdout.splitlines()
+    done = next(i for i, line in enumerate(lines) if line.startswith("Done!"))
+    assert lines[done + 1] == "  Products came from acme.myshopify.com."
+    assert run.status()["urls"][0]["products_from"] == "acme.myshopify.com"
+
+
+def test_single_store_without_products_from_has_no_source_line(cli):
+    run = cli(shop("store1.com", 3), "https://store1.com")
+
+    assert "Products came from" not in run.stdout
+
+
 def test_multi_url_scrapes_each_url_separately(cli):
     """Each URL is scraped as its own store and reported under its own entry."""
     urls = ["https://store1.com", "https://store2.com", "https://store3.com"]
@@ -767,6 +804,7 @@ def test_multi_url_store_that_failed(cli):
         "items": 0,
         "status": "failed",
         "code": "error",
+        "products_from": None,
     }
 
 
@@ -800,6 +838,7 @@ def test_store_that_failed_after_scraping_items(cli):
         "items": 250,
         "status": "failed",
         "code": "error",
+        "products_from": None,
     }
     assert data["finish_reason"] == "crawler_failed"
 
@@ -877,6 +916,7 @@ def test_diagnose_items(cli):
         "items": 5,
         "status": "ok",
         "code": "ok",
+        "products_from": None,
     }
 
 
@@ -1255,7 +1295,15 @@ def test_status_file_written_on_success(cli):
     assert data["finish_reason"] == "finished"
     assert data["duration_seconds"] >= 0
     assert data["log_file"] is not None
-    assert data["urls"] == [{"url": "https://store.com", "items": 12, "status": "ok", "code": "ok"}]
+    assert data["urls"] == [
+        {
+            "url": "https://store.com",
+            "items": 12,
+            "status": "ok",
+            "code": "ok",
+            "products_from": None,
+        }
+    ]
 
 
 def test_status_file_written_on_failure(cli):
