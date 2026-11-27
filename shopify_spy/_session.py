@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
-import time
 import urllib.parse
 from collections import Counter
 from collections.abc import Awaitable, Callable
@@ -490,12 +489,10 @@ class StoreSession:
         assert retry_after is not None
         if rate_limited:
             slot.pause(retry_after)
-            until = time.strftime("%H:%M", time.localtime(time.time() + retry_after))
             logger.warning(
-                "Pausing requests to %s for %.0fs (until about %s) on Retry-After; not retrying %s",
+                "Pausing requests to %s for %.0fs on Retry-After; not retrying %s",
                 origin(url),
                 retry_after,
-                until,
                 url,
             )
         elif will_retry:

@@ -780,6 +780,13 @@ async def test_long_retry_after_on_the_last_attempt_pauses_for_all_of_it(caplog)
     assert len([r for r in caplog.records if r.levelname == "WARNING"]) == 1
 
 
+async def test_huge_retry_after_returns_the_429():
+    # 400 digits parse to inf, which a wall-clock "until" time can't format
+    session, _ = long_retry_session({f"{STORE}/p": (429, "", {"Retry-After": "1" * 400})})
+    assert (await get(session, f"{STORE}/p")).status == 429
+    assert session.registry.slot(STORE).paused_until == float("inf")
+
+
 async def test_long_retry_after_503_is_not_retried():
     session, fetcher = long_retry_session(
         {f"{STORE}/p": Seq([(503, "", {"Retry-After": "3600"}), (200, "ok")])}
