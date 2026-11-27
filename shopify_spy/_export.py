@@ -439,7 +439,8 @@ def write_status(
     Per-URL ``status`` strings are the CLI's labels; ``code`` is the StoreStatus.
     ``output_error`` says why the data file couldn't be written (None when it was), and
     ``items_written`` how many items the data file holds; it falls short of
-    ``items_scraped`` when a write failed.
+    ``items_scraped`` when a write failed. ``products_from`` names the host a store's
+    products came from when its own /products.json was a 404 (None otherwise).
     """
     entries = [
         {
@@ -447,11 +448,18 @@ def write_status(
             "items": s.items,
             "status": s.status.label,
             "code": s.status.value,
+            "products_from": s.products_from,
         }
         for s in stores
     ]
     entries += [
-        {"url": u, "items": 0, "status": "invalid URL", "code": "invalid_url"}
+        {
+            "url": u,
+            "items": 0,
+            "status": "invalid URL",
+            "code": "invalid_url",
+            "products_from": None,
+        }
         for u in skipped_urls or []
     ]
     data = {

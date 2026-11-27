@@ -139,7 +139,13 @@ def test_capped_store_is_scraped_through_collections_then_the_sitemap(tmp_path, 
     status = json.loads(next(tmp_path.glob("status/*_status.json")).read_text())
     total = CATALOG + len(COLLECTIONS)
     assert status["urls"] == [
-        {"url": url, "items": total, "status": status["urls"][0]["status"], "code": "ok"}
+        {
+            "url": url,
+            "items": total,
+            "status": status["urls"][0]["status"],
+            "code": "ok",
+            "products_from": None,
+        }
     ]
     items = [
         json.loads(line)

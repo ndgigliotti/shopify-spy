@@ -18,7 +18,7 @@ Every store ends with a status, which the CLI lists when a store fails and the [
 | `rate limited (429)` | `rate_limited` | The store answered 429 (Too Many Requests) after retries and no successful response, or a 429 its retries didn't get past held it until `--bail` fired with no items; retry later with a lower `--concurrent` (see [Rate limiting](#rate-limiting)) |
 | `unavailable (5xx)` | `unavailable` | The store answered 5xx server errors (often an outage or maintenance) and no successful response; retry later |
 | `TLS error` | `tls_error` | The certificate failed verification; try `--insecure` |
-| `no response` | `no_response` | The store never answered (DNS, connection or network failure), or a proxy refused the request (407); with a proxy in use, the library's `StoreResult.hint` says to check it (see [Proxies](cli.md#proxies)) |
+| `no response` | `no_response` | The store never answered (DNS, connection or network failure), a proxy refused the request (407), or the store's own address was refused (see the `Refused request to` warning and [Refused requests to non-public addresses](#refused-requests-to-non-public-addresses)); with a proxy in use, the library's `StoreResult.hint` says to check it (see [Proxies](cli.md#proxies)) |
 | `failed` | `error` | An unexpected error, or a Magento store whose `/graphql` answered without products (the reason is in the [log file](#log-files) and `StoreResult.errors`; see [Magento stores](#magento-stores)) |
 | `stopped` | `stopped` | Interrupted (Ctrl-C) before producing anything |
 | `invalid URL` | `invalid_url` | The URL was malformed and skipped before scraping |
@@ -40,7 +40,7 @@ Each run except `--peek` writes a status file to `<output>/status/`, with each U
   "items_scraped": 47,
   "items_written": 47,
   "urls": [
-    {"url": "https://store.com", "items": 47, "status": "ok", "code": "ok"}
+    {"url": "https://store.com", "items": 47, "status": "ok", "code": "ok", "products_from": null}
   ],
   "finish_reason": "finished",
   "duration_seconds": 12.3,
@@ -48,6 +48,8 @@ Each run except `--peek` writes a status file to `<output>/status/`, with each U
   "output_error": null
 }
 ```
+
+`products_from` is `null` unless a store's products came from another host, such as the `myshopify.com` domain of a [headless store](#headless-shopify-stores).
 
 `finish_reason` summarizes the run: `finished`, `item_limit` (a store reached `--limit`), `bail` (a store hit the `--bail` timeout), `crawler_failed` (a store failed with an error: unexpected, or a Magento answer without products), or `shutdown` (interrupted). `items_written` is how many items the data file holds. A crash or a killed process writes no status file.
 
@@ -69,6 +71,17 @@ Stores usually rate-limit by IP address: past some request rate they answer 429 
 - **Bail and waits:** waiting out `Retry-After` doesn't count against `--bail`, and waits are excused for each request. So a store limited by IP can wait (retries + 1) × up to 60 seconds for every request it makes before its first item. That has no fixed bound: a Shopify store that answers 429 with `Retry-After` to each of the thousands of products its sitemap lists can run for hours before it fails.
 - **Proxies** don't get around rate limits; see [Proxies](cli.md#proxies).
 
+## Refused requests to non-public addresses
+
+Redirects, image URLs, sitemap entries and product links all come from the store, so a store could point the scraper at addresses on your own machine or network. Requests to loopback, private-network, link-local (which includes cloud metadata services), shared, multicast and reserved addresses are therefore refused before they are sent, along with their robots.txt. This covers literal IP addresses, `localhost` names and hostnames that resolve to any such address. The log file gets a warning for each one, such as `Refused request to http://169.254.169.254/...: 169.254.169.254 is not a public address`, and a refused image counts as a failed image.
+
+A store whose own URL is on a non-public address, such as `http://127.0.0.1:8000` or a LAN host whose name resolves only to private addresses, is exempt: its requests aren't checked. There is no option to turn the check off. A refused redirect or link usually leaves the store as `0 items`, since the store did answer. A refused store URL, such as a name with both public and private addresses, shows as `no response`.
+
+- **Proxies:** with `--proxy` or a proxy environment variable, the proxy resolves hostnames, so only literal IP addresses and `localhost` names are checked. See [Proxies](cli.md#proxies).
+- **Custom transports:** with the library's `fetcher_factory`, hostnames aren't resolved for the check; literal IPs and `localhost` names still are.
+- **Local DNS that answers with fake or blocking addresses:** some tools answer public names with addresses that aren't public, such as the 198.18.0.0/15 fake-IP range of TUN-mode proxy tools, or `0.0.0.0` from ad-blocking DNS. Those answers show up as refusals, or exempt a store whose every name gets one. Point the scraper at that tool's proxy with `--proxy` instead.
+- **What it doesn't cover:** the check runs before each request, so a name whose DNS answer changes between the check and the connection isn't caught.
+
 ## Large Shopify catalogs
 
 Shopify's `products.json` stops paging at 25,000 items (100 pages of 250), so a larger catalog takes more requests. Past that, the scraper reads the sitemap's product list to see what's missing, then pages `/collections/all` and the store's collections, largest first, each with its own 25,000 limit. Whatever is still missing, including products in no collection, is fetched through the sitemap one product per request.
@@ -77,6 +90,15 @@ Shopify's `products.json` stops paging at 25,000 items (100 pages of 250), so a 
 - Collections are paged only while they can save requests. They're skipped when fewer products are missing than they have pages, and they stop once every listed product is found or they find less than one new product per request.
 - On a 65,718-product store, bulk paging and collections together found 99.7% of the catalog, and the whole scrape took about 1,700 requests, against about 41,000 with bulk paging and the sitemap alone ([#30](https://github.com/ndgigliotti/shopify-spy/issues/30)).
 - Catalogs whose collections are far larger than 25,000 products (some print-on-demand stores list over a million) stay mostly out of reach; use `--limit` to sample them.
+
+## Headless Shopify stores
+
+A headless Shopify store runs its storefront on a custom frontend (Hydrogen or another framework), so its own domain answers 404 to `/products.json`. When that happens, the scraper reads the store's homepage for the shop's `<handle>.myshopify.com` domain, which the HTML usually names in checkout links or analytics config, and pages `/products.json` there before trying the sitemap ([#92](https://github.com/ndgigliotti/shopify-spy/issues/92)). Items keep the store's own domain in `url` and `store`, and with `--collections` the collections come from the same domain. The status file's `products_from`, `StoreResult.products_from` and the CLI's end-of-run summary name the `myshopify.com` domain the products came from.
+
+- The `myshopify.com` domain is used only when the homepage names exactly one; none or several (an app or marketplace domain, say) go straight to the sitemap.
+- A `myshopify.com` domain behind a password page (a redirect to `/password`), or one that fails in any other way, falls back to the sitemap as before.
+- Requests to `*.myshopify.com`, robots.txt included, go one at a time across the whole run, since those hosts are Shopify's rather than the store's. A 403 or 429 there doesn't swap the store's user agent.
+- With `--bail`, the homepage and the wait for the first item take at most half of the store's remaining bail time before the sitemap is tried with the rest.
 
 ## WooCommerce stores
 

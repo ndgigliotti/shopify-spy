@@ -129,6 +129,7 @@ Requests honor the `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` envir
 - Credentials in the URL are masked in logs and errors (`http://USER:***@gateway:PORT`).
 - `--proxy` takes credentials as typed. In the environment variables, a `/`, `?` or `#` in them must be percent-encoded (`%2F`, `%3F`, `%23`).
 - To keep a password out of shell history and process lists, or out of a coding agent's transcript, set it in the environment before starting the shell or agent rather than passing it to `--proxy`.
+- Through a proxy, only literal IP addresses and `localhost` names are checked against the [non-public address rule](troubleshooting.md#refused-requests-to-non-public-addresses), since the proxy resolves hostnames itself.
 - A proxy is for a fixed egress, such as a company network or another region. It is not a way around a store's rate limits, which in practice key on user agent or endpoint as much as on IP.
 
 A proxy's 407 (refused credentials) counts as [`no_response`](troubleshooting.md#store-statuses). In the library, a store that never answers while a proxy is in use gets a `hint` saying to check the proxy.

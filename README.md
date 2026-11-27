@@ -102,7 +102,7 @@ An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an i
 
 | Platform | Mechanism | Notes |
 |---|---|---|
-| Shopify | `/products.json` bulk endpoint, then collection pages past 25,000 products, sitemap fallback; collections from `/collections.json` | Products and collections |
+| Shopify | `/products.json` bulk endpoint, then collection pages past 25,000 products, then the store's `myshopify.com` domain if its own 404s, sitemap fallback; collections from `/collections.json` | Products and collections |
 | WooCommerce | `/wp-json/wc/store/v1/products`, then each page's variations (`?type=variation`); product pages' structured data as a fallback | No authentication required |
 | Magento | storefront GraphQL `products` query at `/graphql` | No authentication required; default store view |
 
