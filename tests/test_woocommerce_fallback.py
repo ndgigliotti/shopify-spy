@@ -628,6 +628,28 @@ def test_parse_allows_raw_newlines_in_strings():
     assert product["description"] == "line1\nline2"
 
 
+def test_parse_allows_trailing_commas():
+    script = """{
+        "@type": "Product",
+        "name": "Hat",
+        "description": "keeps ,} and ,] and // as written",
+        "image": ["https://cdn.test/hat.jpg",],
+    }"""
+    product, _ = parse_product_page(ld_page(script), STORE)
+    assert product["description"] == "keeps ,} and ,] and // as written"
+    assert product["image"] == ["https://cdn.test/hat.jpg"]
+
+
+def test_parse_allows_comments():
+    script = """{
+        "@type": "Product", // a line comment
+        /* a block comment */ "name": "Hat",
+        "url": "https://shop.test/hat/", /* before the brace */
+    }"""
+    product, _ = parse_product_page(ld_page(script), STORE)
+    assert product == {"@type": "Product", "name": "Hat", "url": "https://shop.test/hat/"}
+
+
 def test_redirect_to_a_fetched_page_is_not_a_failure():
     from tests.flow_support import redirect
 
