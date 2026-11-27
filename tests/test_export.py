@@ -1074,3 +1074,19 @@ def test_csv_jsonld_text_unescaped_until_stable(tmp_path):
     assert (row["title"], row["vendor"]) == ("Tee & Co", "Acme & Sons")
     assert row["description"] == "Soft cotton tee"
     assert row["variant_title"] == "Tee & Co S"
+
+
+def test_csv_jsonld_formatted_prices_and_nested_availability(tmp_path):
+    offers = {
+        "@type": "AggregateOffer",
+        "priceCurrency": "EUR",
+        "offers": [
+            {"@type": "Offer", "price": "1.234,56", "availability": "schema:OutOfStock"},
+            {"@type": "Offer", "price": "19,99 €", "availability": "schema:InStock"},
+        ],
+    }
+    path = tmp_path / "out.csv"
+    write_items([JSONLD_PRODUCT | {"offers": offers}], path)
+    (row,) = read_csv(path)
+    assert (row["min_price"], row["max_price"], row["price"]) == ("19.99", "1234.56", "19.99")
+    assert (row["currency"], row["available"]) == ("EUR", "true")

@@ -1,8 +1,11 @@
 import json
 import time
+from decimal import Decimal
 from pathlib import Path
 
-from shopify_spy._jsonld import OUT_OF_STOCK, parse_product_page
+import pytest
+
+from shopify_spy._jsonld import OUT_OF_STOCK, amount, offers, parse_product_page
 
 STORE = "https://shop.example"
 PAGE = f"{STORE}/products/tee"
@@ -182,3 +185,119 @@ def test_lenient_pass_is_linear_on_hostile_scripts():
     start = time.perf_counter()
     assert parse(ld_page("{" + ": " * 200_000, '{"a": "' + '\\"' * 200_000)) is None
     assert time.perf_counter() - start < 1
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("19.99", "19.99"),
+        (19.9, "19.9"),
+        ("1.234,56", "1234.56"),
+        ("1,299.00", "1299.00"),
+        ("$19.99", "19.99"),
+        ("19,99", "19.99"),
+        ("1,299", "1299"),
+        ("1.234.567", "1234567"),
+        ("1 234,56 €", "1234.56"),
+        ("1'234.50", "1234.50"),
+        ("1,23,456.00", "123456.00"),
+        ("EUR 12", "12"),
+        ("19,-", "19"),
+        ("", None),
+        ("Call us", None),
+        ("10-20", None),
+        ("-5", None),
+        ("1.2.3", None),
+        ("12,34,56", None),
+        ("1,234.567,89", None),
+        ("1" * 100, None),
+    ],
+)
+def test_amount_reads_formatted_prices(value, expected):
+    assert amount(value) == (None if expected is None else Decimal(expected))
+
+
+def test_aggregate_offer_takes_what_it_lacks_from_its_offers():
+    nested = [
+        {"@type": "Offer", "price": "10", "availability": "https://schema.org/OutOfStock"},
+        {"@type": "Offer", "price": "30", "priceCurrency": "USD", "availability": "InStock"},
+    ]
+    found = offers({"@type": "AggregateOffer", "offers": nested})
+    assert (found.current, found.currency, found.availability) == (
+        [Decimal(10), Decimal(30)],
+        "USD",
+        "InStock",
+    )
+    # Its own bounds and availability stand
+    own = {"@type": "AggregateOffer", "lowPrice": "5", "availability": "SoldOut", "offers": nested}
+    found = offers(own)
+    assert (found.current, found.bounds, found.availability) == ([], [Decimal(5)], "SoldOut")
+
+
+def test_availability_terms_without_namespace():
+    for written in ("schema:OutOfStock", "http://schema.org/OutOfStock/", "OutOfStock"):
+        assert offers({"availability": written}).availability == "OutOfStock"
+
+
+@pytest.mark.parametrize(
+    "kind", ["http://schema.org/Product", "https://schema.org/Product", "schema:Product"]
+)
+def test_type_as_an_iri_or_prefixed(kind):
+    found = parse(ld_page({"@type": kind, "schema:name": "Pan", "http://schema.org/sku": "P-1"}))
+    assert found == {"@type": "Product", "name": "Pan", "sku": "P-1"}
+
+
+def test_unprefixed_property_wins_over_prefixed():
+    found = parse(ld_page({"@type": "Product", "schema:name": "B", "name": "A"}))
+    assert found["name"] == "A"
+
+
+def test_product_under_main_entity():
+    product = {"@type": "Product", "name": "Kayak"}
+    page = {"@type": "ItemPage", "mainEntity": product}
+    assert parse(ld_page(page), groups=True, fallback=False) == product
+
+
+def test_variants_naming_their_group_become_its_variants():
+    group = {"@type": "ProductGroup", "@id": "#group", "name": "Tee"}
+    small = {"@type": "Product", "isVariantOf": {"@id": "#group"}, "sku": "S"}
+    medium = {"@type": "Product", "isVariantOf": {"@id": f"{PAGE}#group"}, "sku": "M"}
+    for fallback in (True, False):
+        found = parse(ld_page({"@graph": [small, group, medium]}), groups=True, fallback=fallback)
+        assert found == group | {"hasVariant": [small, medium]}
+
+
+def test_variants_naming_their_group_keep_its_own_variants():
+    lone = {"@type": "Product", "isVariantOf": {"@id": "#g"}, "sku": "X"}
+    group = GROUP | {"@id": "#g"}
+    assert parse(ld_page(group, lone), groups=True, fallback=False) == group
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        '<!-- {"@type": "Product", "name": "Lamp"} -->',
+        '\n<!--\n{"@type": "Product", "name": "Lamp"}\n-->\n',
+        '<![CDATA[{"@type": "Product", "name": "Lamp"}]]>',
+    ],
+)
+def test_json_in_an_html_comment(script):
+    assert parse(ld_page(script)) == {"@type": "Product", "name": "Lamp"}
+
+
+def test_page_matched_but_for_the_query_string():
+    # The page lists the product under its first variant's URL, beside a related one
+    main = {"@type": "Product", "name": "Boot", "url": f"{PAGE}?variant=1"}
+    related = {"@type": "Product", "name": "Lace", "url": f"{STORE}/products/lace"}
+    assert parse(ld_page([main, related]), groups=True, fallback=False) == main
+
+
+def test_relative_product_url_matches_the_page():
+    main = {"@type": "Product", "name": "Boot", "url": "/products/tee"}
+    related = {"@type": "Product", "name": "Lace", "url": "/products/lace"}
+    assert parse(ld_page([related, main]), groups=True, fallback=False) == main
+
+
+def test_several_query_string_matches_are_not_the_page():
+    products = [{"@type": "Product", "name": n, "url": f"{PAGE}?variant={n}"} for n in "ab"]
+    assert parse(ld_page(products), groups=True, fallback=False) is None
