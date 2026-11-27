@@ -56,3 +56,31 @@ class WooCommerceProductItem(TypedDict, total=False):
     scraped_images: list[ScrapedImage]
     source: str  # only on fallback items: "product_page"
     json_ld: dict[str, Any]  # only on fallback items
+
+
+class MagentoProductItem(TypedDict, total=False):
+    """A Magento product from the storefront GraphQL ``products`` query: its fields
+    as the query returns them, plus ``store``, ``platform``, ``html_url`` and
+    ``image_urls`` (and ``scraped_images`` with images enabled). Prices are numbers
+    in the default store view's currency. There is no ``url`` key.
+
+    ``html_url`` is the product page, ``<scheme>://<host>/<url_key><url_suffix>``, or
+    None without a ``url_key``. ``image_urls`` lists the ``media_gallery`` URLs that
+    aren't disabled, ordered by ``position``. A ``ConfigurableProduct`` also has
+    ``configurable_options`` and ``variants``, each with the variant's
+    ``attributes`` and its own ``product`` (``uid``, ``sku``, ``stock_status``,
+    ``image``, ``price_range``)."""
+
+    uid: str
+    sku: str
+    name: str
+    url_key: str
+    url_suffix: str
+    price_range: dict[str, Any]
+    media_gallery: list[dict[str, Any]]
+    variants: list[dict[str, Any]]
+    store: str
+    platform: Literal["magento"]
+    html_url: str | None
+    image_urls: list[str]
+    scraped_images: list[ScrapedImage]

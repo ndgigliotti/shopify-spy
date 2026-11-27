@@ -19,6 +19,7 @@ OutputSchema = Literal["native", "unified"]
 class Platform(StrEnum):
     shopify = "shopify"
     woocommerce = "woocommerce"
+    magento = "magento"
 
 
 class ScrapeConfig(BaseModel):
@@ -125,7 +126,7 @@ DEFAULT_CONFIG_YAML = """\
 # See https://github.com/ndgigliotti/shopify-spy for documentation
 
 scrape:
-  platform: shopify   # Platform: shopify, woocommerce
+  platform: shopify   # Platform: shopify, woocommerce, magento
   products: true      # Scrape product data (Shopify only)
   collections: false  # Scrape collection data (Shopify only)
   images: false       # Download product images
