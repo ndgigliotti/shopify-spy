@@ -451,41 +451,43 @@ class StoreSession:
                 self._unexcuse_from_bail(excused_until)
             raise
 
+    @staticmethod
+    def _bail_excused(retry_after: float | None, rate_limited: bool) -> bool:
+        """Whether a retry wait is excused from --bail: a server's Retry-After on a
+        rate limit."""
+        return rate_limited and retry_after is not None
+
     def _retry_delay(
         self, attempt: int, retry_after: float | None, rate_limited: bool
     ) -> tuple[float, float | None]:
         """The wait before a retry, and when its bail excusal ends if it has one; a
         server's Retry-After isn't cut short by --bail."""
-        excused = rate_limited and retry_after is not None
-        cap = self._retry_cap(retry_after, rate_limited)
+        excused = self._bail_excused(retry_after, rate_limited)
+        cap = None if excused else self.bail_time_left()
         delay = self.retry.delay(attempt, retry_after, cap, rate_limited)
         return delay, self._excuse_from_bail(delay) if excused else None
 
-    def _retry_cap(self, retry_after: float | None, rate_limited: bool) -> float | None:
-        """The --bail limit on a retry wait; None for a server's Retry-After on a rate
-        limit, which is excused from bail."""
-        return None if rate_limited and retry_after is not None else self.bail_time_left()
-
-    def _end_without_retry(
+    def _ends_request(
         self,
         url: str,
-        response: Response,
         slot: HostSlot,
         attempt: int,
         retry_after: float | None,
-        too_long: bool,
+        rate_limited: bool,
         will_retry: bool,
-    ) -> None:
-        """Back off from a response that ends the request.
+    ) -> bool:
+        """Whether a response ends the request, backing off from it if so.
 
         A Retry-After longer than we'd wait isn't retried early: a rate limit pauses
         the host for all of it, without excusing the pause from --bail.
         """
-        rate_limited = response.status in RATE_LIMIT_STATUSES
-        if not too_long:
+        cap = None if self._bail_excused(retry_after, rate_limited) else self.bail_time_left()
+        if not self.retry.retry_after_too_long(retry_after, cap):
+            if will_retry:
+                return False
             if rate_limited:  # no retry left, but the host still has to back off
                 slot.pause(self._retry_delay(attempt, retry_after, True)[0])
-            return
+            return True
         assert retry_after is not None
         if rate_limited:
             slot.pause(retry_after)
@@ -500,8 +502,9 @@ class StoreSession:
                 "Not retrying %s: Retry-After %.0fs is longer than the %.0fs wait allowed",
                 url,
                 retry_after,
-                self.retry.limit(self._retry_cap(retry_after, rate_limited)),
+                self.retry.limit(cap),
             )
+        return True
 
     async def _cleared(self, url: str, kind: RequestKind) -> bool:
         """Whether the request may be sent; False if robots.txt disallows it."""
@@ -563,13 +566,9 @@ class StoreSession:
                     will_retry = not refused and self.retry.should_retry_status(
                         response.status, attempt
                     )
-                    too_long = self.retry.retry_after_too_long(
-                        retry_after, self._retry_cap(retry_after, rate_limited)
-                    )
-                    if too_long or not will_retry:
-                        self._end_without_retry(
-                            url, response, slot, attempt, retry_after, too_long, will_retry
-                        )
+                    if self._ends_request(
+                        url, slot, attempt, retry_after, rate_limited, will_retry
+                    ):
                         return response
                     # A concurrent refusal of the same agent may have swapped it already
                     if (
