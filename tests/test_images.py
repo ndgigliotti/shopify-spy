@@ -257,12 +257,29 @@ def test_cached_file_not_in_its_named_format_is_redownloaded(tmp_path, cached):
     assert path.read_bytes() == JPEG
 
 
-def test_rejection_names_the_content_type_and_first_bytes(tmp_path, caplog):
+def test_rejection_names_the_content_type_and_logs_first_bytes_at_debug(tmp_path, caplog):
+    caplog.set_level("DEBUG", logger="shopify_spy")
     url = "https://cdn.test/photo.jpg"
     body = b"<!DOCTYPE html><html>"
     routes = {**shop([url]), url: (200, body, {"Content-Type": "text/html"})}
     run_images(routes, tmp_path)
-    assert "Content-Type text/html, starts b'<!DOCTYPE html><'" in caplog.text
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert f"Image download failed: {url} (unsupported format: Content-Type text/html)" in warnings
+    assert not any("starts b'" in w for w in warnings)
+    debug = [r.getMessage() for r in caplog.records if r.levelname == "DEBUG"]
+    assert f"Image {url} starts b'<!DOCTYPE html><'" in debug
+
+
+def test_image_on_non_public_address_refused(tmp_path, caplog):
+    url = "http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+    routes = {**shop([url]), url: (200, b"SECRET-ROLE-NAME")}
+    items, result, fetcher = run_images(routes, tmp_path)
+    assert not [r.url for r in fetcher.requests if "169.254.169.254" in r.url]
+    assert result.stores[0].images_failed == 1
+    assert items[0]["scraped_images"] == []
+    [warning] = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Image")]
+    assert warning.startswith(f"Image download failed: {url} (")
+    assert "refused: 169.254.169.254 is not a public address" in warning
 
 
 def test_no_partial_file_left_after_saving(tmp_path):

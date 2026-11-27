@@ -29,7 +29,7 @@ def test_proxy_407_is_no_response_not_empty():
     assert status.is_failure
 
 
-def _result(status, via_proxy, by_status=None, suggested=None):
+def _result(status, via_proxy, by_status=None, suggested=None, products_from=None):
     return StoreResult(
         input_url="a.com",
         url="https://a.com",
@@ -40,6 +40,7 @@ def _result(status, via_proxy, by_status=None, suggested=None):
         complete=True,
         finish_reason="finished",
         suggested_platform=suggested,
+        products_from=products_from,
         responses_by_status=by_status or {},
         via_proxy=via_proxy,
     )
@@ -66,3 +67,14 @@ def test_proxy_hint(status, via_proxy, by_status, hint):
 def test_platform_hint_wins_over_proxy_hint():
     result = _result(StoreStatus.no_response, True, suggested="woocommerce")
     assert result.hint.startswith("looks like WooCommerce")
+
+
+def test_products_from_defaults_to_none():
+    assert _result(StoreStatus.ok, False).products_from is None
+
+
+def test_products_from_hint_names_the_host():
+    result = _result(StoreStatus.ok, False, products_from="acme.myshopify.com")
+    assert result.hint == (
+        "products came from acme.myshopify.com; the store's own /products.json was not found"
+    )

@@ -379,8 +379,20 @@ def test_status_file(tmp_path):
     )
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["urls"] == [
-        {"url": "a.com", "items": 0, "status": "403 Forbidden", "code": "forbidden"},
-        {"url": "bad url", "items": 0, "status": "invalid URL", "code": "invalid_url"},
+        {
+            "url": "a.com",
+            "items": 0,
+            "status": "403 Forbidden",
+            "code": "forbidden",
+            "products_from": None,
+        },
+        {
+            "url": "bad url",
+            "items": 0,
+            "status": "invalid URL",
+            "code": "invalid_url",
+            "products_from": None,
+        },
     ]
     assert data["duration_seconds"] == 1.2
     assert data["output_error"] is None

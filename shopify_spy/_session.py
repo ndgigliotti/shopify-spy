@@ -1,13 +1,16 @@
-"""The request pipeline: robots.txt, deduplication, slots, throttling, retries, redirects.
+"""The request pipeline: destination check, robots.txt, deduplication, slots,
+throttling, retries, redirects.
 
 ``HostRegistry`` holds per-host state shared by every store in a run (robots.txt
-rules, concurrency and throttle slots), keyed by origin (scheme://host:port).
+rules, resolved addresses, concurrency and throttle slots), keyed by origin
+(scheme://host:port).
 ``StoreSession`` holds one store's state: identity, cookies, seen URLs, stats.
 """
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import urllib.parse
 from collections import Counter
@@ -15,6 +18,14 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
 
+from shopify_spy._address import (
+    IPAddress,
+    Resolver,
+    is_local_name,
+    is_private_host,
+    literal_ip,
+    non_public_reason,
+)
 from shopify_spy._fetch import (
     Fetcher,
     FetchError,
@@ -35,7 +46,7 @@ from shopify_spy._policy import (
     now,
     parse_retry_after,
 )
-from shopify_spy._utils import canonicalize_url, origin
+from shopify_spy._utils import canonicalize_url, hostname, origin
 
 logger = logging.getLogger("shopify_spy")
 
@@ -59,6 +70,8 @@ class RequestKind:
     # (images come after the data they belong to)
     rate_limits: bool = True
     success: bool = True  # a 2xx counts toward StoreStats.successes
+    # A slot shared by every URL of this kind, instead of one per origin
+    slot: str | None = None
 
 
 STORE = RequestKind("store")
@@ -68,6 +81,10 @@ PROBE = RequestKind("probe", counted=False, dedupe=False)  # e.g. a wrong-platfo
 # A fallback source, e.g. WooCommerce product pages: if it finds nothing, the store's
 # diagnosis still explains why the primary source failed
 FALLBACK = RequestKind("fallback", counted=False)
+# A headless store's products read from its *.myshopify.com domain (issue #92). Those
+# hosts belong to Shopify, not the store: one run-wide slot keeps a run over many
+# stores from bursting at them, and a refusal there doesn't change the store's agent
+MYSHOPIFY = RequestKind("myshopify", counted=False, rotate=False, slot="*.myshopify.com")
 
 
 class RequestFailed(Exception):
@@ -127,6 +144,7 @@ class HostRegistry:
         concurrent_requests: int,
         throttle: ThrottleSettings,
         respect_robots_txt: bool,
+        resolver: Resolver | None = None,
     ) -> None:
         self.concurrent_requests = concurrent_requests
         self.throttle = throttle
@@ -134,23 +152,55 @@ class HostRegistry:
         self.shutdown = asyncio.Event()  # set for a graceful stop: no new requests
         self._slots: dict[str, HostSlot] = {}
         self._robots: SingleFlight[RobotsRules] = SingleFlight()
+        # None: hostnames aren't looked up (a proxy or custom transport resolves them)
+        self.resolver = resolver
+        self._resolved: SingleFlight[list[IPAddress]] = SingleFlight()
 
-    def slot(self, url: str) -> HostSlot:
-        key = origin(url)
-        slot = self._slots.get(key)
+    def slot(self, url: str, key: str | None = None) -> HostSlot:
+        """The URL's origin slot, or the shared slot ``key``, which sends one request
+        at a time."""
+        name = origin(url) if key is None else key
+        slot = self._slots.get(name)
         if slot is None:
-            slot = self._slots[key] = HostSlot(self.concurrent_requests, self.throttle)
+            concurrency = self.concurrent_requests if key is None else 1
+            slot = self._slots[name] = HostSlot(concurrency, self.throttle)
         return slot
 
-    async def robots(self, url: str, session: StoreSession) -> RobotsRules:
-        """Return robots.txt rules for the URL's origin, fetching them once per run."""
+    async def robots(
+        self, url: str, session: StoreSession, kind: RequestKind = STORE
+    ) -> RobotsRules:
+        """Return robots.txt rules for the URL's origin, fetching them once per run.
+
+        The fetch takes the slot and rotation of the ``kind`` that asked.
+        """
         key = origin(url)
-        return await self._robots.get(key, lambda: _fetch_robots(key, session))
+        robots_kind = dataclasses.replace(ROBOTS, rotate=kind.rotate, slot=kind.slot)
+        return await self._robots.get(key, lambda: _fetch_robots(key, session, robots_kind))
+
+    async def resolved(self, url: str, timeout: float) -> list[IPAddress]:
+        """The addresses the URL's host resolves to, looked up once per origin per run;
+        [] without a resolver, for a literal IP or local name, or if the lookup fails."""
+        host = hostname(url)
+        resolver = self.resolver
+        if resolver is None or not host or literal_ip(host) is not None or is_local_name(host):
+            return []
+
+        async def lookup() -> list[IPAddress]:
+            # A stalled lookup counts as a failed one, so the transport (whose own
+            # lookup runs under request_timeout) reports what happens next
+            try:
+                async with asyncio.timeout(timeout):
+                    return await resolver(url)
+            except TimeoutError:
+                logger.debug("Address lookup timed out for %s", host)
+                return []
+
+        return await self._resolved.get(origin(url), lookup)
 
 
-async def _fetch_robots(key: str, session: StoreSession) -> RobotsRules:
+async def _fetch_robots(key: str, session: StoreSession, kind: RequestKind) -> RobotsRules:
     try:
-        response = await session.get(f"{key}/robots.txt", kind=ROBOTS)
+        response = await session.get(f"{key}/robots.txt", kind=kind)
     except (RequestFailed, FetchError) as exc:
         logger.debug("robots.txt unavailable for %s: %s", key, exc)
         return RobotsRules(None)
@@ -208,6 +258,7 @@ class StoreContext:
     items: int = 0  # items emitted so far (maintained by the runner)
     item_limit: int | None = None  # the runner stops the store at this many items
     suggested_platform: str | None = None  # set when the store looks like another platform
+    products_from: str | None = None  # the host bulk products came from, if not the store's
 
     @property
     def items_left(self) -> int | None:
@@ -238,6 +289,7 @@ class StoreSession:
         retry: RetryPolicy,
         identity: IdentityPool,
         request_timeout: float,
+        store_url: str,
     ) -> None:
         self.fetcher = fetcher
         self.registry = registry
@@ -249,6 +301,9 @@ class StoreSession:
         self._excused_ends: list[float] = []  # ends of Retry-After waits excused from bail
         self._seen: set[str] = set()
         self._store_slots = asyncio.Semaphore(STORE_CONCURRENCY)
+        self.store_url = store_url
+        # Computed on the first request, inside the store's task (so under --bail)
+        self._store_is_private: bool | None = None
 
     @property
     def robots_agent(self) -> str:
@@ -314,10 +369,28 @@ class StoreSession:
         self._seen.add(key)
         return False
 
+    async def _store_private(self) -> bool:
+        """Whether the store's own URL is non-public, which exempts its requests."""
+        if self._store_is_private is None:
+            url = self.store_url
+            resolved = await self.registry.resolved(url, self.request_timeout)
+            self._store_is_private = is_private_host(hostname(url), resolved)
+        return self._store_is_private
+
+    async def _check_destination(self, url: str) -> None:
+        """Raise RequestFailed for a non-public destination, unless the store is one."""
+        if await self._store_private():
+            return
+        resolved = await self.registry.resolved(url, self.request_timeout)
+        reason = non_public_reason(hostname(url), resolved)
+        if reason is not None:
+            logger.warning("Refused request to %s: %s", url, reason)
+            raise RequestFailed(url, f"refused: {reason}")
+
     async def _allowed(self, url: str, kind: RequestKind) -> bool:
         if not kind.check_robots or not self.registry.respect_robots_txt:
             return True
-        rules = await self.registry.robots(url, self)
+        rules = await self.registry.robots(url, self, kind)
         if rules.allowed(url, self.robots_agent):
             return True
         if kind.counted:
@@ -389,6 +462,15 @@ class StoreSession:
             self.stats.transport_errors[type(error).__name__] += 1
             self.stats.tls_errors += isinstance(error, FetchTLSError)
 
+    async def _cleared(self, url: str, kind: RequestKind) -> bool:
+        """Whether the request may be sent; False if robots.txt disallows it."""
+        # Before the address lookup, which can wait up to request_timeout
+        if self.registry.shutdown.is_set():
+            raise ShutdownRequested
+        # Before robots.txt, so a refused host isn't sent that request either
+        await self._check_destination(url)
+        return await self._allowed(url, kind)
+
     async def _fetch_with_retries(
         self,
         url: str,
@@ -398,9 +480,9 @@ class StoreSession:
         body: bytes | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> Response | None:
-        if not await self._allowed(url, kind):
+        if not await self._cleared(url, kind):
             return None
-        slot = self.registry.slot(url)
+        slot = self.registry.slot(url, kind.slot)
         # Whether a 429 is this request's last word: retries used up, or a shutdown (or
         # --bail, for a wait without Retry-After) cut its wait short
         limited = False
