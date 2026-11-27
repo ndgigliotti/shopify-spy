@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Throttling is more conservative by default. A robots.txt `Crawl-delay` (for the
+  `shopify-spy` group, else `*`) spaces that host's requests, capped at the
+  throttle's `max_delay` and applied even with `--no-throttle`. Throttled requests
+  to one host are at least 1 second apart, image downloads included; the new
+  `--min-delay` option, config `throttle.min_delay` and library option
+  `throttle_min_delay` set it. A `Retry-After` longer than 60 seconds is no longer
+  retried after 60 seconds: the host is paused for the whole `Retry-After`, the
+  request isn't retried, and a 429 leaves the store `rate_limited`.
+
 ## 0.5.1
 
 ### Security

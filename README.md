@@ -92,8 +92,8 @@ An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an i
 - **Failure diagnostics.** A failed store gets a status saying what went wrong (403, 404, robots.txt, 429 rate limits, 5xx errors, TLS errors, timeout, no response). When a run returns 0 items, the tool explains the likely cause and suggests flags to try, including the other `--platform` when a store looks like it runs on it. See [Troubleshooting](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.1/docs/troubleshooting.md).
 - **Python library.** `import shopify_spy` gives the same scraping engine as the CLI, with items as typed plain dicts and failures that are never silent.
 - **Spreadsheet-ready output.** JSONL, JSON, CSV, Excel and XML, with a unified schema shared by both platforms.
-- **Polite by default.** Robots.txt is honored, requests are auto-throttled, and a store that produces nothing within `--bail` seconds (default 30) is abandoned instead of hanging the run.
-- **Retries.** Timeouts, dropped connections, transient 5xx errors and 429 rate limits are retried, honoring `Retry-After` up to 60 seconds. Requests use a common browser user agent, and a 403 or 429 retries with another.
+- **Polite by default.** Robots.txt is honored, including its `Crawl-delay`, requests are auto-throttled with at least 1 second between requests to one host, and a store that produces nothing within `--bail` seconds (default 30) is abandoned instead of hanging the run. The 1 second minimum spaces image downloads too, so `--images` fetches about one image per second per image host; `--min-delay` lowers it.
+- **Retries.** Timeouts, dropped connections, transient 5xx errors and 429 rate limits are retried. A `Retry-After` up to 60 seconds is waited out before the retry, and a longer one isn't retried early: the host is paused for it and the store reports it as rate limited. Requests use a common browser user agent, and a 403 or 429 retries with another.
 
 ## Supported Platforms
 

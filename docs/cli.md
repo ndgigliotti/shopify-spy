@@ -38,7 +38,7 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 - `--platform, -p PLATFORM`: `shopify` (the default) or `woocommerce`.
 - `--products / --no-products`: scrape products (default: yes; Shopify only).
 - `--collections / --no-collections`: scrape collections (default: no; Shopify only).
-- `--images / --no-images`: download product images into `<output>/images/full/` (default: no). See [Images](output.md#images).
+- `--images / --no-images`: download product images into `<output>/images/full/` (default: no). Downloads are spaced by `--min-delay` per image host. See [Images](output.md#images).
 - `--limit, -n INT`: stop each store after N items. The limit is per store, which is useful for sampling or testing.
 
 ### Output
@@ -52,7 +52,8 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 
 - `--concurrent INT`: concurrent requests per host (default: 16).
 - `--max-stores INT`: stores scraped at once (default: 16).
-- `--throttle / --no-throttle`: auto-throttle requests (default: yes). See [Rate limiting](troubleshooting.md#rate-limiting).
+- `--throttle / --no-throttle`: auto-throttle requests (default: yes). `--no-throttle` drops the adaptive delay and `--min-delay`, but a robots.txt `Crawl-delay` and `Retry-After` pauses still apply. See [Rate limiting](troubleshooting.md#rate-limiting).
+- `--min-delay SECONDS`: the minimum gap between requests to one host while throttling, image downloads included (default: 1).
 - `--user-agent, -A TEXT`: a fixed User-Agent header, never swapped (default: a random browser user agent per store, swapped after a 403 or 429).
 - `--proxy URL`: send every request through this proxy; see [Proxies](#proxies).
 - `--insecure`: don't verify TLS certificates.
@@ -114,10 +115,11 @@ throttle:
   enabled: true            # Auto-throttle based on server response
   start_delay: 1           # Initial download delay (seconds)
   max_delay: 60            # Maximum download delay (seconds)
+  min_delay: 1             # Minimum seconds between requests to one host
   target_concurrency: 1.0  # Target concurrent requests (higher = faster)
 ```
 
-`network.timeout`, `network.retries`, `output.images_subdir` and the `throttle` settings other than `enabled` have no command-line option, so the config file is the only way to change them from the CLI. The library reads no config file; it takes the same settings as [options](library.md#options).
+`network.timeout`, `network.retries`, `output.images_subdir` and the `throttle` settings other than `enabled` and `min_delay` have no command-line option, so the config file is the only way to change them from the CLI. The library reads no config file; it takes the same settings as [options](library.md#options).
 
 ## Proxies
 
