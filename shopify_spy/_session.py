@@ -151,6 +151,7 @@ class HostRegistry:
         self.shutdown = asyncio.Event()  # set for a graceful stop: no new requests
         self._slots: dict[str, HostSlot] = {}
         self._robots: SingleFlight[RobotsRules] = SingleFlight()
+        self._crawl_delays: dict[str, float] = {}  # applied Crawl-delay by origin
         # None: hostnames aren't looked up (a proxy or custom transport resolves them)
         self.resolver = resolver
         self._resolved: SingleFlight[list[IPAddress]] = SingleFlight()
@@ -170,21 +171,26 @@ class HostRegistry:
     ) -> RobotsRules:
         """Return robots.txt rules for the URL's origin, fetching them once per run.
 
-        The fetch takes the slot and rotation of the ``kind`` that asked.
+        The fetch takes the slot and rotation of the ``kind`` that asked. Its
+        Crawl-delay goes to the slot of every kind that asks, since an origin can be
+        reached through both its own slot and a shared one.
         """
         key = origin(url)
         robots_kind = dataclasses.replace(ROBOTS, rotate=kind.rotate, slot=kind.slot)
 
         async def fetch() -> RobotsRules:
             rules = await _fetch_robots(key, session, robots_kind)
-            self._apply_crawl_delay(key, kind.slot, rules)
+            self._note_crawl_delay(key, rules)
             return rules
 
-        return await self._robots.get(key, fetch)
+        rules = await self._robots.get(key, fetch)
+        if (delay := self._crawl_delays.get(key)) is not None:
+            self.slot(key, kind.slot).set_crawl_delay(delay)
+        return rules
 
-    def _apply_crawl_delay(self, key: str, slot_key: str | None, rules: RobotsRules) -> None:
-        """Space the slot's requests by the robots.txt Crawl-delay, capped at the
-        throttle's max_delay; called once per origin."""
+    def _note_crawl_delay(self, key: str, rules: RobotsRules) -> None:
+        """Record the origin's robots.txt Crawl-delay, capped at the throttle's
+        max_delay; called once per origin."""
         requested = rules.crawl_delay()
         if requested is None:
             return
@@ -199,7 +205,7 @@ class HostRegistry:
             )
         else:
             logger.info("Using robots.txt Crawl-delay of %gs for %s", applied, key)
-        self.slot(key, slot_key).set_crawl_delay(applied)
+        self._crawl_delays[key] = applied
 
     async def resolved(self, url: str, timeout: float) -> list[IPAddress]:
         """The addresses the URL's host resolves to, looked up once per origin per run;

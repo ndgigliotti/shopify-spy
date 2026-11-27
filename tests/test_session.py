@@ -886,6 +886,20 @@ async def test_crawl_delay_applied_to_the_slot_and_logged_once(caplog):
     assert records[0].getMessage() == f"Using robots.txt Crawl-delay of 5s for {STORE}"
 
 
+async def test_crawl_delay_applied_to_each_slot_that_reaches_the_origin(caplog):
+    caplog.set_level("INFO", logger="shopify_spy")
+    shop = "https://a.myshopify.com"
+    session, fetcher = make_session({f"{shop}/robots.txt": crawl_delay_robots(5)})
+    registry = session.registry
+    async with asyncio.timeout(2):
+        await registry.robots(f"{shop}/p", session, MYSHOPIFY)
+        await registry.robots(f"{shop}/q", session)
+    assert registry.slot(shop, MYSHOPIFY.slot).crawl_delay == 5.0
+    assert registry.slot(shop).crawl_delay == 5.0
+    assert fetcher.count(f"{shop}/robots.txt") == 1
+    assert len([r for r in caplog.records if "Crawl-delay" in r.getMessage()]) == 1
+
+
 async def test_crawl_delay_spaces_requests_with_throttle_off():
     session, _ = make_session(
         {
