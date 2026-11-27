@@ -11,10 +11,11 @@ A headless storefront's page can name its real endpoint, a
 ``store-<hash>.mybigcommerce.com/graphql`` URL, which is queried instead of the
 store's own ``/graphql``; product URLs stay on the store's domain.
 
-Paging follows ``pageInfo.endCursor`` until ``hasNextPage`` is false. A 401 partway
-through (tokens expire) reads the homepage once more for a fresh token. A query
-complexity error halves the page size, which is safe mid-catalog because cursors
-are not offsets.
+Paging follows ``pageInfo.endCursor`` until ``hasNextPage`` is false, and a product
+with more variants than one page holds pages its ``variants`` the same way. A 401
+partway through (tokens expire) reads the homepage once more for a fresh token. A
+query complexity error halves the page size, which is safe mid-catalog because
+cursors are not offsets.
 """
 
 from __future__ import annotations
@@ -60,6 +61,24 @@ _SETTING = re.compile(r"""([A-Za-z_$][\w$]*)\\*["']?\s*[:=]\s*\\*["']$""")
 # The ``sub`` of the token Stencil issues for the theme (``storefront_api.token``);
 # apps and merchant scripts get tokens whose ``sub`` is their client ID
 STENCIL_SUB = "BC"
+VARIANT_PAGE_SIZE = 250  # BigCommerce's maximum for ``variants(first:)``
+# Far above BigCommerce's per-product variant limit, so only a server that keeps
+# answering hasNextPage reaches it
+MAX_VARIANTS = 2500
+
+_VARIANT_FIELDS = """
+  entityId sku isPurchasable
+  prices {
+    price { value currencyCode } basePrice { value currencyCode }
+    salePrice { value currencyCode } retailPrice { value currencyCode }
+  }
+  inventory { isInStock }
+  defaultImage { urlOriginal }
+  options(first: 50) { edges { node {
+    entityId displayName values(first: 50) { edges { node { entityId label } } }
+  } } }
+"""
+
 # Every field was checked live on three stores: an unknown one fails the whole query
 _QUERY = " ".join(
     """
@@ -79,21 +98,19 @@ query Products($first: Int!, $after: String) { site { products(first: $first, af
     reviewSummary { numberOfReviews summationOfRatings }
     images(first: 50) { edges { node { urlOriginal altText isDefault } } }
     productOptions(first: 50) { edges { node { entityId displayName isVariantOption } } }
-    variants(first: 250) { pageInfo { hasNextPage } edges { node {
-      entityId sku isPurchasable
-      prices {
-        price { value currencyCode } basePrice { value currencyCode }
-        salePrice { value currencyCode } retailPrice { value currencyCode }
-      }
-      inventory { isInStock }
-      defaultImage { urlOriginal }
-      options(first: 50) { edges { node {
-        entityId displayName values(first: 50) { edges { node { entityId label } } }
-      } } }
-    } } }
+    variants(first: 250) { pageInfo { hasNextPage endCursor } edges { node { VARIANT } } }
   } }
 } } }
-""".split()
+""".replace("VARIANT", _VARIANT_FIELDS).split()
+)
+_VARIANTS_QUERY = " ".join(
+    """
+query Variants($id: Int!, $first: Int!, $after: String) { site { product(entityId: $id) {
+  variants(first: $first, after: $after) {
+    pageInfo { hasNextPage endCursor } edges { node { VARIANT } }
+  }
+} } }
+""".replace("VARIANT", _VARIANT_FIELDS).split()
 )
 
 
@@ -257,6 +274,7 @@ class _Pager:
         self.api = api or get_api_url(site)
         self.headless = headless  # not a Stencil storefront
         self.token = token
+        self.variant_first = VARIANT_PAGE_SIZE
         self.first = PAGE_SIZE
         self.cursor: str | None = None
         self.cursors: set[str] = set()
@@ -371,9 +389,7 @@ class _Pager:
         logger.info("BigCommerce: %d products from %s", len(found), self.where)
         for node in found:
             if _dig(node, "variants", "pageInfo", "hasNextPage") is True:
-                logger.warning(
-                    "BigCommerce product %s: only the first 250 variants", node.get("entityId")
-                )
+                await self._more_variants(node)
             await self.emit(_item(node, self.site, self.ctx.images))
         self.refreshed = self.resized = False
         if _dig(products, "pageInfo", "hasNextPage") is not True:
@@ -387,6 +403,72 @@ class _Pager:
         self.cursor = cursor
         self.page += 1
         return None
+
+    async def _more_variants(self, node: dict[str, Any]) -> None:
+        """Page the product's ``variants`` past its first page, into ``node``.
+
+        A failure keeps the variants read so far, with ``hasNextPage`` still true and
+        a warning, rather than failing the store.
+        """
+        connection = node["variants"]
+        edges = connection.get("edges")
+        product = node.get("entityId")
+        if not isinstance(edges, list) or not isinstance(product, int):
+            return
+        info = connection["pageInfo"]
+        cursors: set[str] = set()
+        stopped = None
+        while info.get("hasNextPage") is True:
+            cursor = info.get("endCursor")
+            if len(edges) >= MAX_VARIANTS:
+                stopped = f"stopped at {MAX_VARIANTS}"
+                break
+            if not isinstance(cursor, str) or not cursor or cursor in cursors:
+                stopped = "no new endCursor"
+                break
+            variables = {"id": product, "first": self.variant_first, "after": cursor}
+            body = json.dumps({"query": _VARIANTS_QUERY, "variables": variables}).encode()
+            try:
+                response = await self.ctx.session.post(self.api, body, headers=self._headers())
+            except RequestFailed as exc:
+                stopped = f"request failed: {exc}"
+                break
+            if response is None:
+                stopped = "robots.txt"
+                break
+            if response.status == 401:
+                why = await self._refresh()
+                if why is None:
+                    continue
+                stopped = f"{_rejected(self.api, response)}{why}"
+                break
+            data = response.json_or_none()
+            more = _dig(data, "data", "site", "product", "variants")
+            page = more.get("edges") if isinstance(more, dict) else None
+            if not response.ok or not isinstance(page, list):
+                problem = _first_error(data) or f"HTTP {response.status}"
+                if _COMPLEXITY_ERROR.search(problem) and self.variant_first > 1:
+                    self.variant_first //= 2
+                    logger.info(
+                        "BigCommerce variants query too complex (%s); retrying with %d",
+                        problem,
+                        self.variant_first,
+                    )
+                    continue
+                stopped = problem
+                break
+            cursors.add(cursor)
+            self.refreshed = False
+            edges.extend(page)
+            more_info = more.get("pageInfo")
+            info = connection["pageInfo"] = more_info if isinstance(more_info, dict) else {}
+        if stopped is not None:
+            logger.warning(
+                "BigCommerce product %s: only the first %d variants (%s)",
+                product,
+                len(edges),
+                stopped,
+            )
 
 
 def _rejected(api: str, response: Response) -> str:

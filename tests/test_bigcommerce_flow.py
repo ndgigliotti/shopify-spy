@@ -6,7 +6,7 @@ import logging
 import pytest
 
 from shopify_spy import _bigcommerce
-from shopify_spy._bigcommerce import _QUERY, PAGE_SIZE, find_token
+from shopify_spy._bigcommerce import _QUERY, _VARIANTS_QUERY, PAGE_SIZE, find_token
 from shopify_spy._fetch import FetchConnectionError, Seq
 from tests.flow_support import STORE, bc_token, bigcommerce_api, redirect, scrape
 
@@ -593,12 +593,113 @@ def test_errors_alongside_products_are_logged(caplog):
     assert "Could not resolve image" in caplog.text
 
 
-def test_variant_cap_warning(caplog):
-    capped = bc_product(0, variants={"pageInfo": {"hasNextPage": True}, "edges": []})
+def variant(i):
+    return {"node": {"entityId": i, "sku": f"V{i}"}}
+
+
+def variants_answer(start, n, cursor=None):
+    info = {"hasNextPage": cursor is not None, "endCursor": cursor}
+    edges = [variant(i) for i in range(start, start + n)]
+    return {"data": {"site": {"product": {"variants": {"pageInfo": info, "edges": edges}}}}}
+
+
+def many_variants(n, cursor="v1"):
+    """A product whose first page of variants holds ``n`` and says there are more."""
+    info = {"hasNextPage": True, "endCursor": cursor}
+    edges = [variant(i) for i in range(n)]
+    return bc_product(0, variants={"pageInfo": info, "edges": edges})
+
+
+def scrape_variants(respond_variants, **options):
+    """Scrape one product of ``many_variants(250)``; ``respond_variants`` answers the
+    variants queries, given their variables."""
+    sent = []
+
+    def respond(request):
+        body = json.loads(request.body)
+        if body["query"] == _QUERY:
+            return answer([{"node": many_variants(250)}])
+        assert body["query"] == _VARIANTS_QUERY
+        sent.append(body["variables"])
+        return respond_variants(body["variables"])
+
+    items, result, _ = scrape(
+        {f"{STORE}/": homepage(TOKEN), ("POST", API): respond}, platform="bigcommerce", **options
+    )
+    return items, result, sent
+
+
+def test_variants_past_the_first_page_are_paged_by_cursor(caplog):
+    pages = {"v1": variants_answer(250, 250, "v2"), "v2": variants_answer(500, 100)}
     with caplog.at_level(logging.WARNING, logger="shopify_spy"):
-        items, _, _, _ = scrape_bc({None: answer([{"node": capped}])})
+        items, result, sent = scrape_variants(lambda v: pages[v["after"]])
+    assert sent == [{"id": 0, "first": 250, "after": "v1"}, {"id": 0, "first": 250, "after": "v2"}]
+    connection = items[0]["variants"]
+    assert [e["node"]["entityId"] for e in connection["edges"]] == list(range(600))
+    assert connection["pageInfo"]["hasNextPage"] is False
+    assert result.stores[0].status == "ok"
+    assert "variants" not in caplog.text
+
+
+def test_variants_stop_at_the_bound(monkeypatch, caplog):
+    monkeypatch.setattr(_bigcommerce, "MAX_VARIANTS", 750)
+    with caplog.at_level(logging.WARNING, logger="shopify_spy"):
+        items, result, sent = scrape_variants(lambda v: variants_answer(0, 250, v["after"] + "x"))
+    assert len(sent) == 2
+    assert len(items[0]["variants"]["edges"]) == 750
+    assert items[0]["variants"]["pageInfo"]["hasNextPage"] is True
+    assert result.stores[0].status == "ok"
+    assert "only the first 750 variants (stopped at 750)" in caplog.text
+
+
+def test_variants_query_too_complex_halves_its_page_size():
+    def respond(variables):
+        if variables["first"] > 100:
+            return errors("Query is too complex")
+        return variants_answer(250, variables["first"])
+
+    items, result, sent = scrape_variants(respond)
+    assert [v["first"] for v in sent] == [250, 125, 62]
+    assert len(items[0]["variants"]["edges"]) == 312
+    assert result.stores[0].status == "ok"
+
+
+@pytest.mark.parametrize(
+    ("spec", "reason"),
+    [
+        (errors("Boom"), "Boom"),
+        ((503, ""), "HTTP 503"),
+        (variants_answer(250, 1, "v1"), "no new endCursor"),
+    ],
+    ids=["graphql_error", "503", "repeated_cursor"],
+)
+def test_variants_failure_keeps_what_was_read(spec, reason, caplog):
+    with caplog.at_level(logging.WARNING, logger="shopify_spy"):
+        items, result, _ = scrape_variants(lambda v: spec, retries=0)
     assert len(items) == 1
-    assert "only the first 250 variants" in caplog.text
+    assert items[0]["variants"]["pageInfo"]["hasNextPage"] is True
+    assert result.stores[0].status == "ok"
+    assert "BigCommerce product 0: only the first " in caplog.text
+    assert reason in caplog.text
+
+
+def test_variants_401_refreshes_the_token():
+    home = Seq([homepage(TOKEN), homepage(FRESH)])
+    tokens = []
+
+    def respond(request):
+        body = json.loads(request.body)
+        tokens.append(request.headers["Authorization"].removeprefix("Bearer "))
+        if body["query"] == _QUERY:
+            return answer([{"node": many_variants(250)}])
+        if tokens[-1] == TOKEN:
+            return REJECTED
+        return variants_answer(250, 10)
+
+    items, result, _ = scrape({f"{STORE}/": home, ("POST", API): respond}, platform="bigcommerce")
+    assert tokens == [TOKEN, TOKEN, FRESH]
+    assert len(items[0]["variants"]["edges"]) == 260
+    assert result.stores[0].status == "ok"
 
 
 def test_token_never_logged(caplog):
