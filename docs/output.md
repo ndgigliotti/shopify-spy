@@ -188,10 +188,12 @@ The unified schema has one row per variant and a plain value in every cell (no e
 | `products_count` | collections only | | | |
 | `currency` | | `currency_code` | the minimum final price's `currency` | the first offer's `priceCurrency` |
 | `min_price`, `max_price` | the lowest and highest variant price (products only) | the price range | the minimum and maximum final price | the lowest and highest offer price, across variants (an `AggregateOffer`'s `lowPrice` and `highPrice`) |
-| `on_sale`, `is_purchasable`, `average_rating`, `review_count` | | yes | | |
+| `on_sale`, `is_purchasable` | | yes | | |
+| `average_rating`, `review_count` | | yes; for items from product pages, as for JSON-LD | | the `aggregateRating`'s `ratingValue`, out of 5 (one on another `bestRating` scale is converted), and its `reviewCount` or `ratingCount` |
 | `variant_count` | variants | variations | `variants` | `hasVariant` entries with `offers` or a `sku`, or the offers in a list of offers |
 | `variant_id` | the variant's ID | the variation's ID | the variant product's `uid` | the variant's `productID`, `sku` or `@id`; an offer's `sku`, `@id` or `url` |
 | `variant_title` | such as `Red / S` | the variation's attribute values, such as `Red / S` | the variant's option labels, such as `Red / S` | the variant's `variesBy` values, such as `Red / S`, else its `name`; an offer's `name` |
+| `gtin`, `mpn` | | for items from product pages only, as for JSON-LD | | the variant's (or its offer's) `gtin`, `gtin13`, `gtin12`, `gtin14` or `gtin8` and `mpn`, else the product's (or its offer's) |
 | `option1`-`option3` | the variant's option values | the variation's attribute values, in the product's attribute order | the variant's option labels, in `configurable_options` order | the variant's `variesBy` values, in `variesBy` order |
 | `price` | the variant's price | `price` | the final price (the variant's, else the product's minimum) | the lowest offer price (the variant's or offer's, else the product's) |
 | `compare_at_price` | the variant's `compare_at_price` | `regular_price`, only when `price` is below it | the regular price, only when `price` is below it | a `ListPrice` or `StrikethroughPrice`, only when `price` is below it |
@@ -206,7 +208,8 @@ The unified schema has one row per variant and a plain value in every cell (no e
 - **WooCommerce variation rows** have the variation's own `sku`, `price`, `compare_at_price` and `available`. If the store refuses the variation listing, they're the product's.
 - **Magento variant rows** have the variant's own `sku`, `price`, `compare_at_price` and `available`. A product without `variants` gets one row with its own.
 - **JSON-LD variant rows:** a `ProductGroup` gets a row per `hasVariant` Product, with the variant's own `sku`, `price` and `available`; a variant without a price keeps the product's. Entries with neither `offers` nor a `sku`, which some stores use to link the product's other colours, get no row. A Product with a list of offers gets a row per offer, with each offer's `sku`, `price` and `available`. A single `Offer` or an `AggregateOffer` gives one row.
-- **Left out:** WooCommerce's `type` (`simple`, `variable`, ...) and descriptive attributes are only in the native schema. So are Magento's `__typename` and option `value_index` codes, and JSON-LD properties without a column (`gtin`, `aggregateRating`, ...). Without `--images`, the `image_paths` column is left out; with it, the column lists the downloaded files, relative to the images directory.
+- **`gtin` and `mpn`** come only from schema.org data: Shopify's `products.json` has no barcodes, and neither WooCommerce's Store API nor Magento's storefront GraphQL has GTINs or MPNs, so they're blank on those rows (WooCommerce items read from product pages have their JSON-LD's).
+- **Left out:** WooCommerce's `type` (`simple`, `variable`, ...) and descriptive attributes are only in the native schema. So are Magento's `__typename` and option `value_index` codes, and JSON-LD properties without a column (`color`, `weight`, ...). Without `--images`, the `image_paths` column is left out; with it, the column lists the downloaded files, relative to the images directory.
 - **JSON-LD text:** pages often escape their JSON-LD text, sometimes twice (`&amp;amp;`), so `title`, `vendor`, `categories`, `description` and the variant titles are unescaped until they stop changing; names are put on one line.
 - **Values:** booleans are `true`/`false` in JSON, CSV and unified XML. In CSV and XML, an empty cell means no value.
 - **Old CSV files:** appending to a CSV written by 0.3.0 or earlier, which had a column per item field, is refused; start a new file.
@@ -218,7 +221,7 @@ The unified schema has one row per variant and a plain value in every cell (no e
 - Text is UTF-8-safe and never evaluated as a formula.
 - Prices, counts and ratings are numbers, and booleans are `TRUE`/`FALSE`.
 - `created_at`, `updated_at` and `published_at` are dates in UTC (Excel has no time zones).
-- IDs stay text, since Excel would show them in scientific notation.
+- IDs, `gtin` and `mpn` stay text, since Excel would show them in scientific notation and drop a GTIN's leading zero.
 - The header row is frozen and has filters.
 - Text longer than Excel's cell limit (32,767 characters) is cut, with a warning in the log.
 - Past Excel's 1,048,576 rows, items continue on a new sheet (`items 2`, ...), keeping a product's variant rows together.

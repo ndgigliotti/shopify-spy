@@ -470,6 +470,46 @@ def offers(value: Any, *, nested: bool = True) -> Offers:
     return result
 
 
+GTINS = ("gtin", "gtin13", "gtin12", "gtin14", "gtin8")
+MAX_RATING_SCALE = 5  # the scale average_rating is given on, as WooCommerce's is
+
+
+def codes(*nodes: Any) -> dict[str, str | None]:
+    """The first ``gtin`` (any of ``GTINS``) and ``mpn`` among ``nodes`` (a variant,
+    then its product, say), each a Product or Offer."""
+    found: dict[str, str | None] = {"gtin": None, "mpn": None}
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        found["gtin"] = found["gtin"] or next(
+            (v.strip() for key in GTINS if (v := text(node.get(key))) and v.strip()), None
+        )
+        found["mpn"] = found["mpn"] or ((text(node.get("mpn")) or "").strip() or None)
+    return found
+
+
+def rating(value: Any) -> tuple[Decimal | None, int | None]:
+    """An ``aggregateRating``'s average, out of 5, and its review count.
+
+    ``bestRating`` defaults to 5, as schema.org says; a rating on another scale
+    (Magento's percentages) is converted. A value outside the scale, or 0 with no
+    reviews, isn't a rating."""
+    found = next(iter(_dicts(value)), None)
+    if found is None:
+        return None, None
+    count = amount(found.get("reviewCount"))
+    if count is None:
+        count = amount(found.get("ratingCount"))
+    reviews = int(count) if count is not None and count == count.to_integral_value() else None
+    average = amount(found.get("ratingValue"))
+    best = amount(found.get("bestRating")) or Decimal(MAX_RATING_SCALE)
+    if average is None or average > best or (average == 0 and not reviews):
+        return None, reviews
+    if best != MAX_RATING_SCALE:
+        average = (average * MAX_RATING_SCALE / best).quantize(Decimal("0.01"))
+    return average, reviews
+
+
 _META = re.compile(r"<meta\b([^>]*)>", re.I)
 # Separators SEO plugins put between a title and the site name
 TITLE_SEPARATORS = (" - ", " – ", " — ", " | ", " • ", " · ", " :: ")

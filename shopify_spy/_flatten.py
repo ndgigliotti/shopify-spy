@@ -72,6 +72,8 @@ COLUMNS = [
     "variant_id",
     "variant_title",
     "sku",
+    "gtin",
+    "mpn",
     "option1",
     "option2",
     "option3",
@@ -87,10 +89,11 @@ COLUMNS = [
     "source",
     "image_paths",
 ]
-# Column types, for formats with typed cells (XLSX). IDs stay text: as numbers, Excel
-# shows them in scientific notation. Numbers may arrive as strings (Shopify prices,
-# WooCommerce ratings, summarize().asdict() prices), which also share these names.
-ID_COLUMNS = {"id", "variant_id"}
+# Column types, for formats with typed cells (XLSX). IDs and product codes stay text:
+# as numbers, Excel shows them in scientific notation (and drops a GTIN's leading
+# zero). Numbers may arrive as strings (Shopify prices, WooCommerce ratings,
+# summarize().asdict() prices), which also share these names.
+ID_COLUMNS = {"id", "variant_id", "gtin", "mpn"}
 NUMBER_COLUMNS = {
     "price",
     "compare_at_price",
@@ -258,6 +261,8 @@ def _woocommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
         "is_purchasable": item.get("is_purchasable"),
         "average_rating": item.get("average_rating"),
         "review_count": item.get("review_count"),
+        # The Store API has neither; an item from a product page has its JSON-LD's
+        **_woo_page_extras(item),
         "variant_count": len(variations),
         **_woo_offer(item),
         # "product_page" for the partial items read from product pages' JSON-LD
@@ -367,6 +372,7 @@ def _jsonld(item: dict[str, Any]) -> list[dict[str, Any]]:
     # Without variants, a list of offers is the variants: one per size, say
     per_offer = not variants and len(offers) > 1
     names = [n for v in jsonld.listify(item.get("variesBy")) if (n := _last_segment(v))]
+    average, reviews = jsonld.rating(item.get("aggregateRating"))
     product = {
         "platform": "jsonld",
         "kind": "product",
@@ -385,7 +391,10 @@ def _jsonld(item: dict[str, Any]) -> list[dict[str, Any]]:
         "min_price": summary.min_price,
         "max_price": summary.max_price,
         "variant_count": len(offers) if per_offer else len(variants),
+        "average_rating": average,
+        "review_count": reviews,
         "sku": jsonld.text(item.get("sku")),
+        **jsonld.codes(item, *jsonld.listify(item.get("offers"))),
         **_jsonld_offer(item.get("offers")),
     } | _image_paths(item)
     if per_offer:
@@ -396,6 +405,7 @@ def _jsonld(item: dict[str, Any]) -> list[dict[str, Any]]:
                 "variant_title": jsonld.name(offer.get("name")),
                 "sku": jsonld.text(offer.get("sku")),
             }
+            | _codes(product, offer)
             | _jsonld_offer(offer)
             for offer in offers
         ]
@@ -417,9 +427,16 @@ def _jsonld_variant(
             "sku": jsonld.text(variant.get("sku")),
             "variant_image_url": images[0] if images else None,
         }
+        | _codes(product, variant, *jsonld.listify(variant.get("offers")))
         | {f"option{i + 1}": v for i, v in enumerate(values[:3])}
         | _jsonld_offer(variant.get("offers"), fallback=product)
     )
+
+
+def _codes(product: dict[str, Any], *nodes: Any) -> dict[str, Any]:
+    """A variant's or offer's ``gtin`` and ``mpn``, else the product row's."""
+    found = jsonld.codes(*nodes)
+    return {key: found[key] or product.get(key) for key in found}
 
 
 def _jsonld_offer(value: Any, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -480,6 +497,19 @@ _PLATFORMS: dict[Callable[[dict[str, Any]], list[dict[str, Any]]], str] = {
     _magento: "magento",
     _jsonld: "jsonld",
 }
+
+
+def _woo_page_extras(item: dict[str, Any]) -> dict[str, Any]:
+    """The ``gtin``, ``mpn`` and rating columns of an item read from a product page,
+    from its schema.org Product."""
+    node = item.get("json_ld")
+    if not isinstance(node, dict):
+        return {}
+    average, reviews = jsonld.rating(node.get("aggregateRating"))
+    return jsonld.codes(node, *jsonld.listify(node.get("offers"))) | {
+        "average_rating": average,
+        "review_count": reviews,
+    }
 
 
 def _woo_offer(item: dict[str, Any]) -> dict[str, Any]:

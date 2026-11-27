@@ -1017,3 +1017,23 @@ def test_microdata_page_becomes_an_item():
         True,
     )
     assert item["images"] == [{"src": f"{STORE}/m.jpg"}]
+
+
+def test_page_item_row_has_the_json_ld_codes_and_rating():
+    product = {
+        "@type": "Product",
+        "name": "Hat",
+        "gtin13": "4006381333931",
+        "mpn": "H-1",
+        "aggregateRating": {"ratingValue": "4.5", "reviewCount": 2},
+        "offers": offer(price="5"),
+    }
+    (row,) = flatten(page_item(product, f"{STORE}/product/hat/", None) | {"store": "shop.test"})
+    assert (row["gtin"], row["mpn"]) == ("4006381333931", "H-1")
+    assert (row["average_rating"], row["review_count"]) == (Decimal("4.5"), 2)
+
+
+def test_store_api_row_has_no_codes():
+    item = {"id": 1, "name": "Hat", "permalink": f"{STORE}/product/hat/", "prices": {}}
+    (row,) = flatten(item)
+    assert (row.get("gtin"), row.get("mpn")) == (None, None)

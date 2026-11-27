@@ -29,6 +29,14 @@
 
 ### Changed
 
+- The unified schema (CSV, XLSX and `--schema unified`) has two new columns,
+  `gtin` and `mpn`, after `sku`: a JSON-LD item's `gtin` (or `gtin13`, `gtin12`,
+  `gtin14`, `gtin8`) and `mpn`, the variant's own when it has them. They're blank
+  for Shopify, Magento and WooCommerce Store API items, whose APIs have no such
+  fields. Appending to a CSV written by an earlier version keeps that file's columns,
+  without these. JSON-LD items (and WooCommerce items read from product pages) also
+  fill `average_rating` and `review_count` from `aggregateRating`, with a rating on
+  another `bestRating` scale converted to one out of 5.
 - The WooCommerce product-page fallback reads more pages: a Yoast `ProductGroup`
   (a variable product, priced from its variants' offers), schema.org microdata on a
   page without a JSON-LD Product, JSON-LD in an HTML comment or with empty values

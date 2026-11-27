@@ -1090,3 +1090,62 @@ def test_csv_jsonld_formatted_prices_and_nested_availability(tmp_path):
     (row,) = read_csv(path)
     assert (row["min_price"], row["max_price"], row["price"]) == ("19.99", "1234.56", "19.99")
     assert (row["currency"], row["available"]) == ("EUR", "true")
+
+
+@pytest.mark.parametrize(
+    ("rating", "expected"),
+    [
+        ({"ratingValue": "4.6", "reviewCount": "89"}, ("4.6", "89")),
+        ({"ratingValue": 4, "ratingCount": 7}, ("4", "7")),
+        # Magento's Luma gives a percentage, with its scale
+        ({"ratingValue": "60", "bestRating": "100", "reviewCount": "3"}, ("3.00", "3")),
+        ({"ratingValue": "8", "bestRating": "10"}, ("4.00", "")),
+        # Not ratings: 0 with no reviews, a value past the scale, no value
+        ({"ratingValue": "0", "reviewCount": "0"}, ("", "0")),
+        ({"ratingValue": "60", "reviewCount": "3"}, ("", "3")),
+        ({"reviewCount": "x"}, ("", "")),
+        ("4.5", ("", "")),
+    ],
+)
+def test_csv_jsonld_rating(tmp_path, rating, expected):
+    path = tmp_path / "out.csv"
+    write_items([JSONLD_PRODUCT | {"aggregateRating": rating}], path)
+    (row,) = read_csv(path)
+    assert (row["average_rating"], row["review_count"]) == expected
+
+
+def test_csv_jsonld_gtin_and_mpn(tmp_path):
+    variants = [
+        _jl_variant("TEE-S", "S", "10") | {"gtin12": "012345678905", "mpn": "M-S"},
+        _jl_variant("TEE-M", "M", "10") | {"offers": {"price": "10", "gtin": "4006381333931"}},
+        _jl_variant("TEE-L", "L", "12"),
+    ]
+    group = JSONLD_GROUP | {"gtin14": "10012345678902", "mpn": "M", "hasVariant": variants}
+    path = tmp_path / "out.csv"
+    write_items([group], path)
+    rows = read_csv(path)
+    assert [(r["gtin"], r["mpn"]) for r in rows] == [
+        ("012345678905", "M-S"),
+        ("4006381333931", "M"),
+        ("10012345678902", "M"),
+    ]
+
+
+def test_csv_jsonld_gtin_per_offer_and_from_the_offer(tmp_path):
+    offers = [
+        {"@type": "Offer", "sku": "A", "price": "1", "gtin13": "4006381333931"},
+        {"@type": "Offer", "sku": "B", "price": "2"},
+    ]
+    path = tmp_path / "out.csv"
+    write_items([JSONLD_PRODUCT | {"offers": offers}], path)
+    assert [r["gtin"] for r in read_csv(path)] == ["4006381333931", "4006381333931"]
+    single = JSONLD_PRODUCT | {"offers": JSONLD_PRODUCT["offers"] | {"gtin8": 12345670}}
+    write_items([single], path)
+    (row,) = read_csv(path)
+    assert (row["gtin"], row["mpn"]) == ("12345670", "")
+
+
+def test_csv_other_platforms_have_no_gtin_or_mpn(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([SHOPIFY_PRODUCT, WOO_PRODUCT, MAGENTO_SIMPLE], path)
+    assert {(r["gtin"], r["mpn"]) for r in read_csv(path)} == {("", "")}
