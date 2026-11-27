@@ -102,6 +102,7 @@ def make_session(routes) -> tuple[StoreSession, FakeFetcher]:
         retry=RetryPolicy(retries=0, backoff=False),
         identity=IdentityPool(),
         request_timeout=5,
+        store_url="https://shop.example",
     )
     return session, fetcher
 

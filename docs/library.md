@@ -51,14 +51,14 @@ With nothing to install, an agent can learn a store's item shape and then write 
 
 Failures are never silent. By default `scrape()` raises `ScrapeFailed`, listing each store's status, when every store failed. `on_failure="warn"` or `"ignore"` relax that, and `strict=True` raises when any store failed, counting `partial` stores as failures.
 
-Each `StoreResult` has a `status`, an item count and sometimes a `hint`, such as a likely wrong `platform`. A store that only answered 429s, or that 429s held up until `bail` fired, is `rate_limited`, and one that only answered 5xx errors is `unavailable`; both are failures worth retrying later. [Troubleshooting](troubleshooting.md#store-statuses) lists every status and what to do about it.
+Each `StoreResult` has a `status`, an item count and sometimes a `hint`, such as a likely wrong `platform`. `products_from` names the `myshopify.com` domain a [headless store](troubleshooting.md#headless-shopify-stores)'s products came from, and is `None` otherwise. A store that only answered 429s, or that 429s held up until `bail` fired, is `rate_limited`, and one that only answered 5xx errors is `unavailable`; both are failures worth retrying later. [Troubleshooting](troubleshooting.md#store-statuses) lists every status and what to do about it.
 
 ## Options
 
 The options match the CLI: `platform`, `products`, `collections`, `images` (with `images_dir`), `max_items_per_store`, `bail`, `concurrent_requests`, `request_timeout`, `retries`, `user_agent`, `respect_robots_txt`, `verify_tls`, `proxy`, `impersonate`, `max_concurrent_stores`, `throttle` and the `throttle_*` settings. `help(spy.scrape)` gives each one's meaning and default.
 
 - `max_items_per_store` is per store; use `itertools.islice` for a total.
-- `proxy=` sends every request through one proxy, overriding the environment variables. See [Proxies](cli.md#proxies) for the URL forms, credentials and when a proxy helps.
+- `proxy=` sends every request through one proxy, overriding the environment variables. See [Proxies](cli.md#proxies) for the URL forms, credentials and when a proxy helps. Through a proxy, only literal IP addresses and `localhost` names are checked against the [non-public address rule](troubleshooting.md#refused-requests-to-non-public-addresses).
 - `impersonate="chrome"` sends requests with that browser profile's TLS fingerprint and headers, through curl_cffi. It needs the `impersonate` extra, and without it `scrape()` raises `ModuleNotFoundError`; an unknown target, or `user_agent=` alongside it, raises `ValueError`. See [Impersonation](cli.md#impersonation).
 
 ## Images

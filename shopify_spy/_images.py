@@ -161,10 +161,9 @@ class ImageDownloader:
         ext = image_extension(response.body)
         if ext is None:
             content_type = response.headers.get("content-type") or "none"
-            return self._failed(
-                url,
-                f"unsupported format: Content-Type {content_type}, starts {response.body[:16]!r}",
-            )
+            # The body may be anything the URL led to, so its bytes stay out of warnings
+            logger.debug("Image %s starts %r", url, response.body[:16])
+            return self._failed(url, f"unsupported format: Content-Type {content_type}")
         path = self.dir / f"{name}{ext}"
         try:
             await asyncio.to_thread(_save, path, response.body)
