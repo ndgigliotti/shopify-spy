@@ -107,8 +107,10 @@ class HostSlot:
                 await asyncio.sleep(pause)
             if self.last_seen is not None:
                 spacing = self._min_gap(image)
-                if self.delay > 0:
-                    spacing = max(self.delay * random.uniform(0.5, 1.5), spacing)
+                # Jitter from the minimum gap too, or a delay below it sends on a fixed beat
+                pace = max(self.delay, spacing)
+                if pace > 0:
+                    spacing = max(pace * random.uniform(0.5, 1.5), spacing)
                 wait = spacing - (now() - self.last_seen)
                 if wait > 0:
                     await asyncio.sleep(wait)

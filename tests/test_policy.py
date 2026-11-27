@@ -126,6 +126,18 @@ async def test_wait_turn_never_closer_than_min_delay(low_jitter):
     assert t2 - t1 >= 0.19
 
 
+async def test_wait_turn_jitters_above_min_delay_when_the_delay_is_below_it(monkeypatch):
+    monkeypatch.setattr(policy.random, "uniform", lambda a, b: 1.5)
+    s = slot(start_delay=0.0, min_delay=0.2)
+    loop = asyncio.get_running_loop()
+    async with asyncio.timeout(2):
+        await s.wait_turn()
+        t1 = loop.time()
+        await s.wait_turn()
+        t2 = loop.time()
+    assert t2 - t1 >= 0.29  # 1.5 * min_delay, not a fixed min_delay beat
+
+
 def test_default_image_delay_is_a_quarter_second():
     assert ThrottleSettings().image_delay == 0.25
 
