@@ -41,8 +41,9 @@ class ThrottleSettings:
     enabled: bool = True
     start_delay: float = 1.0
     max_delay: float = 60.0
-    min_delay: float = 1.0  # minimum gap between request starts while enabled
-    image_delay: float = 0.25  # min_delay for image downloads
+    # Minimum gaps between request starts while enabled (pages and API, images)
+    min_delay: float = 1.0
+    image_delay: float = 0.25
     target_concurrency: float = 1.0
 
 
@@ -56,8 +57,7 @@ class HostSlot:
     spaced by ``uniform(0.5, 1.5) * delay`` since the previous request, but never
     closer than the minimum gap: robots.txt Crawl-delay, and while throttling is
     enabled ``min_delay`` (``image_delay`` for an image download). Those are floors on
-    the spacing, not on the adaptive delay, so images keep AutoThrottle's pace down to
-    ``image_delay`` though they share the slot with the host's other requests.
+    the spacing, not on the adaptive delay.
 
     Rate limits work like TCP congestion control: a rate limit doubles a delay floor
     (multiplicative decrease of the rate) and each answered request lowers it a
@@ -100,10 +100,7 @@ class HostSlot:
             self.delay = max(self.delay, self.crawl_delay)
 
     async def wait_turn(self, image: bool = False) -> float:
-        """Wait until the throttle allows the next request to leave; return its send time.
-
-        An ``image`` download is held to ``image_delay`` instead of ``min_delay``.
-        """
+        """Wait until the throttle allows the next request to leave; return its send time."""
         async with self._gate:
             # A rate limit can extend the pause while we sleep, so check again
             while (pause := self.paused_until - now()) > 0:
