@@ -34,6 +34,7 @@ OUT_OF_STOCK = frozenset({"OutOfStock", "SoldOut", "Discontinued"})
 _STRING = r'"(?:[^"\\]++|\\.?)*+(?:"|\Z)'
 _COMMENTS = re.compile(rf"({_STRING})|//[^\n]*|/\*.*?(?:\*/|\Z)", re.S)
 _TRAILING_COMMAS = re.compile(rf"({_STRING})|,(?=\s*[}}\]])", re.S)
+_EMPTY_VALUES = re.compile(rf"({_STRING})|:(?=\s*[,}}\]])", re.S)
 
 
 def _types(node: dict[str, Any]) -> list[Any]:
@@ -72,9 +73,11 @@ def _products(data: Any, *, groups: bool = False) -> list[dict[str, Any]]:
 
 
 def _lenient(script: str) -> str:
-    """The script without the comments and trailing commas of hand-written JSON-LD."""
+    """The script without the comments and trailing commas of hand-written JSON-LD,
+    and with null for a template's empty values (``"description": ,``)."""
     script = _COMMENTS.sub(lambda m: m.group(1) or " ", script)
-    return _TRAILING_COMMAS.sub(lambda m: m.group(1) or "", script)
+    script = _TRAILING_COMMAS.sub(lambda m: m.group(1) or "", script)
+    return _EMPTY_VALUES.sub(lambda m: m.group(1) or ":null", script)
 
 
 def _load(script: str) -> Any:

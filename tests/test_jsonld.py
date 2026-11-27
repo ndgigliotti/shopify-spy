@@ -1,5 +1,6 @@
 import json
 import time
+from pathlib import Path
 
 from shopify_spy._jsonld import OUT_OF_STOCK, parse_product_page
 
@@ -148,4 +149,36 @@ def test_shared_references_resolve_quickly():
     product = {"@type": "Product", "name": "Tee", "x": {"@id": "#n0"}}
     start = time.perf_counter()
     assert parse(ld_page({"@graph": [product, *nodes]}))["name"] == "Tee"
+    assert time.perf_counter() - start < 1
+
+
+FIXTURES = Path(__file__).parent / "fixtures" / "pages"
+ANDOVER = "https://andoverfabrics.com/color-camp-dusk-by-alison-glass-tangel-lighter-pool/"
+
+
+def test_empty_values_are_null():
+    # BigCommerce's template leaves "description": , when the product has none
+    found = parse((FIXTURES / "andoverfabrics-empty-value.html").read_text(), ANDOVER)
+    assert (found["sku"], found["description"]) == ("A-10420-B", None)
+
+
+def test_empty_values_before_a_brace_or_bracket():
+    script = '{"@type": "Product", "name": "Tee", "a": [{"b": }], "c": ,}'
+    assert parse(ld_page(script)) == {
+        "@type": "Product",
+        "name": "Tee",
+        "a": [{"b": None}],
+        "c": None,
+    }
+
+
+def test_empty_value_markers_inside_strings_are_kept():
+    script = '{"@type": "Product", "name": "a: , b: } c: ]", "description": }'
+    found = parse(ld_page(script))
+    assert (found["name"], found["description"]) == ("a: , b: } c: ]", None)
+
+
+def test_lenient_pass_is_linear_on_hostile_scripts():
+    start = time.perf_counter()
+    assert parse(ld_page("{" + ": " * 200_000, '{"a": "' + '\\"' * 200_000)) is None
     assert time.perf_counter() - start < 1
