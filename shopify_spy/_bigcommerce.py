@@ -438,12 +438,8 @@ class _Pager:
                     continue
                 stopped = f"{_rejected(self.api, response)}{why}"
                 break
-            data = response.json_or_none()
-            more = _dig(data, "data", "site", "product", "variants")
-            page = more.get("edges") if isinstance(more, dict) else None
-            if not response.ok or not isinstance(page, list):
-                status = f"HTTP {response.status}" if not response.ok else None
-                problem = _first_error(data) or status or "no variants in the answer"
+            more, problem = _read_variants(response)
+            if more is None:
                 if _COMPLEXITY_ERROR.search(problem) and self.variant_first > 1:
                     self.variant_first //= 2
                     logger.info(
@@ -456,7 +452,7 @@ class _Pager:
                 break
             cursors.add(cursor)
             self.refreshed = False
-            edges.extend(page)
+            edges.extend(more["edges"])
             more_info = more.get("pageInfo")
             info = connection["pageInfo"] = more_info if isinstance(more_info, dict) else {}
         if stopped is not None:
@@ -471,6 +467,17 @@ class _Pager:
 def _rejected(api: str, response: Response) -> str:
     message = _first_error(response.json_or_none()) or "no GraphQL message"
     return f"{api}: Storefront API token rejected (401): {message}"
+
+
+def _read_variants(response: Response) -> tuple[dict[str, Any] | None, str]:
+    """A 2xx answer's ``data.site.product.variants`` (when its ``edges`` is a list),
+    or None and why not."""
+    data = response.json_or_none()
+    more = _dig(data, "data", "site", "product", "variants")
+    if response.ok and isinstance(more, dict) and isinstance(more.get("edges"), list):
+        return more, ""
+    status = None if response.ok else f"HTTP {response.status}"
+    return None, _first_error(data) or status or "no variants in the answer"
 
 
 def _read(response: Response) -> tuple[dict[str, Any] | None, str | None]:
