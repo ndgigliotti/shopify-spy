@@ -4,16 +4,12 @@
 
 ### Added
 
-- `--impersonate BROWSER` (`-I`), `network.impersonate` in the config file and
-  `impersonate=` on `scrape`/`scrape_async` send requests through curl_cffi with a
-  real browser's TLS and HTTP/2 fingerprint and headers. Some sites refuse clients
-  that don't look like a browser. It needs the new `impersonate` extra
-  (`curl_cffi>=0.16.3,<0.18`), is off by default and never turns itself on. Any
-  target the installed curl_cffi accepts works (`chrome`, `firefox`, `safari`,
-  `chrome150`, ...). One profile serves the whole run: it sets the user agent, so
-  `--user-agent` can't be combined with it, and a 403 or 429 retries with the same
-  profile. The Nix package and dev shell include it
-  ([#95](https://github.com/ndgigliotti/shopify-spy/issues/95)).
+- `--no-impersonate` (`network.impersonate: false`, `impersonate=False`) sends
+  requests through httpx with a random browser user agent per store, as before.
+- `--rotate/--no-rotate` (`network.rotate`, `rotate=`) turns the identity switch
+  after a refusal on or off (default on), and the status file's
+  `identity_changes` and `StoreResult.identity_changes` count the switches per
+  store.
 - A `magento` platform (`--platform magento`, `platform="magento"`) for Magento
   Open Source and Adobe Commerce 2.4 stores, read through the storefront GraphQL
   API at `/graphql` without a token. Items are the GraphQL products plus `store`,
@@ -25,6 +21,22 @@
 
 ### Changed
 
+- Requests go through curl_cffi with a current browser's TLS and HTTP/2 settings
+  and headers by default, starting as `chrome`
+  ([#95](https://github.com/ndgigliotti/shopify-spy/issues/95)). curl_cffi
+  (`>=0.16.3,<0.18`) is a new required dependency. `--impersonate BROWSER` (`-I`,
+  `network.impersonate`, `impersonate=`) picks the first profile: `chrome`,
+  `safari`, `firefox` or any other curl_cffi target. A custom `--user-agent` now
+  means httpx with exactly that user agent, and can't be combined with
+  `--impersonate`.
+- After a 403 or 429, a store switches to another browser profile (another user
+  agent with `--no-impersonate`) to test whether the refusal is about identity:
+  only after the retry's usual backoff, within the existing retries, and never
+  again for that store if the new identity is refused too. A host's refusals
+  are remembered for the run, so no store switches to an identity it refused
+  ([#67](https://github.com/ndgigliotti/shopify-spy/issues/67)). Challenge pages
+  (Cloudflare's `cf-mitigated: challenge`), 401s and `*.myshopify.com` refusals
+  never switch, and a challenge page isn't retried. Each switch is logged at INFO.
 - Throttling is more conservative by default. A robots.txt `Crawl-delay` (for the
   `shopify-spy` group, else `*`) spaces that host's requests, capped at the
   throttle's `max_delay` and applied even with `--no-throttle`. Throttled page and
@@ -36,6 +48,10 @@
   retried after 60 seconds: the host is paused for the whole `Retry-After` and the
   request ends as if its retries had run out, so a store with no successful
   response ends `rate_limited` for a 429 (`unavailable` for a 503).
+
+### Removed
+
+- The unreleased `impersonate` extra: curl_cffi is always installed.
 
 ## 0.5.1
 

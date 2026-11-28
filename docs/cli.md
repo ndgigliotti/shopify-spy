@@ -58,8 +58,10 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 - `--throttle / --no-throttle`: auto-throttle requests (default: yes). `--no-throttle` drops the adaptive delay, `--min-delay` and `--image-delay`, but a robots.txt `Crawl-delay` and `Retry-After` pauses still apply. See [Rate limiting](troubleshooting.md#rate-limiting).
 - `--min-delay SECONDS`: the minimum gap between page and API requests to one host while throttling (default: 1, at most 1 request per second per host). It's a strict gap, not an average: requests never bunch up to catch up.
 - `--image-delay SECONDS`: the minimum gap between image downloads from one host while throttling, the store's own host included (default: 0.25, at most 4 images per second per host).
-- `--user-agent, -A TEXT`: a fixed User-Agent header, never swapped (default: a random browser user agent per store, swapped after a 403 or 429). Can't be combined with `--impersonate`.
-- `--impersonate, -I BROWSER`: send requests with a browser's TLS fingerprint and headers (default: off; needs the `impersonate` extra). See [Impersonation](#impersonation).
+- `--impersonate, -I BROWSER`: the browser profile each store starts with (default: `chrome`). See [Browser profiles](#browser-profiles).
+- `--no-impersonate`: send requests through httpx with a random browser user agent per store instead of a browser profile.
+- `--rotate / --no-rotate`: after a 403 or 429, retry once as another browser profile, or another user agent with `--no-impersonate` (default: yes). `--no-rotate` keeps one identity for the whole run. See [Retries and identities](troubleshooting.md#retries-and-identities).
+- `--user-agent, -A TEXT`: a fixed User-Agent header, never swapped. It turns impersonation off: requests go through httpx with exactly this user agent. Can't be combined with `--impersonate`.
 - `--proxy URL`: send every request through this proxy; see [Proxies](#proxies).
 - `--insecure`: don't verify TLS certificates.
 - `--ignore-robots, -i`: ignore robots.txt restrictions.
@@ -110,9 +112,10 @@ network:
   concurrent_requests: 16  # Concurrent requests per host
   timeout: 180             # Request timeout (seconds)
   retries: 2               # Retry failed requests
-  # user_agent: MyBot/1.0 (+https://example.com)  # Custom user agent
+  # user_agent: MyBot/1.0 (+https://example.com)  # Custom user agent (turns impersonation off)
   # proxy: http://proxy.example.com:8080  # Fixed proxy (overrides HTTPS_PROXY)
-  # impersonate: chrome  # Browser TLS fingerprint and headers (needs the impersonate extra)
+  # impersonate: safari  # First browser profile (default chrome); false = no impersonation
+  rotate: true             # Try another browser profile after a 403 or 429 (false = --no-rotate)
   respect_robots_txt: true
   verify_tls: true         # Verify TLS certificates (false = --insecure)
   max_concurrent_stores: 16  # Stores scraped at once
@@ -140,15 +143,17 @@ Requests honor the `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` envir
 
 A proxy's 407 (refused credentials) counts as [`no_response`](troubleshooting.md#store-statuses). In the library, a store that never answers while a proxy is in use gets a `hint` saying to check the proxy.
 
-## Impersonation
+## Browser profiles
 
-`--impersonate BROWSER` (`network.impersonate` in the config file, `impersonate=` in the library) sends requests through [curl_cffi](https://github.com/lexiforest/curl_cffi) with a real browser's TLS and HTTP/2 fingerprint and headers. Some sites, often those behind Cloudflare, refuse clients that don't look like a browser, whatever their user agent says, and answer them with a 403. It needs the `impersonate` extra; see [Installation](install.md#impersonation).
+Requests go through [curl_cffi](https://github.com/lexiforest/curl_cffi) with a current browser's TLS and HTTP/2 settings and headers, the browser's own User-Agent included. Each store starts as `chrome`; after a 403 or 429 it can switch to the next of `chrome`, `safari` and `firefox`, the newest desktop profile curl_cffi has for each (see [Retries and identities](troubleshooting.md#retries-and-identities) for when it does).
 
 ```bash
-spy scrape --impersonate chrome https://www.example.com
+spy scrape --impersonate safari https://www.example.com   # start as Safari
+spy scrape --no-impersonate https://www.example.com       # httpx and browser user agents
 ```
 
-- It is off by default and never turns itself on: a store that answers 403 ends as [`forbidden`](troubleshooting.md#store-statuses), and no hint suggests this option.
-- `BROWSER` is any target the installed curl_cffi accepts, such as `chrome`, `firefox` or `safari`, which pick its newest profile for that browser, or a pinned profile such as `chrome150`. An unknown value is rejected before the run starts.
-- One profile serves the whole run. The profile sets the user agent, so `--user-agent` can't be combined with it, and a 403 or 429 retries with the same profile instead of swapping the user agent.
-- robots.txt and its `Crawl-delay`, throttling (`--min-delay`, `--image-delay`), `Retry-After`, `--concurrent`, `--proxy` and `--insecure` work as they do without it.
+- `--impersonate BROWSER` (`network.impersonate` in the config file, `impersonate=` in the library) picks the first profile: `chrome`, `safari`, `firefox`, or any other target the installed curl_cffi accepts, such as a pinned `chrome150`. A profile outside those three comes first, followed by them. An unknown value is rejected before the run starts.
+- `--no-impersonate` (`network.impersonate: false`, `impersonate=False`) sends requests through httpx with a random browser user agent per store.
+- `--user-agent` sends requests through httpx with exactly that user agent, never swapped, so it can't be combined with `--impersonate`.
+- robots.txt and its `Crawl-delay`, throttling (`--min-delay`, `--image-delay`), `Retry-After`, `--concurrent`, `--proxy`, `--insecure` and the [non-public address check](troubleshooting.md#refused-requests-to-non-public-addresses) work the same on both transports.
+

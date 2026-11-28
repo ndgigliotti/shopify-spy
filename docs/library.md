@@ -55,13 +55,14 @@ Each `StoreResult` has a `status`, an item count and sometimes a `hint`, such as
 
 ## Options
 
-The options match the CLI: `platform`, `products`, `collections`, `images` (with `images_dir`), `max_items_per_store`, `bail`, `concurrent_requests`, `request_timeout`, `retries`, `user_agent`, `respect_robots_txt`, `verify_tls`, `proxy`, `impersonate`, `max_concurrent_stores`, `throttle` and the `throttle_*` settings. `help(spy.scrape)` gives each one's meaning and default.
+The options match the CLI: `platform`, `products`, `collections`, `images` (with `images_dir`), `max_items_per_store`, `bail`, `concurrent_requests`, `request_timeout`, `retries`, `user_agent`, `respect_robots_txt`, `verify_tls`, `proxy`, `impersonate`, `rotate`, `max_concurrent_stores`, `throttle` and the `throttle_*` settings. `help(spy.scrape)` gives each one's meaning and default.
 
 - `max_items_per_store` is per store; use `itertools.islice` for a total.
 - `throttle_min_delay` (default 1.0) is the shortest gap between page and API requests to one host (at most 1 per second), and `throttle_image_delay` (default 0.25) the shortest gap between image downloads from one host (at most 4 per second). Neither applies with `throttle=False`. A robots.txt `Crawl-delay` is honored either way, capped at `throttle_max_delay`.
 - A `Retry-After` longer than 60 seconds isn't retried early: the host is paused for it and the request ends as if its retries had run out, so a store with no successful response ends `rate_limited` for a 429 (`unavailable` for a 503). The pause is logged as a `Pausing requests to ...` warning on the `shopify_spy` logger, which shows once you configure logging (the package attaches a `NullHandler`, so nothing prints by default).
 - `proxy=` sends every request through one proxy, overriding the environment variables. See [Proxies](cli.md#proxies) for the URL forms, credentials and when a proxy helps. Through a proxy, only literal IP addresses and `localhost` names are checked against the [non-public address rule](troubleshooting.md#refused-requests-to-non-public-addresses).
-- `impersonate="chrome"` sends requests with that browser profile's TLS fingerprint and headers, through curl_cffi. It needs the `impersonate` extra, and without it `scrape()` raises `ModuleNotFoundError`; an unknown target, or `user_agent=` alongside it, raises `ValueError`. See [Impersonation](cli.md#impersonation).
+- Requests use a current browser's TLS and HTTP/2 settings and headers through curl_cffi, starting as `chrome`. `impersonate="safari"` picks another first profile, and `impersonate=False` sends requests through httpx with browser user agents instead; `user_agent=` does too, with exactly that user agent. An unknown profile, or `user_agent=` with an `impersonate` profile, raises `ValueError`. See [Browser profiles](cli.md#browser-profiles).
+- After a 403 or 429, a store may retry once as another profile (`rotate=False` turns that off); `StoreResult.identity_changes` counts the switches. See [Retries and identities](troubleshooting.md#retries-and-identities).
 
 ## Images
 
