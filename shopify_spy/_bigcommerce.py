@@ -279,7 +279,8 @@ class _Pager:
         self.cursor: str | None = None
         self.cursors: set[str] = set()
         self.page = 1
-        self.resized = False  # the page size was halved on this page
+        # The page size was halved on this page after a 2xx, which counted as a success
+        self.resized = False
         self.refreshed = False  # the token was refreshed since the last good page
 
     @property
@@ -335,7 +336,7 @@ class _Pager:
             return await self._http_failure(response)
         if _COMPLEXITY_ERROR.search(problem) and self.first > 1:
             self.first //= 2
-            self.resized = True
+            self.resized = self.resized or response.ok
             logger.info("BigCommerce query too complex (%s); retrying with %d", problem, self.first)
             return None
         return self._failed(f"{self.api}: {problem}")
@@ -365,7 +366,7 @@ class _Pager:
         """Leave an HTTP failure to diagnose(), unless a 2xx was already counted."""
         logger.info("BigCommerce GraphQL returned %d for %s", response.status, self.where)
         if self.page == 1 and self.resized:
-            # The complexity error's 2xx counted as a success, so this would read empty
+            # The complexity error's 2xx means diagnose() would call this empty
             raise BigCommerceError(f"{self.api}: HTTP {response.status} after a page-size retry")
         if self.page == 1 and response.status == 404:
             await _probe_others(self.ctx)

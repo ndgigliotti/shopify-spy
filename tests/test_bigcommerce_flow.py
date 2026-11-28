@@ -498,6 +498,14 @@ def test_http_failure_after_a_page_size_retry_is_an_error():
     assert "HTTP 503 after a page-size retry" in result.stores[0].errors[-1]
 
 
+def test_http_failure_after_a_400_complexity_error_is_left_to_diagnose():
+    too_complex = (400, errors("Query is too complex"))
+    graphql = GraphQL({None: Seq([too_complex, (403, "")])})
+    items, result, _, _ = scrape_bc(graphql, retries=0)
+    assert items == []
+    assert result.stores[0].status == "forbidden"
+
+
 @pytest.mark.parametrize(
     ("spec", "reason"),
     [
