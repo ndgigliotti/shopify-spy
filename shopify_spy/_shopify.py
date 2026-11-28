@@ -484,15 +484,12 @@ async def _collection_list(
         if page and page == previous:
             logger.warning("Collection list page repeated the last one at %s", page_url)
             break  # a server that ignores `page`
-        if not page:
-            complete = True
-            break
         previous = page
         for collection in page:
             if isinstance(collection, dict) and collection.get("handle"):
                 handle = str(collection["handle"])
                 collections.setdefault(handle, ListedCollection(collection, handle, page_url))
-        if len(page) < BULK_PAGE_SIZE:
+        if len(page) < BULK_PAGE_SIZE:  # the last page, maybe empty
             complete = True
             break
         url = next_page_url(page_url)
