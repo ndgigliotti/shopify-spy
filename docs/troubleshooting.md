@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Every store ends with a status, which the CLI lists when a store fails and the [status file](#the-status-file) records for every store. When the whole run produces no items, the CLI also explains the likely cause of each status and suggests flags to try. Some stores also get a hint of their own, such as the platform a store looks like it runs on, or the proxy when one was in use; the CLI prints it for each store that failed or produced nothing, and the status file and `StoreResult.hint` carry it. Start with the store's status below.
+Every store ends with a status, which the CLI lists when a store fails and the [status file](#the-status-file) records for every store. When the whole run produces no items, the CLI also explains the likely cause of each status and suggests flags to try. Some stores also get a hint of their own, such as the platform a store looks like it runs on, or the proxy when one was in use; the CLI prints it for each store that failed or produced nothing, and the status file and `StoreResult.hint` carry it. Start with the store's status below. [Platforms](platforms.md) describes how each platform is read; the platform sections below cover what to do when one fails.
 
 ## Store statuses
 
