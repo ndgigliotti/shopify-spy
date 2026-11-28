@@ -415,21 +415,27 @@ def test_min_delay_spaces_requests(tmp_path, stores):
 # --user-agent: the shopify-spy group applies whatever user agent is sent
 
 
-def test_site_owner_block_all(tmp_path, stores, transport):
+@pytest.fixture(params=["profile", "custom"])
+def agent(request):
+    """Extra CLI args: the browser profiles, or a custom --user-agent."""
+    return [] if request.param == "profile" else ["--user-agent", "test-agent/1.0"]
+
+
+def test_site_owner_block_all(tmp_path, stores, agent):
     url = stores("owner_block_all")
-    assert _run(tmp_path, [url], *transport)[url] == "blocked by robots.txt"
+    assert _run(tmp_path, [url], *agent)[url] == "blocked by robots.txt"
     hits = stores.servers["owner_block_all"].RequestHandlerClass.hits
     assert set(hits) == {"/robots.txt"}
     # Crossing the opt-out takes --ignore-robots. A fresh output directory, since _run
     # reads whichever status file it globs first
     ignored = tmp_path / "ignored"
     ignored.mkdir()
-    assert _run(ignored, [url], "--ignore-robots", *transport)[url] == "ok"
+    assert _run(ignored, [url], "--ignore-robots", *agent)[url] == "ok"
 
 
-def test_site_owner_block_path(tmp_path, stores, transport):
+def test_site_owner_block_path(tmp_path, stores, agent):
     url = stores("owner_block_path")
-    assert _run(tmp_path, [url], *transport)[url] == "ok"
+    assert _run(tmp_path, [url], *agent)[url] == "ok"
     hits = stores.servers["owner_block_path"].RequestHandlerClass.hits
     assert "/products.json" not in hits
     # The rest of the store is still read: the sitemap, one product per request
@@ -437,9 +443,9 @@ def test_site_owner_block_path(tmp_path, stores, transport):
     assert hits["/products/p1.json"] == 1
 
 
-def test_site_owner_crawl_delay(tmp_path, stores, transport):
+def test_site_owner_crawl_delay(tmp_path, stores, agent):
     url = stores("owner_crawl_delay")
-    assert _run(tmp_path, [url], "--no-throttle", *transport)[url] == "ok"
+    assert _run(tmp_path, [url], "--no-throttle", *agent)[url] == "ok"
     arrivals = stores.servers["owner_crawl_delay"].RequestHandlerClass.arrivals
     pages = [t for path, t in arrivals if path.startswith("/products.json")]
     assert len(pages) == 2
