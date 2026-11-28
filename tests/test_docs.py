@@ -8,6 +8,7 @@ import pytest
 
 import shopify_spy as spy
 from shopify_spy import StoreStatus, cli
+from tests import test_e2e_diagnosis as e2e
 
 ROOT = Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
@@ -89,3 +90,14 @@ def test_troubleshooting_covers_every_status():
     text = (DOCS / "troubleshooting.md").read_text(encoding="utf-8")
     missing = [s for s in [*StoreStatus, "invalid_url"] if f"| `{s}` |" not in text]
     assert not missing
+
+
+def test_site_owner_examples_match_the_e2e_tests():
+    """Each robots.txt example on the site-owners page is one the e2e tests serve."""
+    blocks = re.findall(r"^```\n(.*?)^```", (DOCS / "site-owners.md").read_text(), re.M | re.S)
+    examples = [
+        e2e.SITE_OWNER_BLOCK_ALL,
+        e2e.SITE_OWNER_BLOCK_PATH,
+        e2e.SITE_OWNER_CRAWL_DELAY.format(10),
+    ]
+    assert blocks == examples

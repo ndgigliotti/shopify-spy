@@ -455,7 +455,11 @@ def scrape(
         typer.Option(
             "--ignore-robots",
             "-i",
-            help="Ignore robots.txt restrictions.",
+            help=(
+                "Ignore robots.txt restrictions. Otherwise they're matched against the "
+                "shopify-spy token (else *) whatever User-Agent is sent, and a custom "
+                "--user-agent's group applies too; the more restrictive wins."
+            ),
             rich_help_panel=NETWORK_PANEL,
         ),
     ] = False,
