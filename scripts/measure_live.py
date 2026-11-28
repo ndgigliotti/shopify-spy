@@ -11,7 +11,7 @@ import collections
 import ssl
 import urllib.parse
 
-import httpx
+import certifi
 
 import shopify_spy as spy
 
@@ -36,17 +36,18 @@ async def first_item(url: str, platform: str) -> spy.StoreResult:
 
 async def tls_check(url: str) -> str:
     host = urllib.parse.urlsplit(url).hostname
+    context = ssl.create_default_context(cafile=certifi.where())
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            await client.get(f"https://{host}/robots.txt")
+        async with asyncio.timeout(15):
+            _, writer = await asyncio.open_connection(host, 443, ssl=context, server_hostname=host)
+        writer.close()
         return "ok"
-    except httpx.ConnectError as exc:
-        cause = exc.__context__ or exc
-        if isinstance(cause, ssl.SSLCertVerificationError) or "CERTIFICATE" in str(exc):
-            return f"verify failed: {getattr(cause, 'verify_message', str(exc))[:80]}"
+    except ssl.SSLCertVerificationError as exc:
+        return f"verify failed: {exc.verify_message[:80]}"
+    except TimeoutError:
+        return "error: timeout"
+    except OSError as exc:
         return f"connect error: {str(exc)[:60]}"
-    except httpx.HTTPError as exc:
-        return f"error: {type(exc).__name__}"
 
 
 async def main() -> None:
