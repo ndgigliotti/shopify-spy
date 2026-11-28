@@ -79,6 +79,7 @@ class RunConfig:
     # The first browser profile of the curl_cffi transport; None = httpx with the
     # user_agent or browser UAs
     impersonate: str | None = None
+    rotate: bool = True  # swap the identity after a 403 or 429
     max_concurrent_stores: int | None = 16
     throttle: ThrottleSettings = field(default_factory=ThrottleSettings)
     backoff: bool = True
@@ -218,9 +219,10 @@ class Runner:
     def _identity(self, fetcher: Any) -> IdentityPool:
         """A store's identity: a rotation of browser profiles on an impersonating
         transport, else the fixed user agent or random browser UAs."""
+        rotation = self.config.rotate
         if self.config.impersonate is not None and fetcher.capabilities.can_impersonate:
-            return IdentityPool(profiles=self._profiles())
-        return IdentityPool(user_agent=self.config.user_agent)
+            return IdentityPool(profiles=self._profiles(), rotation=rotation)
+        return IdentityPool(user_agent=self.config.user_agent, rotation=rotation)
 
     async def _drive(self) -> None:
         watcher: asyncio.Task[None] | None = None

@@ -64,6 +64,7 @@ class NetworkConfig(BaseModel):
     # First browser profile (None = chrome); false = httpx with browser UAs. Checked
     # when the run starts
     impersonate: str | Literal[False] | None = None
+    rotate: bool = True  # Switch browser profile (or user agent) after a 403 or 429
 
     @field_validator("impersonate", mode="before")
     @classmethod
@@ -117,6 +118,7 @@ class Config(BaseModel):
             "max_concurrent_stores": self.network.max_concurrent_stores,
             "proxy": self.network.proxy,
             "impersonate": self.network.impersonate,
+            "rotate": self.network.rotate,
             "throttle": self.throttle.enabled,
             "throttle_start_delay": self.throttle.start_delay,
             "throttle_max_delay": self.throttle.max_delay,
@@ -158,6 +160,7 @@ network:
   # user_agent: MyBot/1.0 (+https://example.com)  # Custom user agent (turns impersonation off)
   # proxy: http://proxy.example.com:8080  # Fixed proxy (overrides HTTPS_PROXY)
   # impersonate: safari  # First browser profile (default chrome); false = no impersonation
+  rotate: true             # Try another browser profile after a 403 or 429 (false = --no-rotate)
   respect_robots_txt: true
   verify_tls: true         # Verify TLS certificates (false = --insecure)
   max_concurrent_stores: 16  # Stores scraped at once

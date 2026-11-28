@@ -496,6 +496,19 @@ def test_no_impersonate_overrides_config(cli, monkeypatch, tmp_path):
     assert seen["impersonate"] is False
 
 
+def test_rotate_flag_overrides_config():
+    config = Config(network={"rotate": False})
+    assert _overrides(config).to_kwargs()["rotate"] is False
+    assert _overrides(config, rotate=True).to_kwargs()["rotate"] is True
+    assert _overrides().to_kwargs()["rotate"] is True
+
+
+def test_no_rotate_reaches_library(cli, monkeypatch):
+    seen = _seen_kwargs(monkeypatch)
+    cli(shop("shop.test", 1), "shop.test", "--no-rotate")
+    assert seen["rotate"] is False
+
+
 def test_impersonate_defaults_to_none(cli, monkeypatch):
     seen = _seen_kwargs(monkeypatch)
     cli(shop("shop.test", 1), "shop.test")

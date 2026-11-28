@@ -789,6 +789,15 @@ def test_identity_changes_reported():
     assert result.stores[0].identity_changes == 1
 
 
+def test_rotate_false_keeps_one_identity():
+    fetcher = _CurlLike(
+        {f"{STORE}/robots.txt": (404, ""), bulk_url(1): Seq([(403, ""), products(2)])}
+    )
+    _, result, _ = scrape(fetcher, rotate=False)
+    assert result.stores[0].identity_changes == 0
+    assert {r.identity.impersonate for r in fetcher.requests} == {"chrome"}
+
+
 def test_each_store_starts_with_the_first_profile():
     other_store = "https://other.test"
     fetcher = _CurlLike(

@@ -74,6 +74,7 @@ def test_piped_scrape_help_content():
         "--impersonate with --user-agent",
         "switches the store to the next of chrome, safari, firefox (default: chrome)",
         "Fixed User-Agent header, never swapped; turns impersonation off",
+        "--no-rotate keeps one identity for the whole run (default: on)",
         "./shopify-spy.yaml",
         "~/.config/shopify-spy/config.yaml",
     ):
@@ -91,7 +92,8 @@ def test_piped_help_lists_options_by_task():
     network = out[out.index("Network:") : out.index("Run control:")]
     assert network.index("--user-agent") < network.index("-I, --impersonate BROWSER")
     assert network.index("-I, --impersonate BROWSER") < network.index("--no-impersonate")
-    assert network.index("--no-impersonate") < network.index("--proxy")
+    assert network.index("--no-impersonate") < network.index("--rotate / --no-rotate")
+    assert network.index("--rotate / --no-rotate") < network.index("--proxy")
 
 
 def test_terminal_help_renders_rich_panels(monkeypatch):

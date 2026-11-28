@@ -418,6 +418,17 @@ def scrape(
             rich_help_panel=NETWORK_PANEL,
         ),
     ] = False,
+    rotate: Annotated[
+        bool | None,
+        typer.Option(
+            "--rotate/--no-rotate",
+            help="After a 403 or 429, retry with another browser profile (user agent "
+            "with --no-impersonate), once per refusal and only after the usual backoff; "
+            "--no-rotate keeps one identity for the whole run "
+            f"(default: {_on_off(_DEFAULTS.network.rotate)}).",
+            rich_help_panel=NETWORK_PANEL,
+        ),
+    ] = None,
     proxy: Annotated[
         str | None,
         typer.Option(
@@ -505,6 +516,7 @@ def scrape(
         limit=limit,
         user_agent=user_agent,
         impersonate=False if no_impersonate else impersonate,
+        rotate=rotate,
         ignore_robots=ignore_robots,
         bail=bail,
         insecure=insecure,
@@ -634,6 +646,7 @@ def apply_cli_overrides(
     limit: int | None,
     user_agent: str | None,
     impersonate: str | Literal[False] | None = None,
+    rotate: bool | None = None,
     ignore_robots: bool = False,
     bail: int | None = None,
     insecure: bool = False,
@@ -661,6 +674,7 @@ def apply_cli_overrides(
         user_agent=user_agent,
         proxy=proxy,
         impersonate=impersonate,
+        rotate=rotate,
     )
     if ignore_robots:
         network_dict["respect_robots_txt"] = False

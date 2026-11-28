@@ -77,6 +77,7 @@ class ScrapeOptions(BaseModel):
     proxy: str | None = Field(default=None, repr=False)
     # None: impersonate from DEFAULT_IMPERSONATE, or send user_agent through httpx
     impersonate: str | Literal[False] | None = None
+    rotate: bool = True
     max_concurrent_stores: int | None = Field(default=16, ge=1)
     throttle: bool = True
     throttle_start_delay: float = Field(default=1.0, ge=0)
@@ -186,6 +187,7 @@ def _config(opts: ScrapeOptions, backoff: bool) -> RunConfig:
         verify_tls=opts.verify_tls,
         proxy=opts.proxy,
         impersonate=_first_profile(opts),
+        rotate=opts.rotate,
         max_concurrent_stores=opts.max_concurrent_stores,
         throttle=ThrottleSettings(
             enabled=opts.throttle,
@@ -503,11 +505,11 @@ _SCRAPE_DOC = """
         request_timeout: Seconds allowed for one request, not the whole run
             (default {request_timeout}).
         retries: Retries for 403/429/5xx responses and network errors (default
-            {retries}). A 403 or 429 also switches the store to the next browser
-            profile (the next user agent with ``impersonate=False``), and a 429 or
-            503 pauses and slows every request to that host. A Retry-After up to
-            60s is waited out before the retry; a longer one isn't retried early:
-            the host is paused for it, the request ends as if its retries ran out
+            {retries}). A 403 or 429 may also switch the store's identity (see
+            ``rotate``), and a 429 or 503 pauses and slows every request to that
+            host. A Retry-After up to 60s is waited out before the retry; a longer
+            one isn't retried early: the host is paused for it, the request ends as
+            if its retries ran out
             (a store with no successful response is ``rate_limited`` after a 429,
             ``unavailable`` after a 503), and the pause is logged as a WARNING on
             the ``shopify_spy`` logger (which prints nothing until the caller
@@ -528,15 +530,25 @@ _SCRAPE_DOC = """
             against the refusal of non-public addresses.
         impersonate: The browser profile a store's requests start with. By default
             (None), requests go through curl_cffi with a current browser's TLS and
-            HTTP/2 settings and headers, starting as "{default_profile}"; each 403
-            or 429 moves the store to the next profile of {profiles},
-            wrapping around. A string picks the first profile: any target the
-            installed curl_cffi accepts, such as "safari" or a pinned "chrome150"
-            (one outside that list comes first, then the list). The profile sets
-            the user agent. False sends requests through httpx instead, with a
-            random browser user agent per store, swapped after a 403 or 429.
+            HTTP/2 settings and headers, starting as "{default_profile}"; a switch
+            (see ``rotate``) moves the store to the next of {profiles}.
+            A string picks the first profile: any target the installed curl_cffi
+            accepts, such as "safari" or a pinned "chrome150" (one outside that
+            list comes first, then the list). The profile sets the user agent.
+            False sends requests through httpx instead, with a random browser user
+            agent per store.
             Politeness (robots.txt, Crawl-delay, throttling, Retry-After) is the
             same either way. Not checked with a custom ``fetcher_factory``.
+        rotate: After a 403 or 429, retry as another identity (default {rotate}):
+            the next browser profile, or another user agent with
+            ``impersonate=False``. It tests whether the refusal is about identity:
+            the retry still waits its backoff and counts against ``retries``; once a
+            switched-to identity is refused too, the store stops switching; a host's
+            refusals are remembered for the run, so no store switches to an identity
+            it refused. Challenge pages (Cloudflare's ``cf-mitigated: challenge``),
+            401s and ``*.myshopify.com`` refusals never switch, and a challenge page
+            isn't retried. Each switch is logged at INFO and counted in
+            ``StoreResult.identity_changes``. False keeps one identity per store.
         max_concurrent_stores: Stores scraped at once (default {max_concurrent_stores};
             None = no limit).
         throttle, throttle_start_delay, throttle_max_delay, throttle_min_delay,
