@@ -704,3 +704,17 @@ def test_crawl_delay_unusable_is_none(text):
 def test_robots_html_page_has_no_rules():
     rules = RobotsRules("<html><body><h1>404 Not Found</h1></body></html>")
     assert rules.allowed("https://a.com/products.json", "shopify-spy")
+
+
+def test_robots_sitemaps_keep_values_as_written():
+    rules = RobotsRules(
+        "User-agent: *\nDisallow: /cart\n"
+        "Sitemap: https://a.com/sitemap.xml\n"
+        "Sitemap: /sitemaps/index.xml\n"
+    )
+    assert rules.sitemaps == ["https://a.com/sitemap.xml", "/sitemaps/index.xml"]
+
+
+@pytest.mark.parametrize("text", [None, "", "User-agent: *\nDisallow: /cart\n"])
+def test_robots_without_sitemap_lines_lists_none(text):
+    assert RobotsRules(text).sitemaps == []

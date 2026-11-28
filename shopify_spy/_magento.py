@@ -29,6 +29,8 @@ logger = logging.getLogger("shopify_spy")
 
 API_PATH = "/graphql"
 PAGE_SIZE = 100
+# The cheapest query a Magento store answers, for another platform's wrong-platform hint
+STORE_CONFIG_PATH = f"{API_PATH}?{urllib.parse.urlencode({'query': '{storeConfig{store_name}}'})}"
 
 # Only fields every 2.4.x release from 2.4.1 (which added uid) has on
 # ProductInterface: an unknown field fails the whole query. %d slots, not
@@ -187,14 +189,14 @@ async def _failed(
                 f"{_endpoint(response.url)}: HTTP {response.status} after a page-size retry"
             )
         if page == 1 and response.status == 404:
-            await _probe_others(ctx)
+            await probe_others(ctx)
         return False
     if _PAST_END_ERROR.search(problem):
         return True
     if page > 1:
         logger.warning("Magento GraphQL failed for %s: %s", where, problem)
         return False
-    await _probe_others(ctx)
+    await probe_others(ctx)
     raise MagentoError(f"{_endpoint(response.url)}: {problem}")
 
 
@@ -308,12 +310,17 @@ def _smaller_page_size(page: int, size: int, problem: str | None) -> int | None:
     return max(1, size // 2 if named is None else named)
 
 
-async def _probe_others(ctx: StoreContext) -> None:
-    """Suggest another platform when a Magento or BigCommerce run's store answers like
-    Shopify or WooCommerce (``/graphql`` is also WPGraphQL's default endpoint)."""
+async def probe_others(ctx: StoreContext) -> None:
+    """Suggest another platform when the store answers like Shopify or WooCommerce
+    (for Magento, ``/graphql`` is also WPGraphQL's default endpoint)."""
     await ctx.probe_platform("/products.json", _looks_like_shopify, "shopify")
     if ctx.suggested_platform is None:
         await ctx.probe_platform("/wp-json/", _looks_like_woocommerce, "woocommerce")
+
+
+def looks_like_magento(data: Any) -> bool:
+    """Whether a ``STORE_CONFIG_PATH`` answer has Magento's ``storeConfig``."""
+    return isinstance(_dig(data, "data", "storeConfig"), dict)
 
 
 def _item(product: dict[str, Any], response: Response, images: bool) -> dict[str, Any]:

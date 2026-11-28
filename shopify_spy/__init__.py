@@ -1,4 +1,5 @@
-"""Scrape product and collection data from Shopify, WooCommerce, Magento and BigCommerce stores.
+"""Scrape product and collection data from Shopify, WooCommerce, Magento, BigCommerce
+and other stores.
 
 Scripts::
 
@@ -30,6 +31,7 @@ from shopify_spy._results import RunResult, ScrapeFailed, StoreResult, StoreStat
 from shopify_spy._summary import ItemSummary, summarize
 from shopify_spy._types import (
     BigCommerceProductItem,
+    JsonLdProductItem,
     MagentoProductItem,
     ShopifyCollectionItem,
     ShopifyProductItem,
@@ -45,6 +47,7 @@ __all__ = [
     "BigCommerceProductItem",
     "ItemSummary",
     "ItemWriter",
+    "JsonLdProductItem",
     "MagentoProductItem",
     "RunResult",
     "ScrapeFailed",

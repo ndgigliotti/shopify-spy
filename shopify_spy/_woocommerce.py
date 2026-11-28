@@ -25,6 +25,7 @@ from typing import Any
 from shopify_spy import _jsonld as jsonld
 from shopify_spy import _sitemap as sitemap
 from shopify_spy._fetch import Response
+from shopify_spy._jsonld import OUT_OF_STOCK  # noqa: F401 (still importable from here)
 from shopify_spy._session import (
     FALLBACK,
     Emit,
@@ -64,7 +65,6 @@ FETCH_CONCURRENCY = 8  # product pages fetched at once per store (host slots sti
 PAGE_SOURCE = "product_page"
 GONE = frozenset({404, 410})
 MAX_PRICE_DECIMALS = 6
-OUT_OF_STOCK = frozenset({"OutOfStock", "SoldOut", "Discontinued"})
 
 
 def get_api_url(store_url: str, page: int = 1, by_id: bool = True) -> str:
@@ -330,7 +330,9 @@ async def _product_pages(ctx: StoreContext, emit: Emit) -> bool:
                 failed = True
                 return
             text = response.text  # decoded on each access
-            product, post_id = jsonld.parse_product_page(text, response.url)
+            product, post_id = jsonld.parse_product_page(
+                text, response.url, groups=True, fallback=False
+            )
             if product is None:
                 logger.info("No schema.org Product on %s", response.url)
                 return
@@ -507,6 +509,15 @@ def page_item(
     marks the item as partial and ``json_ld`` keeps the original.
     """
     found = jsonld.offers(product.get("offers"))
+    in_stock = jsonld.in_stock(found.availability)
+    variants = jsonld.variants(product)
+    if variants and not (found.current or found.bounds):
+        # A ProductGroup (Yoast's, for a variable product) has its offers on its
+        # variants; it's in stock if any of them is
+        offers = [jsonld.listify(v.get("offers")) for v in variants]
+        found = jsonld.offers([o for each in offers for o in each])
+        stock = [jsonld.in_stock(a) for each in offers if (a := jsonld.offers(each).availability)]
+        in_stock = any(stock) if stock else None
     prices = _prices(found.current, found.listed, found.bounds, found.currency)
     return {
         "id": post_id,
@@ -517,15 +528,13 @@ def page_item(
         "permalink": url,
         # With no SKU, WooCommerce's JSON-LD gives the product ID in its place
         "sku": sku if (sku := jsonld.text(product.get("sku"))) != str(post_id) else None,
-        "description": jsonld.text(product.get("description")),
-        "images": [{"src": src} for src in jsonld.image_urls(product.get("image"))],
+        "description": jsonld.unescaped(product.get("description")),
+        "images": [{"src": src} for src in jsonld.image_urls(product.get("image"), url)],
         "prices": prices,
         "on_sale": (
             prices["sale_price"] != prices["regular_price"] if prices["price"] is not None else None
         ),
-        "is_in_stock": (
-            None if found.availability is None else found.availability not in OUT_OF_STOCK
-        ),
+        "is_in_stock": in_stock,
         **_variations(form, found.currency, prices),
         "source": PAGE_SOURCE,
         "json_ld": product,
@@ -577,17 +586,10 @@ def _variations(
 
 def _name(name: str | None, site: str | None) -> str | None:
     """The product's name, escaped once like the Store API's, without the site name
-    an SEO plugin may have added to the JSON-LD's (``Hat - Shop``).
-
-    JSON-LD names should be plain text but come escaped, sometimes twice
-    (``&amp;amp;``), so they're unescaped until they stop changing.
-    """
+    an SEO plugin may have added to the JSON-LD's (``Hat - Shop``)."""
+    name = jsonld.name(name)
     if name is None:
         return None
-    for _ in range(3):
-        if (plain := html.unescape(name)) == name:
-            break
-        name = plain
     return _escape(jsonld.strip_site_name(name, site) or name)
 
 
