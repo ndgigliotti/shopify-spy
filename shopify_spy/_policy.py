@@ -312,7 +312,7 @@ class RobotsRules:
         """Whether every agent's group (each falling back to ``*``) allows the URL."""
         if self._parser is None:
             return True
-        return all(self._parser.can_fetch(url, agent) for agent in agents or (ROBOTS_TOKEN,))
+        return all(self._parser.can_fetch(url, agent) for agent in agents)
 
     @property
     def sitemaps(self) -> list[str]:
@@ -326,6 +326,6 @@ class RobotsRules:
         to ``*``) ask for; None without a usable positive value."""
         if self._parser is None:
             return None
-        delays = [self._parser.crawl_delay(agent) for agent in agents or (ROBOTS_TOKEN,)]
+        delays = [self._parser.crawl_delay(agent) for agent in agents]
         usable = [d for d in delays if d is not None and math.isfinite(d) and d > 0]
         return float(max(usable)) if usable else None
