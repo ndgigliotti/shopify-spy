@@ -259,12 +259,13 @@ def scrape(
             "-p",
             help="The store's platform "
             f"(default: {_DEFAULTS.scrape.platform.value}). shopify, woocommerce, magento and "
-            "bigcommerce read the platform's own API. generic is for any other store (Wix, "
-            "Squarespace, custom sites): it reads schema.org product data (JSON-LD or "
-            "microdata) from each product page the sitemaps list, one request per product, "
-            "so it's slow; use --limit for a sample. A store that fails because it looks like "
-            "Shopify, WooCommerce or Magento gets a hint naming that platform, in the end-of-run "
-            "summary and the status file.",
+            "bigcommerce read the platform's own API. squarespace reads a Squarespace store's "
+            "product pages, or with --ignore-robots its collections' ?format=json data. "
+            "generic is for any other store (Wix, custom sites): it reads schema.org product "
+            "data (JSON-LD or microdata) from each product page the sitemaps list, one request "
+            "per product, so it's slow; use --limit for a sample. A store that fails because it "
+            "looks like Shopify, WooCommerce or Magento gets a hint naming that platform, in the "
+            "end-of-run summary and the status file.",
             rich_help_panel=SCRAPE_PANEL,
         ),
     ] = None,
@@ -272,8 +273,8 @@ def scrape(
         bool | None,
         typer.Option(
             "--products/--no-products",
-            help="Scrape products. Shopify only; WooCommerce, Magento, BigCommerce and "
-            "generic always do "
+            help="Scrape products. Shopify only; WooCommerce, Magento, BigCommerce, generic and "
+            "Squarespace always do "
             f"(default: {_on_off(_DEFAULTS.scrape.products)}).",
             rich_help_panel=SCRAPE_PANEL,
         ),

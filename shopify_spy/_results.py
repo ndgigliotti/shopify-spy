@@ -52,6 +52,7 @@ _PLATFORM_NAMES = {
     "magento": "Magento",
     "generic": "the generic platform",
     "bigcommerce": "BigCommerce",
+    "squarespace": "Squarespace",
 }
 
 _LABELS = {

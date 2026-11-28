@@ -4,7 +4,9 @@ Provisional API. Each platform's items have their own shape (Shopify wraps the
 payload in "product"/"collection"; WooCommerce is flat, with prices in minor units;
 Magento is flat, with prices in ``price_range``; BigCommerce is a GraphQL node, with
 prices in ``prices``; a generic item is the page's schema.org node, with prices in
-``offers``); this reads any of them.
+``offers``; Squarespace is a ``?format=json`` record, with prices in
+``structuredContent.variants``, or on ``structuredContent`` for a product without
+variants, or a schema.org node); this reads any of them.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from typing import Any
 from shopify_spy import _jsonld as jsonld
 from shopify_spy._bigcommerce import image_list
 from shopify_spy._magento import _dig, gallery_urls
+from shopify_spy._squarespace import image_urls as squarespace_images
 from shopify_spy._utils import dicts
 
 logger = logging.getLogger("shopify_spy")
@@ -29,7 +32,7 @@ logger = logging.getLogger("shopify_spy")
 @dataclass(frozen=True)
 class ItemSummary:
     kind: str  # "product" or "collection"
-    platform: str  # "shopify", "woocommerce", "magento", "bigcommerce" or "generic"
+    platform: str  # "shopify", "woocommerce", "magento", "bigcommerce", "generic" or "squarespace"
     id: Any
     title: str | None
     min_price: Decimal | None
@@ -111,19 +114,29 @@ def is_bigcommerce(item: dict[str, Any]) -> bool:
 
 
 def is_generic(item: dict[str, Any]) -> bool:
-    """Whether ``item`` is a scraped generic product (``summarize().asdict()`` has a
-    ``platform`` but no ``@type``)."""
-    return item.get("platform") == "generic" and "@type" in item
+    """Whether ``item`` is a scraped schema.org product, from the ``generic`` platform or
+    a Squarespace product page (``summarize().asdict()`` has a ``platform`` but no
+    ``@type``)."""
+    return item.get("platform") in ("generic", "squarespace") and "@type" in item
+
+
+def is_squarespace(item: dict[str, Any]) -> bool:
+    """Whether ``item`` is a scraped Squarespace ``?format=json`` product
+    (``summarize().asdict()`` has a ``platform`` but no ``structuredContent``)."""
+    return item.get("platform") == "squarespace" and isinstance(item.get("structuredContent"), dict)
 
 
 def summarize(item: dict[str, Any]) -> ItemSummary:
-    """Summarize a Shopify, WooCommerce, Magento, BigCommerce or generic item from ``scrape()``."""
+    """Summarize a Shopify, WooCommerce, Magento, BigCommerce, generic or Squarespace
+    item from ``scrape()``."""
     if isinstance(item.get("product"), dict) or isinstance(item.get("collection"), dict):
         return _shopify(item)
     if is_magento(item):
         return _magento(item)
     if is_bigcommerce(item):
         return _bigcommerce(item)
+    if is_squarespace(item):
+        return _squarespace(item)
     if is_generic(item):
         return _generic(item)
     return _woocommerce(item)
@@ -227,7 +240,7 @@ def _generic(item: dict[str, Any]) -> ItemSummary:
     low, high, currency = generic_prices(item)
     return ItemSummary(
         kind="product",
-        platform="generic",
+        platform=item["platform"],
         id=jsonld.first_text(item, ("productID", "productGroupID", "sku", "@id")),
         title=jsonld.name(item.get("name")),
         min_price=low,
@@ -264,6 +277,63 @@ def _bigcommerce(item: dict[str, Any]) -> ItemSummary:
         min_price=low if low is not None else price,
         max_price=high if high is not None else price,
         currency=low_currency or high_currency or price_currency,
+        html_url=item.get("html_url"),
+        store=item.get("store"),
+        image_urls=[u for u in urls if isinstance(u, str)],
+    )
+
+
+def squarespace_variants(item: dict[str, Any]) -> list[dict[str, Any]]:
+    """The ``structuredContent.variants`` of a Squarespace record that are dicts; when
+    there are none, ``structuredContent`` itself if it has a ``priceMoney``, as one
+    implicit variant (a digital product, ``productType`` 2, has no variants and is
+    priced on ``structuredContent``)."""
+    content = item.get("structuredContent")
+    if not isinstance(content, dict):
+        return []
+    variants = dicts(content.get("variants"))
+    if not variants and isinstance(content.get("priceMoney"), dict):
+        return [content]
+    return variants
+
+
+def squarespace_price(variant: dict[str, Any]) -> tuple[Decimal | None, Decimal | None, str | None]:
+    """A Squarespace variant's selling price (its sale price when ``onSale``), its
+    regular price and its currency, or Nones."""
+    money = variant.get("priceMoney") if isinstance(variant.get("priceMoney"), dict) else {}
+    regular = _decimal(money.get("value"))
+    price = regular
+    sale = variant.get("salePriceMoney")
+    if variant.get("onSale") is True and isinstance(sale, dict):
+        sale_price = _decimal(sale.get("value"))
+        price = sale_price if sale_price is not None else regular
+    currency = money.get("currency")
+    return price, regular, currency if isinstance(currency, str) else None
+
+
+def squarespace_price_range(item: dict[str, Any]) -> tuple[Decimal | None, Decimal | None]:
+    """The lowest and highest variant selling price of a Squarespace record, or Nones."""
+    prices = [
+        p
+        for v in squarespace_variants(item)
+        if (p := squarespace_price(v)[0]) is not None and p.is_finite()
+    ]
+    return (min(prices), max(prices)) if prices else (None, None)
+
+
+def _squarespace(item: dict[str, Any]) -> ItemSummary:
+    low, high = squarespace_price_range(item)
+    variants = squarespace_variants(item)
+    title = item.get("title")
+    urls = item.get("image_urls") or squarespace_images(item)
+    return ItemSummary(
+        kind="product",
+        platform="squarespace",
+        id=item.get("id"),
+        title=title if isinstance(title, str) else None,
+        min_price=low,
+        max_price=high,
+        currency=next((c for v in variants if (c := squarespace_price(v)[2])), None),
         html_url=item.get("html_url"),
         store=item.get("store"),
         image_urls=[u for u in urls if isinstance(u, str)],

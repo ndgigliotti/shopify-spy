@@ -230,6 +230,7 @@ def test_cli_scrape_help_platform_values():
     assert "magento" in output
     assert "bigcommerce" in output
     assert "generic" in output
+    assert "squarespace" in output
 
 
 def test_cli_scrape_help_new_flags():
@@ -314,12 +315,23 @@ def test_cli_scrape_warns_shopify_only_flags_generic(flag, warning):
     assert warning in strip_ansi(result.stderr)
 
 
+@pytest.mark.parametrize(
+    ("flag", "warning"),
+    [
+        ("--collections", "--collections has no effect with Squarespace"),
+        ("--no-products", "--no-products has no effect with Squarespace (Squarespace always"),
+    ],
+)
+def test_cli_scrape_warns_shopify_only_flags_squarespace(flag, warning):
+    result = runner.invoke(app, ["scrape", "--platform", "squarespace", flag])
+    assert warning in strip_ansi(result.stderr)
+
+
 def test_cli_init_lists_platforms(tmp_path):
     config_file = tmp_path / "test-config.yaml"
     runner.invoke(app, ["init", str(config_file)])
-    assert (
-        "# Platform: shopify, woocommerce, magento, bigcommerce, generic" in config_file.read_text()
-    )
+    platforms = "# Platform: shopify, woocommerce, magento, bigcommerce, generic, squarespace"
+    assert platforms in config_file.read_text()
 
 
 @pytest.mark.parametrize(

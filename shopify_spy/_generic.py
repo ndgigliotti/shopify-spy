@@ -5,6 +5,9 @@ A store whose pages have no Product data (it renders products in the browser, sa
 raises GenericError after ``PROBE_PAGES`` pages, so it reports ``error`` with the
 reason rather than ``empty``; ``ctx.no_item_reason`` holds that reason for the
 runner in case ``--bail`` stops the store first.
+
+``read_pages`` is the same flow for another platform's adapter: it can read only the
+pages a ``keep`` test accepts and label the items with that platform and a ``source``.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ import contextlib
 import logging
 import urllib.parse
 from collections import Counter
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,7 +29,7 @@ from shopify_spy._session import Emit, RequestFailed, StoreContext
 from shopify_spy._utils import canonicalize_url, hostname
 from shopify_spy._woocommerce import FETCH_CONCURRENCY, GONE, _site
 
-__all__ = ["GenericError", "run"]
+__all__ = ["GenericError", "read_pages", "run"]
 
 logger = logging.getLogger("shopify_spy")
 
@@ -54,8 +57,29 @@ class GenericError(Exception):
 async def run(ctx: StoreContext, emit: Emit) -> bool:
     """Emit an item for every listed page with schema.org Product data; return
     whether the listing was read to the end and every page was fetched."""
-    listing = _Listing(ctx)
-    pages = _Pages(ctx, emit, listing)
+    return await read_pages(ctx, emit)
+
+
+async def read_pages(
+    ctx: StoreContext,
+    emit: Emit,
+    *,
+    platform: str = "generic",
+    source: str | None = None,
+    keep: Callable[[str], bool] | None = None,
+    product_shape: str | None = None,
+) -> bool:
+    """``run`` for any platform: items get ``platform`` and, when given, ``source``.
+
+    With ``keep``, only the listed pages it accepts are fetched, and a sitemap that
+    lists pages but none it accepts raises GenericError naming ``product_shape``,
+    the URL shape ``keep`` looks for (a filter that misses the store's product
+    URLs would otherwise look like an empty store).
+    """
+    if keep is not None and product_shape is None:
+        raise ValueError("read_pages needs product_shape with keep")
+    listing = _Listing(ctx, keep)
+    pages = _Pages(ctx, emit, listing, platform=platform, source=source)
     await pages.run()
     if pages.emitted:
         return listing.complete and not pages.failed
@@ -65,10 +89,9 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
             raise GenericError(f"no sitemap found at {', '.join(listing.tried)}")
         return False  # diagnose() reports the sitemaps' 404, 403 or robots.txt
     if pages.counts.checked == 0:
-        if listing.unread:
-            # diagnose() would call it empty: the sitemap index's 2xx is a success
+        if (reason := listing.no_page_reason(product_shape)) is not None:
             await pages.probe_others()
-            raise GenericError(f"no page listed; unreadable sitemaps: {', '.join(listing.unread)}")
+            raise GenericError(reason)
         return listing.complete  # no on-site page listed: empty
     await pages.probe_others()
     raise GenericError(f"{pages.reason()}; {pages.stopped_by()}")
@@ -106,11 +129,14 @@ class _Listing:
     ``roots`` are the top-level sitemaps that parsed; ``answered`` is whether any
     candidate answered 2xx; ``complete`` becomes True once every sitemap chosen for
     pages was readable and no off-site URL among them was left out; ``unread``
-    lists those that weren't readable.
+    lists those that weren't readable; ``filtered`` counts the page locs that
+    ``keep`` turned down.
     """
 
-    def __init__(self, ctx: StoreContext) -> None:
+    def __init__(self, ctx: StoreContext, keep: Callable[[str], bool] | None = None) -> None:
         self.ctx = ctx
+        self.keep = keep
+        self.filtered = 0
         self.sites = {_site(hostname(ctx.url))}
         self.roots: list[str] = []
         self.tried: list[str] = []
@@ -119,11 +145,37 @@ class _Listing:
         self._dropped = 0
         self.unread: list[str] = []  # chosen sitemaps that couldn't be read
 
+    def no_page_reason(self, product_shape: str | None) -> str | None:
+        """Why the sitemaps that answered gave no page to read, once drained: some
+        couldn't be read, or ``keep`` turned every page down; None if neither (the
+        store is empty).
+
+        Callers raise it rather than return False, which diagnose() would report
+        as empty: the sitemap's 2xx is a success.
+        """
+        if self.unread:
+            return f"no page listed; unreadable sitemaps: {', '.join(self.unread)}"
+        if self.filtered:
+            return (
+                f"no product page ({product_shape}) among the {self.filtered} pages "
+                f"listed ({', '.join(self.roots)})"
+            )
+        return None
+
     def _on_site(self, url: str) -> bool:
         if _site(hostname(url)) in self.sites:
             return True
         self._dropped += 1
         return False
+
+    def _wanted(self, url: str) -> bool:
+        """Whether to yield a page loc: ``keep`` accepts it and it's on the site."""
+        # keep is tested first, so an off-site page that wouldn't be read anyway
+        # doesn't make the listing incomplete
+        if self.keep is not None and not self.keep(url):
+            self.filtered += 1
+            return False
+        return self._on_site(url)
 
     async def locs(self) -> AsyncIterator[str]:
         found, missing = await self._top_level()
@@ -135,7 +187,7 @@ class _Listing:
                 self.unread.append(source)
             elif self._on_site(source):
                 async for loc in self._source_locs(source, read):
-                    if self._on_site(loc):
+                    if self._wanted(loc):
                         yield loc
         if self._dropped:
             logger.info("Sitemaps listed %d off-site links", self._dropped)
@@ -230,12 +282,29 @@ class _Counts:
 
 class _Pages:
     """Fetches the listed pages and emits their Products, up to ``PROBE_PAGES``
-    pages without an item before the first."""
+    pages without an item before the first.
 
-    def __init__(self, ctx: StoreContext, emit: Emit, listing: _Listing) -> None:
+    Given ``urls``, it reads those instead of the listing's locs (a caller that
+    already drained the listing); the listing then only names the sitemaps in
+    ``reason()``.
+    """
+
+    def __init__(
+        self,
+        ctx: StoreContext,
+        emit: Emit,
+        listing: _Listing,
+        *,
+        platform: str = "generic",
+        source: str | None = None,
+        urls: list[str] | None = None,
+    ) -> None:
         self.ctx = ctx
         self._emit = emit
         self.listing = listing
+        self.urls = urls
+        self.platform = platform
+        self.source = source
         self.counts = _Counts()
         self.emitted = False
         self.failed = False  # a page that should have been read wasn't
@@ -251,7 +320,7 @@ class _Pages:
         seen: set[str] = set()
         async with (
             asyncio.TaskGroup() as tg,
-            contextlib.aclosing(self.listing.locs()) as locs,
+            contextlib.aclosing(self._locs()) as locs,
         ):
             self._tg = tg
             async for url in locs:
@@ -267,6 +336,15 @@ class _Pages:
                 task = tg.create_task(self._fetch(url.split("#", 1)[0]))
                 self._fetches.add(task)
                 task.add_done_callback(self._fetches.discard)
+
+    async def _locs(self) -> AsyncIterator[str]:
+        if self.urls is None:
+            async with contextlib.aclosing(self.listing.locs()) as locs:
+                async for url in locs:
+                    yield url
+        else:
+            for url in self.urls:
+                yield url
 
     def _gave_up(self) -> bool:
         return not self.emitted and self.counts.checked >= PROBE_PAGES
@@ -311,7 +389,8 @@ class _Pages:
                 self.counts.skipped += 1
                 self._missed()
             elif (node := self._node(response)) is not None:
-                await self._emit_item(_item(node, response, self.ctx.images))
+                item = _item(node, response, self.ctx.images, self.platform, self.source)
+                await self._emit_item(item)
         finally:
             self._limiter.release()
 
@@ -390,9 +469,17 @@ async def _probe_others(ctx: StoreContext) -> None:
         await ctx.probe_platform(magento.STORE_CONFIG_PATH, magento.looks_like_magento, "magento")
 
 
-def _item(node: dict[str, Any], response: Response, images: bool) -> dict[str, Any]:
+def _item(
+    node: dict[str, Any],
+    response: Response,
+    images: bool,
+    platform: str = "generic",
+    source: str | None = None,
+) -> dict[str, Any]:
     node["store"] = urllib.parse.urlsplit(response.url).netloc
-    node["platform"] = "generic"
+    node["platform"] = platform
     node["html_url"] = response.url.split("#", 1)[0]
     node["image_urls"] = jsonld.product_image_urls(node, response.url) if images else []
+    if source is not None:
+        node["source"] = source
     return node

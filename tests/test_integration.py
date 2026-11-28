@@ -56,3 +56,14 @@ def test_generic_store_live():
     assert item["store"] == "cornerstone-light-demo.mybigcommerce.com"
     assert item["html_url"].startswith(f"{url}/")
     assert spy.summarize(item).currency
+
+
+def test_squarespace_store_live():
+    # Squarespace's demo store; robots.txt obeyed, so read from its product pages
+    url = "https://hester-demo.squarespace.com"
+    item = spy.scrape(url, platform="squarespace", max_items_per_store=1).first()
+    assert item["name"]
+    assert item["platform"] == "squarespace"
+    assert item["source"] == "product_page"
+    assert item["store"] == "hester-demo.squarespace.com"
+    assert "/p/" in item["html_url"]
