@@ -53,6 +53,18 @@ def test_negative_image_delay_rejected():
         Config(throttle={"image_delay": -1})
 
 
+def test_config_file_jitter_reaches_kwargs(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("throttle:\n  jitter: 0.2\n")
+    assert load_config_from_file(path).to_kwargs()["throttle_jitter"] == 0.2
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.1])
+def test_jitter_outside_zero_to_one_rejected(value):
+    with pytest.raises(ValidationError):
+        Config(throttle={"jitter": value})
+
+
 def test_config_images_dir():
     config = Config()
     assert config.output.images_dir == Path("./output/images")

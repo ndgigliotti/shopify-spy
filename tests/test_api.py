@@ -113,6 +113,14 @@ def test_image_delay_defaults_to_a_quarter_second():
     assert ScrapeOptions().throttle_image_delay == 0.25
 
 
+def test_jitter_defaults_to_half_and_is_bounded():
+    from shopify_spy._api import ScrapeOptions
+
+    assert ScrapeOptions().throttle_jitter == 0.5
+    with pytest.raises(ValueError, match="throttle_jitter"):
+        spy.scrape(STORE, throttle_jitter=1.5)
+
+
 def test_nothing_runs_until_iteration():
     fetcher = FakeFetcher(ok_routes())
     spy.scrape(STORE, fetcher_factory=lambda: fetcher, **FAST)

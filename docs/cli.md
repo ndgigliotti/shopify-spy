@@ -59,7 +59,7 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 - `--concurrent INT`: concurrent requests per host (default: 16).
 - `--max-stores INT`: stores scraped at once (default: 16).
 - `--throttle / --no-throttle`: auto-throttle requests (default: yes). `--no-throttle` drops the adaptive delay, `--min-delay` and `--image-delay`, but a robots.txt `Crawl-delay` and `Retry-After` pauses still apply. See [Rate limiting](troubleshooting.md#rate-limiting).
-- `--min-delay SECONDS`: the minimum gap between page and API requests to one host while throttling (default: 1, at most 1 request per second per host). It's a strict gap, not an average: requests never bunch up to catch up.
+- `--min-delay SECONDS`: the minimum gap between page and API requests to one host while throttling (default: 1, at most 1 request per second per host). It's a strict gap, not an average: requests go out 1 to 1.5 times the minimum apart (more if the store is slow) and never bunch up to catch up.
 - `--image-delay SECONDS`: the minimum gap between image downloads from one host while throttling, the store's own host included (default: 0.25, at most 4 images per second per host).
 - `--user-agent, -A TEXT`: a fixed User-Agent header, never swapped (default: a random browser user agent per store, swapped after a 403 or 429).
 - `--proxy URL`: send every request through this proxy; see [Proxies](#proxies).
@@ -124,10 +124,11 @@ throttle:
   max_delay: 60            # Maximum download delay (seconds)
   min_delay: 1             # Minimum seconds between page and API requests to one host
   image_delay: 0.25        # Minimum seconds between image downloads from one host
+  jitter: 0.5              # Random spread of the gaps, 0 (exact) to 1
   target_concurrency: 1.0  # Target concurrent requests (higher = faster)
 ```
 
-`network.timeout`, `network.retries`, `output.images_subdir` and the `throttle` settings other than `enabled`, `min_delay` and `image_delay` have no command-line option, so the config file is the only way to change them from the CLI. The library reads no config file; it takes the same settings as [options](library.md#options).
+`network.timeout`, `network.retries`, `output.images_subdir` and the `throttle` settings other than `enabled`, `min_delay` and `image_delay` (such as `jitter`) have no command-line option, so the config file is the only way to change them from the CLI. The library reads no config file; it takes the same settings as [options](library.md#options).
 
 ## Proxies
 
