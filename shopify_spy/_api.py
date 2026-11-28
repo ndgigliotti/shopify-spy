@@ -408,7 +408,8 @@ class AsyncScrapeRun(_BaseRun):
     """A scrape in progress (async). ``async for``, ``async with``, or ``await`` it.
 
     Leaving ``async for`` early stops the run once the iterator is cleaned up;
-    ``async with`` (or ``aclose()``) stops it right away.
+    ``async with`` (or ``aclose()``) stops it right away, and an iterator still open
+    then ends.
     """
 
     def __aiter__(self) -> AsyncIterator[dict[str, Any]]:

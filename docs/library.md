@@ -45,7 +45,7 @@ With nothing to install, an agent can learn a store's item shape and then write 
 
 - Iterating the run yourself, or passing it to `write_items()`, streams. `run.collect()` and `list(run)` hold every item in memory.
 - `run.result` (the per-store results) is available once iteration ends, and `run.stores` gives a snapshot mid-run.
-- Leaving early (`break`, `run.close()`, or the end of a `with spy.scrape(...) as run:` block) stops the run. Stores that hadn't finished get the `finish_reason` `closed`.
+- Leaving early (`break`, `run.close()`, or the end of a `with spy.scrape(...) as run:` block) stops the run and drops the items it had fetched but not yet handed over, so an iterator still open just ends. Stores that hadn't finished get the `finish_reason` `closed`.
 
 ## Failures
 

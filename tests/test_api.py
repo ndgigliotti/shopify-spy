@@ -853,3 +853,15 @@ def test_each_store_starts_with_the_first_profile():
     for store in (STORE, other_store):
         sent = [r.identity.impersonate for r in fetcher.requests if r.url == bulk_url(1, store)]
         assert sent == ["chrome", "safari"]
+
+
+async def test_aclose_after_the_run_finished_drops_buffered_items():
+    async with asyncio.timeout(5):
+        run = spy.scrape_async(STORE, fetcher_factory=fake(ok_routes(n=3)), **FAST)
+        items = aiter(run)
+        await anext(items)
+        await asyncio.sleep(0.1)  # the driver finishes, leaving two items queued
+        await run.aclose()
+        assert [item async for item in items] == []
+    assert run.result.stores[0].finish_reason == "finished"
+
