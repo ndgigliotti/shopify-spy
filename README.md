@@ -100,7 +100,7 @@ An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an i
   - `--help` prints plain, untruncated text when piped, with every default, examples, where results go and what each exit code means.
   - Items are plain dicts with typed definitions, and `help(spy.scrape)` documents every library option, so an agent can write a script without reading the source.
   - `--peek` prints one item to stdout for a quick look at its shape; warnings go to stderr, so stdout stays valid JSONL.
-  - Every run writes a machine-readable status file with each store's status, the library suggests a fix for some failures (such as a likely wrong platform), and the exit code says whether any store produced items.
+  - Every run writes a machine-readable status file with each store's status and a suggested fix for some failures (such as a likely wrong platform), and the exit code says whether any store produced items.
 - **Failure diagnostics.** A failed store gets a status saying what went wrong (403, 404, robots.txt, 429 rate limits, 5xx errors, TLS errors, timeout, no response). When a run returns 0 items, the tool explains the likely cause and suggests flags to try, including the other `--platform` when a store looks like it runs on it. See [Troubleshooting](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.1/docs/troubleshooting.md).
 - **Python library.** `import shopify_spy` gives the same scraping engine as the CLI, with items as typed plain dicts and failures that are never silent.
 - **Spreadsheet-ready output.** JSONL, JSON, CSV, Excel and XML, with a unified schema shared by every platform.

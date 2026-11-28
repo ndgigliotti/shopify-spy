@@ -654,6 +654,10 @@ def test_headless_store_products_come_from_its_myshopify_domain(tmp_path, stores
             "code": "ok",
             "products_from": "acme.myshopify.com",
             "identity_changes": 0,
+            "hint": (
+                "products came from acme.myshopify.com; "
+                "the store's own /products.json was not found"
+            ),
         }
     ]
     assert "http://acme.myshopify.com/products.json?limit=250&page=1" in [p for p, _ in records]

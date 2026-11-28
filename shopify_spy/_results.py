@@ -112,10 +112,10 @@ class StoreResult:
 
     @property
     def hint(self) -> str | None:
-        """Readable advice, e.g. "looks like WooCommerce; pass platform='woocommerce'"."""
+        """Readable advice, e.g. "looks like WooCommerce; use the woocommerce platform"."""
         if self.suggested_platform is not None:
             name = _PLATFORM_NAMES.get(self.suggested_platform, self.suggested_platform)
-            return f"looks like {name}; pass platform='{self.suggested_platform}'"
+            return f"looks like {name}; use the {self.suggested_platform} platform"
         # Otherwise a bad proxy reads as every store being down
         if self.via_proxy and self.status in (StoreStatus.no_response, StoreStatus.tls_error):
             if self.responses_by_status.get(407):

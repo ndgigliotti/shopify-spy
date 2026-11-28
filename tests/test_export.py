@@ -386,6 +386,7 @@ def test_status_file(tmp_path):
             "code": "forbidden",
             "products_from": None,
             "identity_changes": 0,
+            "hint": None,
         },
         {
             "url": "bad url",
@@ -394,6 +395,7 @@ def test_status_file(tmp_path):
             "code": "invalid_url",
             "products_from": None,
             "identity_changes": 0,
+            "hint": None,
         },
     ]
     assert data["duration_seconds"] == 1.2

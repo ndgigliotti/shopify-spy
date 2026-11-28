@@ -192,7 +192,7 @@ def test_errors_only_with_wordpress_gives_the_woocommerce_hint():
     _, result, _ = scrape_mg(routes)
     store = result.stores[0]
     assert store.status == "error"
-    assert store.hint == "looks like WooCommerce; pass platform='woocommerce'"
+    assert store.hint == "looks like WooCommerce; use the woocommerce platform"
 
 
 @pytest.mark.parametrize(
