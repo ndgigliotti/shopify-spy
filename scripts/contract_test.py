@@ -8,14 +8,20 @@ branch), then:
 
     python scripts/contract_test.py OLD/bin/shopify-spy NEW/bin/shopify-spy REPORT_DIR
 
-REPORT_DIR/report.md lists each case as SAME or DIFF. Against 0.2.4, the expected
-DIFFs are the deliberate changes in CHANGELOG.md: original-format images, `#`
-comments in URL files, the always-present CSV `collection` column, new --help
-options, and the version. Against 0.3.0, the CSV cases differ (one row per variant, one
-schema for both platforms), JSONL/JSON/XML items gain a `platform` field, and --help
-gains --schema.
+REPORT_DIR/report.md lists each case as SAME or DIFF. The run fails (exit 1) when the
+new CLI misses a case's expected outcome in EXPECT (exit code, and each store's status
+`code` and item count in the status file), or on any difference between the two CLIs
+that no `--allow-diff REGEX` (repeatable) approves. Each difference is one line,
+"CASE: what differs" (status file differences are one line per field), and a pattern
+approves the lines it matches with re.search. Approve only the deliberate changes the
+CHANGELOG lists, for example:
+
+    --allow-diff 'status: urls\\[\\d+\\]\\.(hint|identity_changes|products_from) added'
+
+--help and --version differences are reported but never fail the run.
 """
 
+import argparse
 import ast
 import base64
 import csv
@@ -34,7 +40,13 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-OLD, NEW, REPORT = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+_parser = argparse.ArgumentParser(description="Diff two shopify-spy CLIs on local stores.")
+_parser.add_argument("old", type=Path)
+_parser.add_argument("new", type=Path)
+_parser.add_argument("report", type=Path)
+_parser.add_argument("--allow-diff", action="append", default=[], metavar="REGEX")
+ARGS = _parser.parse_args()
+OLD, NEW, REPORT = ARGS.old.absolute(), ARGS.new.absolute(), ARGS.report.absolute()
 PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg=="
 )
@@ -120,6 +132,12 @@ def route(kind, base, path, query):
         return 200, "application/xml", urlset(*(f"{base}/products/p{i}" for i in range(3)))
     if path == "/sitemap_collections_1.xml":
         return 200, "application/xml", urlset(f"{base}/collections/c1", f"{base}/collections/c2")
+    if path == "/collections.json":
+        cols = [{"id": 900 + i, "title": f"Coll {i}", "handle": f"c{i}"} for i in (1, 2)]
+        return 200, "application/json", json.dumps({"collections": cols if page == 1 else []})
+    if m := re.fullmatch(r"/collections/([\w-]+)/products\.json", path):
+        products = [shopify_product(base, i) for i in range(3)] if page == 1 else []
+        return 200, "application/json", json.dumps({"products": products})
     if m := re.fullmatch(r"/products/p(\d+)\.json", path):
         return 200, "application/json", json.dumps({"product": shopify_product(base, int(m[1]))})
     if m := re.fullmatch(r"/collections/c(\d+)\.json", path):
@@ -206,6 +224,72 @@ def cases(work):
         "bail-off-failure": [s["notfound"], "--bail", "0"],
         "verbose": [s["shop"], "-v", "-n", "2"],
     }
+
+
+# What the new CLI must do in each case: its exit code, and for each store (a STORES key,
+# or "invalid" for a line that isn't a URL) the status file's `code` and the least
+# number of items. Cases without a status file (--peek) list no stores.
+OK = ("ok", 1)
+EXPECT = {
+    "shopify-jsonl": (0, {"shop": ("ok", 253)}),
+    "shopify-json": (0, {"shop": ("ok", 253)}),
+    "shopify-csv": (0, {"shop": ("ok", 253)}),
+    "shopify-xml": (0, {"shop": ("ok", 253)}),
+    "collections": (0, {"shop": ("ok", 255)}),
+    "collections-only": (0, {"shop": ("ok", 2)}),
+    "limit": (0, {"shop": ("ok", 5)}),
+    "sitemap-fallback": (0, {"fallback": ("ok", 3)}),
+    "woo": (0, {"woo": ("ok", 3)}),
+    "woo-csv": (0, {"woo": ("ok", 3)}),
+    "images": (0, {"shop": ("ok", 5)}),
+    "mixed-failures": (
+        0,
+        {"shop": ("ok", 3), "blocked": ("robots_blocked", 0), "notfound": ("not_found", 0)},
+    ),
+    "all-failed": (1, {"notfound": ("not_found", 0)}),
+    "peek": (0, {}),
+    # The URL file's WooCommerce store is read as Shopify, the default platform
+    "url-file": (0, {"shop": ("ok", 2), "invalid": ("invalid_url", 0), "woo": ("not_found", 0)}),
+    "url-file-comments": (0, {"shop": ("ok", 2)}),
+    "config-file": (0, {"shop": ("ok", 4)}),
+    "ignore-robots": (0, {"blocked": ("ok", 2)}),
+    "quiet": (0, {"shop": ("ok", 2)}),
+    "collections-csv": (0, {"shop": ("ok", 3)}),
+    "collections-xml": (0, {"shop": ("ok", 2)}),
+    "collections-json": (0, {"shop": ("ok", 2)}),
+    "woo-json": (0, {"woo": ("ok", 3)}),
+    "woo-xml": (0, {"woo": ("ok", 3)}),
+    "images-collections": (0, {"shop": ("ok", 3)}),
+    "network-flags": (0, {"shop": ("ok", 10)}),
+    "bail-off-failure": (1, {"notfound": ("not_found", 0)}),
+    "verbose": (0, {"shop": ("ok", 2)}),
+}
+
+
+def store_key(url):
+    for key, base in STORES.items():
+        if url.rstrip("/") == base:
+            return key
+    return "invalid"
+
+
+def check_expected(name, result):
+    """Notes for each way the result misses EXPECT[name]."""
+    exit_code, stores = EXPECT[name]
+    notes = []
+    if result["exit"] != exit_code:
+        notes.append(f"exit code {result['exit']}, expected {exit_code}")
+    entries = {store_key(u.get("url", "")): u for u in result["status"].get("urls", [])}
+    for key, (code, least) in stores.items():
+        entry = entries.get(key)
+        if entry is None:
+            notes.append(f"{key}: no status entry")
+            continue
+        if entry.get("code") != code:
+            notes.append(f"{key}: code {entry.get('code')!r}, expected {code!r}")
+        if (entry.get("items") or 0) < least:
+            notes.append(f"{key}: {entry.get('items')} items, expected at least {least}")
+    return notes
 
 
 # --- Normalization ---------------------------------------------------------------------
@@ -343,8 +427,28 @@ def compare_items(old_items, new_items):
 
 def strip_status(status):
     s = {k: v for k, v in status.items() if k not in ("duration_seconds", "log_file")}
-    s["urls"] = [{k: v for k, v in u.items() if k != "code"} for u in status.get("urls", [])]
+    s["urls"] = list(status.get("urls", []))
     return s
+
+
+def status_notes(old, new, path="status: "):
+    """One note per status file field that was added, removed or changed."""
+    if isinstance(old, dict) and isinstance(new, dict):
+        notes = []
+        for key in sorted(set(old) | set(new)):
+            sub = f"{path}{'' if path.endswith(' ') else '.'}{key}"
+            if key not in new:
+                notes.append(f"{sub} removed (was {canon(old[key])})")
+            elif key not in old:
+                notes.append(f"{sub} added ({canon(new[key])})")
+            else:
+                notes += status_notes(old[key], new[key], sub)
+        return notes
+    if isinstance(old, list) and isinstance(new, list) and len(old) == len(new):
+        return [
+            n for i, (o, w) in enumerate(zip(old, new)) for n in status_notes(o, w, f"{path}[{i}]")
+        ]
+    return [] if old == new else [f"{path}: old {canon(old)} new {canon(new)}"]
 
 
 def compare(old, new):
@@ -360,9 +464,7 @@ def compare(old, new):
         if oh != nh:
             notes.append(f"{rel}: CSV header old {oh} new {nh}")
         notes += [f"{rel}: {n}" for n in compare_items(oi or [], ni or [])]
-    so, sn = strip_status(old["status"]), strip_status(new["status"])
-    if so != sn:
-        notes.append(f"status: old {canon(so)} new {canon(sn)}")
+    notes += status_notes(strip_status(old["status"]), strip_status(new["status"]))
     extra = set(u.get("code") for u in new["status"].get("urls", []))
     for stream in ("stdout", "stderr"):
         if old[stream] != new[stream]:
@@ -384,20 +486,35 @@ def main():
     REPORT.mkdir(parents=True, exist_ok=True)
     work = REPORT / "work"
     lines = []
+    failures = []
+    approvals = [re.compile(p) for p in ARGS.allow_diff]
+    used = set()
     for name, args in cases(work).items():
         res = {
             v: run(b, args, work / v / name / "out", work / v / name / "cwd")
             for v, b in (("old", OLD), ("new", NEW))
         }
         notes, codes = compare(res["old"], res["new"])
-        verdict = "SAME" if not notes else "DIFF"
+        missed = check_expected(name, res["new"])
+        unapproved = []
+        for note in notes:
+            matched = [a.pattern for a in approvals if a.search(f"{name}: {note}")]
+            used.update(matched)
+            if not matched:
+                unapproved.append(note)
+        verdict = "SAME" if not notes else "DIFF" if unapproved else "DIFF (approved)"
+        failures += [f"{name}: unapproved: {n.splitlines()[0][:200]}" for n in unapproved]
+        if missed:
+            verdict += ", UNEXPECTED"
+            failures.append(f"{name}: {'; '.join(missed)}")
         exits = f"exit old {res['old']['exit']} / new {res['new']['exit']}"
         lines.append(
             f"## {name}: {verdict}  ({exits}; status codes {sorted(c for c in codes if c)})"
         )
+        lines += [f"- expected: {m}" for m in missed]
         lines += [f"- {n}" for n in notes]
         (REPORT / f"{name}.json").write_text(json.dumps(res, indent=1, default=str)[:2_000_000])
-        print(lines[-1 - len(notes)], flush=True)
+        print(lines[-1 - len(notes) - len(missed)], flush=True)
     for flags in (["--help"], ["scrape", "--help"], ["--version"]):
         o = subprocess.run([str(OLD), *flags], capture_output=True, text=True).stdout
         n = subprocess.run([str(NEW), *flags], capture_output=True, text=True).stdout
@@ -408,6 +525,12 @@ def main():
         lines += ["    " + x for x in d[2:80]]
     (REPORT / "report.md").write_text("\n".join(lines) + "\n")
     print(f"report: {REPORT / 'report.md'}")
+    for pattern in ARGS.allow_diff:
+        if pattern not in used:
+            print(f"note: --allow-diff {pattern!r} matched nothing", file=sys.stderr)
+    if failures:
+        print("FAILED:\n  " + "\n  ".join(failures), file=sys.stderr)
+        sys.exit(1)
 
 
 main()
