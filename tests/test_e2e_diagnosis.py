@@ -384,7 +384,7 @@ def test_crawl_delay_spaces_requests_without_throttle(tmp_path, stores, transpor
 def test_min_delay_spaces_requests(tmp_path, stores, transport):
     """Default throttling keeps requests to one host --min-delay apart."""
     url = stores("spaced")
-    statuses = _run(tmp_path, [url], "--min-delay", "1.5", *transport)
+    statuses = _run(tmp_path, [url], "--min-delay", "1.5", *transport, throttle_floors=True)
     assert statuses[url] == "ok"
     arrivals = [t for _, t in stores.servers["spaced"].RequestHandlerClass.arrivals]
     assert len(arrivals) == 3  # robots.txt and two pages
