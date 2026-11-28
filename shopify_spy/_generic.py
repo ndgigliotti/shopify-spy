@@ -27,7 +27,7 @@ from shopify_spy import _sitemap as sitemap
 from shopify_spy._fetch import Response
 from shopify_spy._session import Emit, RequestFailed, StoreContext
 from shopify_spy._utils import canonicalize_url, hostname
-from shopify_spy._woocommerce import FETCH_CONCURRENCY, GONE, _site
+from shopify_spy._woocommerce import FETCH_CONCURRENCY, GONE, _site, moved_away
 
 __all__ = ["GenericError", "read_pages", "run"]
 
@@ -74,12 +74,15 @@ async def read_pages(
     With ``keep``, only the listed pages it accepts are fetched, and a sitemap that
     lists pages but none it accepts raises GenericError naming ``product_shape``,
     the URL shape ``keep`` looks for (a filter that misses the store's product
-    URLs would otherwise look like an empty store).
+    URLs would otherwise look like an empty store). Every page ``keep`` accepts is
+    a product page, so one without a Product makes the store incomplete.
     """
     if keep is not None and product_shape is None:
         raise ValueError("read_pages needs product_shape with keep")
     listing = _Listing(ctx, keep)
-    pages = _Pages(ctx, emit, listing, platform=platform, source=source)
+    pages = _Pages(
+        ctx, emit, listing, platform=platform, source=source, products_only=keep is not None
+    )
     await pages.run()
     if pages.emitted:
         return listing.complete and not pages.failed
@@ -287,6 +290,10 @@ class _Pages:
     Given ``urls``, it reads those instead of the listing's locs (a caller that
     already drained the listing); the listing then only names the sitemaps in
     ``reason()``.
+
+    With ``products_only``, every page read is a product page, so one that answers
+    without a Product is a missed product. Otherwise it may be one of the other
+    pages a generic store's sitemaps list (categories, blog posts), and isn't.
     """
 
     def __init__(
@@ -298,8 +305,10 @@ class _Pages:
         platform: str = "generic",
         source: str | None = None,
         urls: list[str] | None = None,
+        products_only: bool = False,
     ) -> None:
         self.ctx = ctx
+        self.products_only = products_only
         self._emit = emit
         self.listing = listing
         self.urls = urls
@@ -388,13 +397,13 @@ class _Pages:
             if response is None:
                 self.counts.skipped += 1
                 self._missed()
-            elif (node := self._node(response)) is not None:
+            elif (node := self._node(url, response)) is not None:
                 item = _item(node, response, self.ctx.images, self.platform, self.source)
                 await self._emit_item(item)
         finally:
             self._limiter.release()
 
-    def _node(self, response: Response) -> dict[str, Any] | None:
+    def _node(self, url: str, response: Response) -> dict[str, Any] | None:
         """The page's Product node, counting the page if it has none."""
         if not response.ok:
             # A 404 or 410 is a listed page that no longer exists
@@ -408,6 +417,8 @@ class _Pages:
                 return node
             logger.info("No schema.org Product on %s", response.url)
             self.counts.no_product += 1
+            missed = self.products_only and not moved_away(url, response)
+            self.failed = self.failed or missed
         self._missed()
         return None
 

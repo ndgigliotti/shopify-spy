@@ -170,6 +170,32 @@
   nothing, and a store's hint replaces the status hint it would otherwise share
   with other stores. The wrong-platform hint now reads the same in the CLI and the
   library (`looks like WooCommerce; use the woocommerce platform`).
+- A WooCommerce store read from its product pages picks the page's Product when
+  its `@id` or `url` is written with `http://` on an `https://` page, beside a
+  related product, and a listed product page with no Product data for it makes the
+  store `partial` instead of being skipped (not the shop page Yoast lists in its
+  product sitemap, nor a listed page that redirects to another path, as a
+  deleted product sent to its category does).
+- A Squarespace store whose listed `/<collection>/p/<slug>` page answers without
+  Product data is `partial`, when product pages are read by default and when an
+  `--ignore-robots` run falls back to them; before, only the pages read after the
+  collections counted; a listed page that redirects to another path doesn't
+  count. A generic store's sitemaps can list pages that aren't
+  products, so they still don't count there.
+- A `ProductGroup` that lists some variants in `hasVariant` while others name it
+  in `isVariantOf` keeps all of them, skipping an `isVariantOf` one whose `@id`
+  or `sku` a listed one has, for generic, Squarespace and WooCommerce product-page items; before, the
+  `isVariantOf` ones were dropped when `hasVariant` was set.
+- A BigCommerce product whose later variants page fails (or that stops at the
+  2,500-variant bound) keeps the variants read so far and makes the store
+  `partial`, instead of `ok`.
+- A Magento store that caps the page size without an error (its first answer's
+  `page_info.page_size` smaller than the 100 asked for) is paged with that size,
+  and paging follows `page_info.total_pages`; before, such a store stopped after
+  its first page and reported `ok`.
+- A Magento page with a null product and a GraphQL error whose `path` names it
+  keeps its other products and makes the store `partial`; a null without such an
+  error (a hidden product) still leaves it `ok`.
 - Appending to a CSV with `fields` in another order than the file's header wrote
   values under the wrong columns; rows now follow the header's order, and `fields`
   naming other columns raises `ValueError` before anything is written.

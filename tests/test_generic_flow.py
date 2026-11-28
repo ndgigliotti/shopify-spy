@@ -958,3 +958,42 @@ def test_read_pages_with_empty_sitemap_is_still_empty(read_pages):
 async def test_read_pages_needs_product_shape_with_keep():
     with pytest.raises(ValueError, match="product_shape"):
         await generic.read_pages(None, None, keep=is_product)
+
+
+def test_group_variants_from_has_variant_and_is_variant_of_are_all_exported():
+    group = {
+        "@type": "ProductGroup",
+        "@id": f"{url(0)}#group",
+        "name": "Tee",
+        "url": url(0),
+        "hasVariant": [{"@id": f"{url(0)}#s"}],
+    }
+
+    def size(sku):
+        return {
+            "@type": "Product",
+            "@id": f"{url(0)}#{sku.lower()}",
+            "sku": sku,
+            "isVariantOf": {"@id": f"{url(0)}#group"},
+            "offers": {"@type": "Offer", "price": "10.00", "priceCurrency": "USD"},
+        }
+
+    routes = {
+        SITEMAP: urlset(url(0)),
+        url(0): product_page({"@graph": [group, size("S"), size("L")]}),
+    }
+    items, _, _ = scrape_ld(routes)
+    [item] = items
+    assert [v["sku"] for v in item["hasVariant"]] == ["S", "L"]
+
+
+def test_generic_pages_without_a_product_do_not_make_the_store_partial():
+    # A generic sitemap can list category and info pages beside the products
+    routes = store(2) | {
+        SITEMAP: urlset(f"{STORE}/about", url(0), url(1)),
+        f"{STORE}/about": blank_page(),
+    }
+    items, result, _ = scrape_ld(routes)
+    assert len(items) == 2
+    assert result.stores[0].status == "ok"
+    assert result.stores[0].complete

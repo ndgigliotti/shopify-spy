@@ -690,3 +690,46 @@ def test_a_record_without_a_full_url_has_no_html_url():
     # The listed page wasn't matched, so it is read too
     assert [i["source"] for i in items] == ["format_json", "product_page"]
     assert result.stores[0].status == "ok"
+
+
+def test_a_listed_product_page_without_product_data_is_partial():
+    routes = store()
+    routes[url("mug")] = html()
+    items, result, _ = scrape_sq(routes)
+    assert sorted(i["html_url"] for i in items) == [url("cap"), url("tee")]
+    [s] = result.stores
+    assert s.status == "partial"
+    assert s.complete is False
+
+
+@pytest.mark.parametrize("status", [404, 410])
+def test_a_gone_listed_product_page_stays_complete(status):
+    routes = store()
+    routes[url("mug")] = (status, "")
+    _, result, _ = scrape_sq(routes)
+    [s] = result.stores
+    assert s.status == "ok"
+    assert s.complete
+
+
+def test_a_listed_product_page_redirected_to_a_listing_stays_complete():
+    # A deleted product sent to its collection, the way a 404 would say it's gone
+    from tests.flow_support import redirect
+
+    routes = store()
+    routes[url("mug")] = redirect(f"{STORE}/shop")
+    routes[f"{STORE}/shop"] = html()
+    _, result, _ = scrape_sq(routes)
+    [s] = result.stores
+    assert s.status == "ok"
+    assert s.complete
+
+
+def test_a_product_page_without_product_data_in_the_fallback_is_partial():
+    routes = store(json=(403, ""))
+    routes[url("mug")] = html()
+    items, result, _ = scrape_json(routes)
+    assert sorted(i["html_url"] for i in items) == [url("cap"), url("tee")]
+    [s] = result.stores
+    assert s.status == "partial"
+    assert s.complete is False

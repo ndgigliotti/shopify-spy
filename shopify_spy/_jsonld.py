@@ -111,6 +111,15 @@ def _strip_fragment(url: Any) -> str:
     return url.split("#", 1)[0].rstrip("/") if isinstance(url, str) else ""
 
 
+_HTTP_SCHEME = re.compile(r"^https?://", re.I)
+
+
+def _identity(url: Any) -> str:
+    """A URL without its fragment, trailing slash or ``http``/``https`` scheme: SEO
+    plugins can write a product's ``@id`` as ``http://`` on an ``https://`` page."""
+    return _HTTP_SCHEME.sub("//", _strip_fragment(url))
+
+
 def _unmatched(products: list[dict[str, Any]], *, fallback: bool) -> dict[str, Any] | None:
     """The product for a page none of whose nodes names it.
 
@@ -133,7 +142,8 @@ def parse_product_page(
     The Product is a copy whose ``{"@id": ...}`` references are replaced by the
     nodes they name, from any of the page's scripts, and whose schema.org terms
     lose their namespace (``schema:name`` is ``name``). A group's variants written
-    as separate Products that name it in ``isVariantOf`` become its ``hasVariant``.
+    as separate Products that name it in ``isVariantOf`` join its ``hasVariant``,
+    unless an entry there has the same ``@id`` or ``sku``.
 
     With several products on the page (related products, say), the one whose
     ``url`` or ``@id`` is the page wins (or, failing that, the only one that is the
@@ -152,8 +162,7 @@ def parse_product_page(
             logger.debug("Unparseable JSON-LD on %s", url)
             continue
         products += _products(scripts[-1], groups=groups)
-    body = _BODY_CLASS.search(html)
-    match = body and _POST_ID.search(body.group(2))
+    match = _POST_ID.search(" ".join(body_classes(html)))
     post_id = int(match.group(1)) if match else None
     found = _pick(scripts, products, url, fallback=fallback)
     if found is None:
@@ -161,6 +170,12 @@ def parse_product_page(
         nodes = microdata.items(html, url)
         found = _pick(nodes, _products(nodes, groups=groups), url, fallback=fallback)
     return found, post_id
+
+
+def body_classes(html: str) -> list[str]:
+    """The classes on the page's ``<body>`` (WordPress names the page type there)."""
+    body = _BODY_CLASS.search(html)
+    return body.group(2).split() if body else []
 
 
 def _pick(
@@ -173,8 +188,16 @@ def _pick(
     if found is None:
         return None
     product = graph.resolve(found)
-    if variants.get(id(found)) and not product.get("hasVariant"):
-        product["hasVariant"] = [graph.resolve(v) for v in variants[id(found)]]
+    if variants.get(id(found)):
+        listed = product.get("hasVariant")
+        merged = listify(listed) if listed is not None else []
+        # Only hasVariant's own entries count as duplicates: variants without
+        # their own SKU inherit the group's, so two of them can share one
+        known = {key for v in merged for key in graph.variant_keys(v)}
+        merged += [
+            graph.resolve(v) for v in variants[id(found)] if not graph.variant_keys(v) & known
+        ]
+        product["hasVariant"] = merged
     return product
 
 
@@ -241,18 +264,32 @@ class _Graph:
                 variants.setdefault(id(group), []).append(product)
         return kept, variants
 
+    def variant_keys(self, variant: Any) -> set[str]:
+        """What identifies a variant across ``hasVariant`` and ``isVariantOf``: its
+        ``@id`` (either scheme) and ``sku``. Not its ``url``, which variants can share
+        with the page."""
+        if not isinstance(variant, dict):
+            return set()
+        keys = set()
+        if isinstance(ref := variant.get("@id"), str) and ref.strip():
+            keys.add(f"@id:{_HTTP_SCHEME.sub('//', self.key(ref))}")
+        if (sku := text(variant.get("sku"))) and sku.strip():
+            keys.add(f"sku:{sku.strip()}")
+        return keys
+
     def page_product(self, products: list[dict[str, Any]]) -> dict[str, Any] | None:
         """The product whose ``url`` or ``@id`` is the page, else the only one that
         is the page but for the query string (a ``?variant=`` URL, say). Several
-        such are a group's variants, written beside it."""
-        page = _strip_fragment(self.url)
+        such are a group's variants, written beside it. ``http`` and ``https``
+        name the same page."""
+        page = _identity(self.url)
         if not page:
             return None
         bare = page.split("?", 1)[0].rstrip("/")
         loose = []
         for product in products:
             names = {
-                _strip_fragment(self.key(v))
+                _identity(self.key(v))
                 for v in (product.get("url"), product.get("@id"))
                 if isinstance(v, str) and v
             }
