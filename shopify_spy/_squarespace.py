@@ -189,6 +189,7 @@ class _JsonSource:
             self.counts.checked -= 1
             return None
         if not response.ok:
+            logger.info("%s answered %d", url, response.status)
             # A 404 or 410 is a collection that no longer exists
             self.incomplete = self.incomplete or response.status not in GONE
             self.counts.statuses[response.status] += 1

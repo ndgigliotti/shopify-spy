@@ -443,9 +443,10 @@ def test_one_collection_failing_beside_items_is_partial(caplog, spec):
     [html(), {"collection": {}}, (503, ""), FetchConnectionError("connection refused")],
     ids=["html", "json-without-items", "503", "no-response"],
 )
-def test_a_failing_later_page_with_every_listed_product_read_is_partial(spec):
+def test_a_failing_later_page_with_every_listed_product_read_is_partial(caplog, spec):
     # Every listed product comes from the first page, so only the failed page
     # itself can make the store partial
+    caplog.set_level(logging.INFO, logger="shopify_spy")
     routes = store(2)
     routes[json_url("/shop")] = collection(
         record("tee"),
@@ -459,6 +460,8 @@ def test_a_failing_later_page_with_every_listed_product_read_is_partial(spec):
     [s] = result.stores
     assert s.status == "partial"
     assert s.complete is False
+    page = json_url("/shop", "offset=2")
+    assert any(m.startswith(("Request failed:", page)) and page in m for m in caplog.messages)
 
 
 def test_a_gone_collection_leaves_its_listed_products_missing(caplog):
