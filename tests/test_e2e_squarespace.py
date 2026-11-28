@@ -43,7 +43,8 @@ def _variant(vid, attributes, price, *, sale=None, quantity=3):
         "attributes": attributes,
         "onSale": sale is not None,
         "priceMoney": {"currency": "USD", "value": price},
-        "stock": {"quantity": quantity, "unlimited": False},
+        "unlimited": False,
+        "qtyInStock": quantity,
     }
     if sale is not None:
         variant["salePriceMoney"] = {"currency": "USD", "value": sale}

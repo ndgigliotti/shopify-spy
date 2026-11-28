@@ -535,7 +535,7 @@ def _squarespace_variant(
             "sku": variant.get("sku"),
             "price": price,
             "compare_at_price": regular_price if _below(price, regular_price) else None,
-            "available": _squarespace_available(variant.get("stock")),
+            "available": _squarespace_available(variant),
             "variant_image_url": image.get("assetUrl"),
         }
         | {f"option{i + 1}": v for i, v in enumerate(values[:3])}
@@ -555,13 +555,11 @@ def _squarespace_options(content: dict[str, Any], variants: list[dict[str, Any]]
     return list(seen)
 
 
-def _squarespace_available(stock: Any) -> bool | None:
-    """In stock when unlimited or the quantity is positive; None without a stock."""
-    if not isinstance(stock, dict):
-        return None
-    if stock.get("unlimited") is True:
+def _squarespace_available(variant: dict[str, Any]) -> bool | None:
+    """In stock when ``unlimited`` or ``qtyInStock`` is positive; None without a quantity."""
+    if variant.get("unlimited") is True:
         return True
-    quantity = stock.get("quantity")
+    quantity = variant.get("qtyInStock")
     if isinstance(quantity, bool) or not isinstance(quantity, (int, float)):
         return None
     return quantity > 0

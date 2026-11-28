@@ -81,7 +81,8 @@ def record(slug, collection="shop", **extra):
                     "attributes": {},
                     "onSale": False,
                     "priceMoney": {"currency": "USD", "value": "20.00"},
-                    "stock": {"quantity": 3, "unlimited": False},
+                    "unlimited": False,
+                    "qtyInStock": 3,
                     "mainImage": {"assetUrl": f"https://images.test/{slug}-v.jpg"},
                 }
             ],

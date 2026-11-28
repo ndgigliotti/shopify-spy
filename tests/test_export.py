@@ -1360,7 +1360,8 @@ def _sq_variant(vid, price, attributes, *, sale=None, quantity=3, image=None):
         "attributes": attributes,
         "onSale": sale is not None,
         "priceMoney": {"currency": "USD", "value": price},
-        "stock": {"quantity": quantity, "unlimited": False},
+        "unlimited": False,
+        "qtyInStock": quantity,
     }
     if sale is not None:
         variant["salePriceMoney"] = {"currency": "USD", "value": sale}
@@ -1467,15 +1468,15 @@ def test_csv_squarespace_options_without_an_ordering_follow_the_variants(tmp_pat
 @pytest.mark.parametrize(
     ("stock", "available"),
     [
-        ({"quantity": 0, "unlimited": True}, "true"),
-        ({"quantity": 2, "unlimited": False}, "true"),
-        ({"quantity": 0, "unlimited": False}, "false"),
-        ({"quantity": "lots"}, ""),
-        (None, ""),
+        ({"qtyInStock": 0, "unlimited": True}, "true"),
+        ({"qtyInStock": 2, "unlimited": False}, "true"),
+        ({"qtyInStock": 0, "unlimited": False}, "false"),
+        ({"qtyInStock": "lots", "unlimited": False}, ""),
+        ({"qtyInStock": None, "unlimited": None}, ""),
     ],
 )
 def test_csv_squarespace_availability(tmp_path, stock, available):
-    variant = _sq_variant("v1", "5", {}) | {"stock": stock}
+    variant = _sq_variant("v1", "5", {}) | stock
     path = tmp_path / "out.csv"
     write_items([SQUARESPACE_PRODUCT | {"structuredContent": {"variants": [variant]}}], path)
     (row,) = read_csv(path)
@@ -1497,7 +1498,7 @@ def test_csv_squarespace_product_without_variants_gets_one_row(tmp_path):
     [
         {"structuredContent": {"variants": "many"}},
         {"structuredContent": {"variants": [None, {"priceMoney": None, "attributes": []}]}},
-        {"structuredContent": {"variants": [{"priceMoney": {"value": "abc"}, "stock": []}]}},
+        {"structuredContent": {"variants": [{"priceMoney": {"value": "abc"}, "qtyInStock": []}]}},
         {"addedOn": "yesterday", "updatedOn": True, "publishOn": float("nan")},
         {"addedOn": 10**20},
         {"tags": "one, two", "categories": None, "items": None, "assetUrl": None},

@@ -199,8 +199,8 @@ With `--platform squarespace`, an item's shape depends on where it was read from
     "productType": 1,
     "variantOptionOrdering": ["Color", "Size"],
     "variants": [
-      { "id": "v1", "sku": "TEE-RED-S", "attributes": { "Color": "Red", "Size": "S" }, "onSale": true, "priceMoney": { "currency": "USD", "value": "20.00" }, "salePriceMoney": { "currency": "USD", "value": "15.00" }, "stock": { "quantity": 4, "unlimited": false } },
-      { "id": "v2", "sku": "TEE-RED-M", "attributes": { "Color": "Red", "Size": "M" }, "onSale": false, "priceMoney": { "currency": "USD", "value": "20.00" }, "salePriceMoney": { "currency": "USD", "value": "0.00" }, "stock": { "quantity": 0, "unlimited": false } }
+      { "id": "v1", "sku": "TEE-RED-S", "attributes": { "Color": "Red", "Size": "S" }, "onSale": true, "priceMoney": { "currency": "USD", "value": "20.00" }, "salePriceMoney": { "currency": "USD", "value": "15.00" }, "unlimited": false, "qtyInStock": 4 },
+      { "id": "v2", "sku": "TEE-RED-M", "attributes": { "Color": "Red", "Size": "M" }, "onSale": false, "priceMoney": { "currency": "USD", "value": "20.00" }, "salePriceMoney": { "currency": "USD", "value": "0.00" }, "unlimited": false, "qtyInStock": 0 }
     ]
   },
   "store": "store.com",
@@ -274,7 +274,7 @@ The unified schema has one row per variant and a plain value in every cell (no e
 | `option1`-`option3` | the variant's option values | the variation's attribute values, in the product's attribute order | the variant's option labels, in `configurable_options` order | the variant's option values, in `productOptions` order | the variant's `variesBy` values, in `variesBy` order | the variant's `attributes` values, in `options` order |
 | `price` | the variant's price | `price` | the final price (the variant's, else the product's minimum) | `prices.price` (the variant's, else the product's) | the lowest offer price (the variant's or offer's, else the product's) | `salePriceMoney.value` when `onSale`, else `priceMoney.value` |
 | `compare_at_price` | the variant's `compare_at_price` | `regular_price`, only when `price` is below it | the regular price, only when `price` is below it | the first of `basePrice` and `retailPrice` (MSRP) that `price` is below | a `ListPrice` or `StrikethroughPrice`, only when `price` is below it | `priceMoney.value`, only when `price` is below it |
-| `available` | the variant's `available` | `is_in_stock` | `stock_status` is `IN_STOCK` | `inventory.isInStock` | `availability` isn't `OutOfStock`, `SoldOut` or `Discontinued` (an `AggregateOffer` without one has an in-stock offer's among its `offers`, if any) | `stock.unlimited`, or `stock.quantity` above 0 |
+| `available` | the variant's `available` | `is_in_stock` | `stock_status` is `IN_STOCK` | `inventory.isInStock` | `availability` isn't `OutOfStock`, `SoldOut` or `Discontinued` (an `AggregateOffer` without one has an in-stock offer's among its `offers`, if any) | `unlimited`, or `qtyInStock` above 0 |
 | `grams`, `requires_shipping`, `taxable`, `variant_position` | the variant's | | | | | |
 | `variant_image_url` | the variant's | | the variant product's `image.url` | the variant's `defaultImage.urlOriginal` | the variant's first `image` | the variant's `mainImage.assetUrl` |
 | `url` | the scraped JSON document | | | | | |
@@ -338,7 +338,7 @@ cat output/data/*.jsonl | jq 'select(.platform == "bigcommerce") | {name, sku, p
 cat output/data/*.jsonl | jq 'select(.platform == "jsonld") | {name, html_url, offers}'
 
 # Squarespace (--ignore-robots): each variant's SKU, price and stock
-cat output/data/*.jsonl | jq 'select(.source == "format_json") | {title, variant: .structuredContent.variants[] | {sku, price: .priceMoney.value, stock}}'
+cat output/data/*.jsonl | jq 'select(.source == "format_json") | {title, variant: .structuredContent.variants[] | {sku, price: .priceMoney.value, unlimited, qtyInStock}}'
 
 # Unified schema (--schema unified): the same fields on every platform, a line per variant
 cat output/data/*.jsonl | jq -r '[.platform, .title, .variant_title, .price] | @tsv'
