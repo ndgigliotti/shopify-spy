@@ -34,7 +34,6 @@ from shopify_spy._summary import (
     is_bigcommerce,
     is_jsonld,
     is_magento,
-    jsonld_id,
     magento_price,
     shopify_price_range,
     summarize,
@@ -401,7 +400,7 @@ def _jsonld(item: dict[str, Any]) -> list[dict[str, Any]]:
         return [
             product
             | {
-                "variant_id": jsonld_id(offer, ("sku", "@id", "url")),
+                "variant_id": jsonld.first_text(offer, ("sku", "@id", "url")),
                 "variant_title": jsonld.name(offer.get("name")),
                 "sku": jsonld.text(offer.get("sku")),
             }
@@ -423,7 +422,7 @@ def _jsonld_variant(
     return (
         product
         | {
-            "variant_id": jsonld_id(variant, ("productID", "sku", "@id")),
+            "variant_id": jsonld.first_text(variant, ("productID", "sku", "@id")),
             "variant_title": title,
             "sku": jsonld.text(variant.get("sku")),
             "variant_image_url": images[0] if images else None,

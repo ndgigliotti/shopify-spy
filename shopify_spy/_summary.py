@@ -223,11 +223,6 @@ def jsonld_prices(item: dict[str, Any]) -> tuple[Decimal | None, Decimal | None,
     return min(amounts), max(amounts), currency
 
 
-def jsonld_id(node: dict[str, Any], keys: tuple[str, ...]) -> str | None:
-    """The first of ``keys`` that has a string (or number) value."""
-    return next((v for key in keys if (v := jsonld.text(node.get(key)))), None)
-
-
 def _jsonld(item: dict[str, Any]) -> ItemSummary:
     low, high, currency = jsonld_prices(item)
     # Not ``image_urls``, which is filled only with --images
@@ -235,7 +230,7 @@ def _jsonld(item: dict[str, Any]) -> ItemSummary:
     return ItemSummary(
         kind="product",
         platform="jsonld",
-        id=jsonld_id(item, ("productID", "productGroupID", "sku", "@id")),
+        id=jsonld.first_text(item, ("productID", "productGroupID", "sku", "@id")),
         title=jsonld.name(item.get("name")),
         min_price=low,
         max_price=high,

@@ -303,6 +303,11 @@ def text(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def first_text(node: dict[str, Any], keys: tuple[str, ...]) -> str | None:
+    """The first of ``keys`` that has a string (or number) value."""
+    return next((v for key in keys if (v := text(node.get(key)))), None)
+
+
 def unescaped(value: Any) -> str | None:
     """A text field unescaped until it stops changing: JSON-LD should be plain text,
     but pages escape it, sometimes twice (``&amp;amp;``, ``&amp;nbsp;``)."""
