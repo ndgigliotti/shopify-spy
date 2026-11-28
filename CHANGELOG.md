@@ -41,6 +41,20 @@
   default on a throttled store). Its hint names Shopify, WooCommerce or Magento when
   the store answers like one
   ([#93](https://github.com/ndgigliotti/shopify-spy/issues/93)).
+- A `squarespace` platform (`--platform squarespace`, `platform="squarespace"`)
+  for Squarespace Commerce stores. Squarespace's robots.txt disallows its
+  `?format=json` URLs, so by default it reads the product pages the store's sitemap
+  lists, as `generic` does, and never requests a `format=json` URL; those items are
+  `generic`-shaped with `platform: "squarespace"` and `source: "product_page"`. With
+  `--ignore-robots` (`respect_robots_txt=False`), it reads each collection's
+  `?format=json` pages instead, giving the Squarespace product records with every
+  variant, price and stock (`SquarespaceProductItem`, `source: "format_json"`), and
+  then reads the listed product pages its collections didn't give, as by default. The log says
+  which source each store used, and the unified schema has a row per variant (a
+  digital product, which has none, gets one row priced from its `structuredContent`). A
+  store read with `--ignore-robots` ends `partial` when a collection page or one of
+  those product pages can't be read
+  ([#91](https://github.com/ndgigliotti/shopify-spy/issues/91)).
 
 ### Changed
 

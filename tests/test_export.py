@@ -1353,3 +1353,209 @@ def test_csv_other_platforms_have_no_gtin_or_mpn(tmp_path):
     path = tmp_path / "out.csv"
     write_items([SHOPIFY_PRODUCT, WOO_PRODUCT, MAGENTO_SIMPLE], path)
     assert {(r["gtin"], r["mpn"]) for r in read_csv(path)} == {("", "")}
+
+
+def _sq_variant(vid, price, attributes, *, sale=None, quantity=3, image=None):
+    variant = {
+        "id": vid,
+        "sku": f"SKU-{vid}",
+        "attributes": attributes,
+        "onSale": sale is not None,
+        "priceMoney": {"currency": "USD", "value": price},
+        "unlimited": False,
+        "qtyInStock": quantity,
+    }
+    if sale is not None:
+        variant["salePriceMoney"] = {"currency": "USD", "value": sale}
+    if image:
+        variant["mainImage"] = {"assetUrl": image}
+    return variant
+
+
+SQUARESPACE_PRODUCT = {
+    "id": "5f1a2b",
+    "title": "Tee",
+    "urlId": "tee",
+    "fullUrl": "/shop/p/tee",
+    "body": "<p>Soft <b>cotton</b></p><p>Made here</p>",
+    "excerpt": "<p>Short</p>",
+    "tags": ["summer", "cotton"],
+    "categories": ["Shirts"],
+    "addedOn": 1767323045000,
+    "updatedOn": 1767323045999,
+    "publishOn": 1767323045000,
+    "assetUrl": "https://images.test/tee.jpg",
+    "items": [
+        {"assetUrl": "https://images.test/tee.jpg"},
+        {"assetUrl": "https://images.test/b.jpg"},
+    ],
+    "structuredContent": {
+        "variantOptionOrdering": ["Color", "Size"],
+        "variants": [
+            _sq_variant(
+                "v1",
+                "20.00",
+                {"Color": "Red", "Size": "S"},
+                sale="15.00",
+                image="https://i.test/v1.jpg",
+            ),
+            _sq_variant("v2", "20.00", {"Size": "M", "Color": "Red"}, quantity=0),
+        ],
+    },
+    "store": "sq.test",
+    "platform": "squarespace",
+    "html_url": "https://sq.test/shop/p/tee",
+    "image_urls": [],
+    "source": "format_json",
+}
+
+
+def test_csv_squarespace_format_json_rows(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([SQUARESPACE_PRODUCT], path)
+    first, second = read_csv(path)
+    for row in (first, second):
+        assert (row["platform"], row["kind"], row["source"]) == (
+            "squarespace",
+            "product",
+            "format_json",
+        )
+        assert (row["store"], row["html_url"]) == ("sq.test", "https://sq.test/shop/p/tee")
+        assert (row["id"], row["handle"], row["title"]) == ("5f1a2b", "tee", "Tee")
+        assert (row["tags"], row["categories"]) == ("summer, cotton", "Shirts")
+        assert row["options"] == "Color, Size"
+        assert (row["created_at"], row["updated_at"]) == (
+            "2026-01-02T03:04:05+00:00",
+            "2026-01-02T03:04:05+00:00",
+        )
+        assert row["description"] == "Soft cotton Made here"
+        assert (row["image_url"], row["image_count"]) == ("https://images.test/tee.jpg", "2")
+        assert (row["currency"], row["min_price"], row["max_price"]) == ("USD", "15.00", "20.00")
+        assert (row["on_sale"], row["variant_count"], row["url"]) == ("true", "2", "")
+    assert [r["variant_title"] for r in (first, second)] == ["Red / S", "Red / M"]
+    assert [(r["option1"], r["option2"], r["option3"]) for r in (first, second)] == [
+        ("Red", "S", ""),
+        ("Red", "M", ""),
+    ]
+    assert [(r["variant_id"], r["sku"]) for r in (first, second)] == [
+        ("v1", "SKU-v1"),
+        ("v2", "SKU-v2"),
+    ]
+    assert [(r["price"], r["compare_at_price"]) for r in (first, second)] == [
+        ("15.00", "20.00"),
+        ("20.00", ""),
+    ]
+    assert [r["available"] for r in (first, second)] == ["true", "false"]
+    assert [r["variant_image_url"] for r in (first, second)] == ["https://i.test/v1.jpg", ""]
+
+
+def test_csv_squarespace_options_without_an_ordering_follow_the_variants(tmp_path):
+    content = {
+        "variants": [
+            _sq_variant("v1", "5", {"Size": "S"}),
+            _sq_variant("v2", "5", {"Size": "M", "Color": "Blue"}),
+        ]
+    }
+    path = tmp_path / "out.csv"
+    write_items([SQUARESPACE_PRODUCT | {"structuredContent": content}], path)
+    first, second = read_csv(path)
+    assert first["options"] == "Size, Color"
+    assert [(r["variant_title"], r["option1"], r["option2"]) for r in (first, second)] == [
+        ("S", "S", ""),
+        ("M / Blue", "M", "Blue"),
+    ]
+    assert first["on_sale"] == "false"
+
+
+@pytest.mark.parametrize(
+    ("stock", "available"),
+    [
+        ({"qtyInStock": 0, "unlimited": True}, "true"),
+        ({"qtyInStock": 2, "unlimited": False}, "true"),
+        ({"qtyInStock": 0, "unlimited": False}, "false"),
+        ({"qtyInStock": "lots", "unlimited": False}, ""),
+        ({"qtyInStock": None, "unlimited": None}, ""),
+    ],
+)
+def test_csv_squarespace_availability(tmp_path, stock, available):
+    variant = _sq_variant("v1", "5", {}) | stock
+    path = tmp_path / "out.csv"
+    write_items([SQUARESPACE_PRODUCT | {"structuredContent": {"variants": [variant]}}], path)
+    (row,) = read_csv(path)
+    assert row["available"] == available
+
+
+def test_csv_squarespace_product_without_variants_gets_one_row(tmp_path):
+    item = SQUARESPACE_PRODUCT | {"structuredContent": {"variants": []}, "body": None}
+    path = tmp_path / "out.csv"
+    write_items([item], path)
+    (row,) = read_csv(path)
+    assert (row["variant_count"], row["variant_id"], row["price"]) == ("0", "", "")
+    # Without a body, the excerpt describes it
+    assert row["description"] == "Short"
+
+
+@pytest.mark.parametrize(
+    ("sale", "price", "compare_at", "on_sale"),
+    [(None, "10.00", "", "false"), ("7.50", "7.50", "10.00", "true")],
+)
+def test_csv_squarespace_digital_product_gets_a_priced_row(
+    tmp_path, sale, price, compare_at, on_sale
+):
+    # A live digital product (productType 2) record, trimmed: no variants, priced on
+    # structuredContent
+    item = json.loads(
+        (Path(__file__).parent / "fixtures" / "squarespace-digital-product.json").read_text()
+    )
+    if sale is not None:
+        item["structuredContent"] |= {
+            "onSale": True,
+            "salePriceMoney": {"currency": "USD", "value": sale},
+        }
+    item |= {"store": "paperandstuff.shop", "platform": "squarespace", "source": "format_json"}
+    path = tmp_path / "out.csv"
+    write_items([item], path)
+    (row,) = read_csv(path)
+    assert (row["price"], row["compare_at_price"], row["on_sale"]) == (price, compare_at, on_sale)
+    assert (row["currency"], row["min_price"], row["max_price"]) == ("USD", price, price)
+    assert (row["variant_count"], row["variant_id"], row["available"]) == ("1", "", "")
+    assert row["handle"] == "greeting-card-pile-mockup-a2-size"
+
+
+@pytest.mark.parametrize(
+    "odd",
+    [
+        {"structuredContent": {"variants": "many"}},
+        {"structuredContent": {"variants": [None, {"priceMoney": None, "attributes": []}]}},
+        {"structuredContent": {"variants": [{"priceMoney": {"value": "abc"}, "qtyInStock": []}]}},
+        {"addedOn": "yesterday", "updatedOn": True, "publishOn": float("nan")},
+        {"addedOn": 10**20},
+        {"tags": "one, two", "categories": None, "items": None, "assetUrl": None},
+    ],
+)
+def test_csv_squarespace_odd_records_never_raise(tmp_path, odd):
+    path = tmp_path / "out.csv"
+    write_items([SQUARESPACE_PRODUCT | odd], path)
+    rows = read_csv(path)
+    assert rows
+    assert {r["platform"] for r in rows} == {"squarespace"}
+
+
+def test_csv_squarespace_product_page_item_is_a_generic_row(tmp_path):
+    page_item = GENERIC_PRODUCT | {"platform": "squarespace", "source": "product_page"}
+    path = tmp_path / "out.csv"
+    write_items([GENERIC_PRODUCT, page_item], path)
+    generic_row, page_row = read_csv(path)
+    assert (page_row["platform"], page_row["source"]) == ("squarespace", "product_page")
+    assert (generic_row["platform"], generic_row["source"]) == ("generic", "")
+    unchanged = set(COLUMNS) - {"platform", "source", "image_paths"}
+    assert {c: page_row[c] for c in unchanged} == {c: generic_row[c] for c in unchanged}
+
+
+def test_item_platform_names_squarespace():
+    from shopify_spy._flatten import item_platform
+
+    page_item = GENERIC_PRODUCT | {"platform": "squarespace", "source": "product_page"}
+    assert item_platform(SQUARESPACE_PRODUCT) == "squarespace"
+    assert item_platform(page_item) == "squarespace"
+    assert item_platform({"platform": "squarespace", "structuredContent": None}) is None

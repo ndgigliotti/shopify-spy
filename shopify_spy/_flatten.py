@@ -11,8 +11,11 @@ its record (otherwise the product's). Magento products get a row per configurabl
 variant, with the variant's own price, SKU and stock (a simple product gets one row
 with its own). BigCommerce products get a row per variant in the same way, with the
 GraphQL ``edges``/``node`` connections read through. Generic products get a row per
-``hasVariant`` Product, else per offer in a list of offers, else one row. JSONL, JSON
-and XML keep each platform's native item shape.
+``hasVariant`` Product, else per offer in a list of offers, else one row; Squarespace
+items read from product pages are generic products. Squarespace ``?format=json``
+products get a row per ``structuredContent.variants`` entry, or one row priced from
+``structuredContent`` when there are none (a digital product). JSONL, JSON and XML keep
+each platform's native item shape.
 """
 
 from __future__ import annotations
@@ -21,11 +24,13 @@ import html
 import re
 import urllib.parse
 from collections.abc import Callable, Iterable
+from datetime import UTC, datetime
 from decimal import Decimal
 from html.parser import HTMLParser
 from typing import Any
 
 from shopify_spy import _jsonld as jsonld
+from shopify_spy import _squarespace as squarespace
 from shopify_spy._bigcommerce import image_list, nodes
 from shopify_spy._magento import _dig, gallery_urls
 from shopify_spy._summary import (
@@ -34,8 +39,11 @@ from shopify_spy._summary import (
     is_bigcommerce,
     is_generic,
     is_magento,
+    is_squarespace,
     magento_price,
     shopify_price_range,
+    squarespace_price,
+    squarespace_variants,
     summarize,
     woo_money,
 )
@@ -120,6 +128,8 @@ def _builder(item: dict[str, Any]) -> Callable[[dict[str, Any]], list[dict[str, 
         return _shopify_collection
     if is_magento(item):
         return _magento
+    if is_squarespace(item):
+        return _squarespace
     if is_generic(item):
         return _generic
     # Before WooCommerce: both have a prices dict
@@ -131,9 +141,11 @@ def _builder(item: dict[str, Any]) -> Callable[[dict[str, Any]], list[dict[str, 
 
 
 def item_platform(item: dict[str, Any]) -> str | None:
-    """``"shopify"``, ``"woocommerce"``, ``"magento"``, ``"bigcommerce"`` or
-    ``"generic"``; None when it isn't a scraped item."""
+    """``"shopify"``, ``"woocommerce"``, ``"magento"``, ``"bigcommerce"``, ``"generic"``
+    or ``"squarespace"``; None when it isn't a scraped item."""
     builder = _builder(item)
+    if builder is _generic:
+        return item["platform"]
     return _PLATFORMS.get(builder) if builder else None
 
 
@@ -373,7 +385,7 @@ def _generic(item: dict[str, Any]) -> list[dict[str, Any]]:
     names = [n for v in jsonld.listify(item.get("variesBy")) if (n := jsonld.term(v))]
     average, reviews = jsonld.rating(item.get("aggregateRating"))
     product = {
-        "platform": "generic",
+        "platform": item["platform"],
         "kind": "product",
         "store": item.get("store"),
         "id": summary.id,
@@ -395,6 +407,8 @@ def _generic(item: dict[str, Any]) -> list[dict[str, Any]]:
         "sku": jsonld.text(item.get("sku")),
         **jsonld.codes(item, *jsonld.listify(item.get("offers"))),
         **_jsonld_offer(item.get("offers")),
+        # "product_page" on Squarespace items; generic items have no source
+        "source": item.get("source"),
     } | _image_paths(item)
     if per_offer:
         return [
@@ -469,6 +483,104 @@ def _jsonld_value(value: Any) -> str | None:
 def _jsonld_names(value: Any) -> str:
     """``brand`` or ``category``: a string, a dict with a ``name``, or a list of either."""
     return _join(_jsonld_value(v) for v in jsonld.listify(value))
+
+
+def _squarespace(item: dict[str, Any]) -> list[dict[str, Any]]:
+    summary = summarize(item)
+    content: dict[str, Any] = item["structuredContent"]
+    variants = squarespace_variants(item)
+    names = _squarespace_options(content, variants)
+    images = squarespace.image_urls(item, variants=False)
+    product = {
+        "platform": "squarespace",
+        "kind": "product",
+        "store": item.get("store"),
+        "id": summary.id,
+        "handle": item.get("urlId"),
+        "title": summary.title,
+        "categories": _strings(item.get("categories")),
+        "tags": _strings(item.get("tags")),
+        "options": _join(names),
+        "created_at": _epoch_ms(item.get("addedOn")),
+        "updated_at": _epoch_ms(item.get("updatedOn")),
+        "published_at": _epoch_ms(item.get("publishOn")),
+        "description": _text(item.get("body")) or _text(item.get("excerpt")),
+        "html_url": item.get("html_url"),
+        "image_url": images[0] if images else None,
+        "image_count": len(images),
+        "currency": summary.currency,
+        "min_price": summary.min_price,
+        "max_price": summary.max_price,
+        "on_sale": any(v.get("onSale") is True for v in variants),
+        "variant_count": len(variants),
+        "source": item.get("source"),
+    } | _image_paths(item)
+    return [_squarespace_variant(product, v, names) for v in variants] or [product]
+
+
+def _squarespace_variant(
+    product: dict[str, Any], variant: dict[str, Any], names: list[str]
+) -> dict[str, Any]:
+    """A Squarespace variant's row; option1-3 follow the ``options`` column, and
+    attributes it lacks only join the title."""
+    attributes = variant.get("attributes") if isinstance(variant.get("attributes"), dict) else {}
+    values = [attributes.get(n) for n in names]
+    title = [*values, *(v for n, v in attributes.items() if n not in names)]
+    price, regular_price, _ = squarespace_price(variant)
+    image = variant.get("mainImage") if isinstance(variant.get("mainImage"), dict) else {}
+    return (
+        product
+        | {
+            "variant_id": variant.get("id"),
+            "variant_title": " / ".join(str(v) for v in title if v not in (None, "")) or None,
+            "sku": variant.get("sku"),
+            "price": price,
+            "compare_at_price": regular_price if _below(price, regular_price) else None,
+            "available": _squarespace_available(variant),
+            "variant_image_url": image.get("assetUrl"),
+        }
+        | {f"option{i + 1}": v for i, v in enumerate(values[:3])}
+    )
+
+
+def _squarespace_options(content: dict[str, Any], variants: list[dict[str, Any]]) -> list[str]:
+    """``variantOptionOrdering``, else the variants' attribute names in first-seen order."""
+    ordering = content.get("variantOptionOrdering")
+    if isinstance(ordering, list) and (names := [n for n in ordering if isinstance(n, str)]):
+        return names
+    seen: dict[str, None] = {}
+    for variant in variants:
+        attributes = variant.get("attributes")
+        if isinstance(attributes, dict):
+            seen.update((n, None) for n in attributes if isinstance(n, str))
+    return list(seen)
+
+
+def _squarespace_available(variant: dict[str, Any]) -> bool | None:
+    """In stock when ``unlimited`` or ``qtyInStock`` is positive; None without a quantity."""
+    if variant.get("unlimited") is True:
+        return True
+    quantity = variant.get("qtyInStock")
+    if isinstance(quantity, bool) or not isinstance(quantity, (int, float)):
+        return None
+    return quantity > 0
+
+
+def _epoch_ms(value: Any) -> str | None:
+    """Epoch milliseconds as ISO 8601 UTC, to the second; None for anything else."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        return datetime.fromtimestamp(value / 1000, tz=UTC).isoformat(timespec="seconds")
+    except (OverflowError, OSError, ValueError):  # NaN, or past datetime's range
+        return None
+
+
+def _strings(value: Any) -> str | None:
+    """A list of strings, joined; a string as it is."""
+    if isinstance(value, str):
+        return value
+    return _join(v for v in value if isinstance(v, str)) if isinstance(value, list) else None
 
 
 def _last_segment(value: Any) -> str | None:
@@ -598,6 +710,7 @@ _PLATFORMS: dict[Callable[[dict[str, Any]], list[dict[str, Any]]], str] = {
     _magento: "magento",
     _bigcommerce: "bigcommerce",
     _generic: "generic",
+    _squarespace: "squarespace",
 }
 
 
