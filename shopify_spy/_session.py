@@ -14,7 +14,7 @@ import dataclasses
 import logging
 import urllib.parse
 from collections import Counter
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
 
@@ -69,6 +69,7 @@ class RequestKind:
     # A 429 counts toward StoreStats.rate_limits: its pause holds up the store's data
     # (images come after the data they belong to)
     rate_limits: bool = True
+    success: bool = True  # a 2xx counts toward StoreStats.successes
     # A slot shared by every URL of this kind, instead of one per origin
     slot: str | None = None
     # Spaced by the throttle's image_delay instead of min_delay
@@ -375,6 +376,22 @@ class StoreSession:
             url = target
         raise RequestFailed(url, f"more than {MAX_REDIRECTS} redirects")
 
+    async def post(
+        self,
+        url: str,
+        body: bytes,
+        *,
+        headers: Mapping[str, str],
+        kind: RequestKind = STORE,
+    ) -> Response | None:
+        """POST a body; return None if robots.txt disallows the URL.
+
+        Never deduped, since every page of an API can share one URL. A 3xx is
+        returned, not followed: a browser would turn a 301-303 POST into a GET.
+        Raises like ``get()``.
+        """
+        return await self._fetch_with_retries(url, kind, method="POST", body=body, headers=headers)
+
     def _is_duplicate(self, url: str) -> bool:
         """Record the URL as requested; True (and counted) if it already was."""
         try:
@@ -475,6 +492,17 @@ class StoreSession:
         delay = self.retry.delay(attempt, retry_after, cap, rate_limited)
         return delay, self._excuse_from_bail(delay) if excused else None
 
+    def _count_response(self, response: Response, kind: RequestKind) -> None:
+        if kind.counted:
+            self.stats.responses += 1
+            self.stats.by_status[response.status] += 1
+            self.stats.successes += response.ok and kind.success
+
+    def _count_error(self, error: FetchError, kind: RequestKind) -> None:
+        if kind.counted:
+            self.stats.transport_errors[type(error).__name__] += 1
+            self.stats.tls_errors += isinstance(error, FetchTLSError)
+
     def _ends_request(
         self,
         url: str,
@@ -524,7 +552,15 @@ class StoreSession:
         await self._check_destination(url)
         return await self._allowed(url, kind)
 
-    async def _fetch_with_retries(self, url: str, kind: RequestKind) -> Response | None:
+    async def _fetch_with_retries(
+        self,
+        url: str,
+        kind: RequestKind,
+        *,
+        method: str = "GET",
+        body: bytes | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> Response | None:
         if not await self._cleared(url, kind):
             return None
         slot = self.registry.slot(url, kind.slot)
@@ -545,23 +581,23 @@ class StoreSession:
                     try:
                         response = await self.fetcher.fetch(
                             Request(
-                                method="GET",
+                                method=method,
                                 url=url,
                                 identity=sent,
                                 timeout=self.request_timeout,
+                                headers=headers or {},
+                                body=body,
                             )
                         )
                     except FetchError as exc:
                         error = exc
                 if response is not None:
                     slot.adjust(response.latency, response.status, sent_at)
-                    if kind.counted:
-                        self.stats.responses += 1
-                        self.stats.by_status[response.status] += 1
-                        self.stats.successes += response.ok
+                    self._count_response(response, kind)
                     limited = response.status == 429
                     logger.debug(
-                        "GET %s -> %d in %.2fs (attempt %d, %s)",
+                        "%s %s -> %d in %.2fs (attempt %d, %s)",
+                        method,
                         url,
                         response.status,
                         response.latency,
@@ -597,9 +633,7 @@ class StoreSession:
                     assert error is not None
                     limited = False
                     name = type(error).__name__
-                    if kind.counted:
-                        self.stats.transport_errors[name] += 1
-                        self.stats.tls_errors += isinstance(error, FetchTLSError)
+                    self._count_error(error, kind)
                     logger.debug("Error fetching %s: %s", url, error)
                     retryable = not isinstance(
                         error, (FetchTLSError, FetchTooLarge, FetchInvalidURL)

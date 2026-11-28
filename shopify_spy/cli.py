@@ -143,7 +143,10 @@ class _HelpCommand(_AdaptiveHelp, TyperCommand):
 app = typer.Typer(
     name="shopify-spy",
     cls=_HelpGroup,
-    help="Scrape product and collection data from Shopify, WooCommerce and Magento stores.",
+    help=(
+        "Scrape product and collection data from Shopify, WooCommerce, Magento and "
+        "BigCommerce stores."
+    ),
     epilog=f"{LIBRARY_EPILOG}\n\n{DOCS_EPILOG}",
     no_args_is_help=True,
     context_settings=CONTEXT_SETTINGS,
@@ -219,7 +222,7 @@ def main(
         ),
     ] = None,
 ) -> None:
-    """Shopify Spy - Scrape product data from Shopify, WooCommerce and Magento stores."""
+    """Shopify Spy - Scrape product data from Shopify, WooCommerce, Magento and BigCommerce."""
 
 
 @app.command(cls=_HelpCommand, epilog=SCRAPE_EPILOG)
@@ -244,7 +247,7 @@ def scrape(
         typer.Option(
             "--platform",
             "-p",
-            help="Ecommerce platform: shopify, woocommerce or magento "
+            help="Ecommerce platform: shopify, woocommerce, magento or bigcommerce "
             f"(default: {_DEFAULTS.scrape.platform.value}).",
             rich_help_panel=SCRAPE_PANEL,
         ),
@@ -253,7 +256,8 @@ def scrape(
         bool | None,
         typer.Option(
             "--products/--no-products",
-            help="Scrape products. Shopify only; WooCommerce and Magento always do "
+            help="Scrape products. Shopify only; WooCommerce, Magento and BigCommerce "
+            "always do "
             f"(default: {_on_off(_DEFAULTS.scrape.products)}).",
             rich_help_panel=SCRAPE_PANEL,
         ),
@@ -446,7 +450,7 @@ def scrape(
         ),
     ] = False,
 ) -> None:
-    """Scrape products and collections from Shopify, WooCommerce and Magento stores."""
+    """Scrape products and collections from Shopify, WooCommerce, Magento and BigCommerce stores."""
     # Load config file (or defaults)
     config = load_config(config_path)
 

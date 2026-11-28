@@ -20,6 +20,7 @@ class Platform(StrEnum):
     shopify = "shopify"
     woocommerce = "woocommerce"
     magento = "magento"
+    bigcommerce = "bigcommerce"
 
 
 class ScrapeConfig(BaseModel):
@@ -126,7 +127,7 @@ DEFAULT_CONFIG_YAML = """\
 # See https://github.com/ndgigliotti/shopify-spy for documentation
 
 scrape:
-  platform: shopify   # Platform: shopify, woocommerce, magento
+  platform: shopify   # Platform: shopify, woocommerce, magento, bigcommerce
   products: true      # Scrape product data (Shopify only)
   collections: false  # Scrape collection data (Shopify only)
   images: false       # Download product images
