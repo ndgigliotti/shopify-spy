@@ -710,6 +710,27 @@ def test_variants_401_refreshes_the_token():
     assert result.stores[0].status == "ok"
 
 
+def test_variants_401_after_a_products_page_refresh_refreshes_again():
+    home = Seq([homepage(TOKEN), homepage(FRESH), homepage(bc_token(sid=3))])
+    tokens = []
+
+    def respond(request):
+        body = json.loads(request.body)
+        tokens.append(request.headers["Authorization"].removeprefix("Bearer "))
+        if body["query"] == _QUERY:
+            if tokens[-1] == TOKEN:
+                return REJECTED
+            return answer([{"node": many_variants(250)}])
+        if tokens[-1] == FRESH:
+            return REJECTED
+        return variants_answer(250, 10)
+
+    items, result, _ = scrape({f"{STORE}/": home, ("POST", API): respond}, platform="bigcommerce")
+    assert tokens == [TOKEN, FRESH, FRESH, bc_token(sid=3)]
+    assert len(items[0]["variants"]["edges"]) == 260
+    assert result.stores[0].status == "ok"
+
+
 def test_token_never_logged(caplog):
     home = Seq([homepage(TOKEN), homepage(FRESH)])
     pages = {None: page(2, 0, "c1"), "c1": REJECTED}

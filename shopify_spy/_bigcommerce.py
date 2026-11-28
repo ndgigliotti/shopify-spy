@@ -388,11 +388,11 @@ class _Pager:
                 "BigCommerce GraphQL answered with errors for %s: %s", self.where, problem
             )
         logger.info("BigCommerce: %d products from %s", len(found), self.where)
+        self.refreshed = self.resized = False
         for node in found:
             if _dig(node, "variants", "pageInfo", "hasNextPage") is True:
                 await self._more_variants(node)
             await self.emit(_item(node, self.site, self.ctx.images))
-        self.refreshed = self.resized = False
         if _dig(products, "pageInfo", "hasNextPage") is not True:
             return True
         cursor = _dig(products, "pageInfo", "endCursor")
