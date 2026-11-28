@@ -61,7 +61,7 @@ pip install 'shopify-spy[excel]'
 
 ## Browser profiles
 
-[Browser profiles](cli.md#browser-profiles) come from [curl_cffi](https://github.com/lexiforest/curl_cffi), a dependency that every install includes; no extra is needed. It bundles a compiled libcurl, built by its maintainers, that sends browsers' TLS handshakes. Its wheels cover Linux (glibc and musl), macOS and Windows on x86-64 and ARM64, among others. Where no wheel fits, the installer builds it from source, and if that fails, Shopify Spy can't be installed there: `--user-agent` only changes which library sends requests.
+[Browser profiles](cli.md#browser-profiles) come from [curl_cffi](https://github.com/lexiforest/curl_cffi), a dependency that every install includes; no extra is needed. It bundles a compiled libcurl, built by its maintainers, that sends browsers' TLS handshakes. Its wheels cover Linux (glibc and musl), macOS and Windows on x86-64 and ARM64, among others. Where no wheel fits, the installer builds it from source, and if that fails, Shopify Spy can't be installed there: `--user-agent` also goes through curl_cffi.
 
 ## Nix
 

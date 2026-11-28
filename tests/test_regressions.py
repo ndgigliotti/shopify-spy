@@ -8,14 +8,12 @@ import signal
 import sys
 import time
 
-import httpx
 import pytest
-import respx
 
 import shopify_spy as spy
 from shopify_spy._config import Config
 from shopify_spy._export import write_items
-from shopify_spy._fetch import FakeFetcher, HttpxFetcher, Identity, Request
+from shopify_spy._fetch import FakeFetcher
 from tests.flow_support import FAST, STORE, bulk_url, products, scrape, urlset, woo_url
 
 
@@ -83,18 +81,6 @@ async def test_aclose_while_cancelled_still_finishes_result():
     except asyncio.CancelledError:
         pass
     assert run.result.stores[0].finish_reason == "closed"
-
-
-@respx.mock
-async def test_httpx_fetcher_never_stores_cookies():
-    respx.get("https://a.test/1").mock(
-        return_value=httpx.Response(200, headers={"Set-Cookie": "sid=abc; Path=/"})
-    )
-    second = respx.get("https://a.test/2").mock(return_value=httpx.Response(200))
-    async with HttpxFetcher(trust_env=False) as fetcher:
-        for path in ("/1", "/2"):
-            await fetcher.fetch(Request("GET", f"https://a.test{path}", Identity("ua"), 5))
-    assert "cookie" not in second.calls.last.request.headers
 
 
 def test_woocommerce_failure_after_items_is_partial():

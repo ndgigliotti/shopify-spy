@@ -1,4 +1,5 @@
-"""Tests for the transport layer: HttpxFetcher, FakeFetcher, ReplayFetcher."""
+"""Tests for the transport layer: plain CurlCffiFetcher requests, URL and proxy rules,
+FakeFetcher and ReplayFetcher."""
 
 import asyncio
 import base64
@@ -6,17 +7,13 @@ import gzip
 import http.server
 import json
 import socket
-import ssl
 import threading
 import time
 import zlib
 
-import httpx
 import pytest
-import respx
 
 from shopify_spy._fetch import (
-    ACCEPT_ENCODING,
     DEFAULT_IMPERSONATE,
     IMPERSONATE_PROFILES,
     CurlCffiFetcher,
@@ -27,13 +24,13 @@ from shopify_spy._fetch import (
     FetchTimeout,
     FetchTLSError,
     FetchTooLarge,
-    HttpxFetcher,
     Identity,
     ReplayFetcher,
     Request,
     Response,
     Seq,
-    _is_cert_error,
+    _decode,
+    _split_url,
     ca_locations,
     check_proxy_support,
     decompress,
@@ -112,12 +109,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif path == "/slow-headers":
             time.sleep(0.25)
             self._send(200, b"ok")
-        elif path == "/slow-body":
-            self.send_response(200)
-            self.send_header("Content-Length", "2")
-            self.end_headers()
-            time.sleep(0.25)
-            self.wfile.write(b"ok")
         elif path == "/mixed-case":
             self._send(200, b"ok", {"X-Custom-Header": "Value", "Content-Type": "text/plain"})
         else:
@@ -137,11 +128,11 @@ def server():
 
 async def fetch(url: str, **kwargs) -> Response:
     async with asyncio.timeout(5):
-        async with HttpxFetcher(trust_env=False) as fetcher:
+        async with CurlCffiFetcher(None, trust_env=False) as fetcher:
             return await fetcher.fetch(make_request(url, **kwargs))
 
 
-# --- HttpxFetcher ---------------------------------------------------------------------
+# --- Plain requests ---------------------------------------------------------------------
 
 
 async def test_redirect_is_returned_not_followed(server):
@@ -152,16 +143,12 @@ async def test_redirect_is_returned_not_followed(server):
     assert response.body == b"moved"
 
 
-async def test_accept_encoding_is_exactly_gzip_deflate(server):
-    headers = (await fetch(f"{server}/echo")).json()
-    assert ACCEPT_ENCODING == "gzip, deflate"
-    assert headers["accept-encoding"] == "gzip, deflate"
-
-
 async def test_identity_user_agent_and_headers_applied(server):
     headers = (await fetch(f"{server}/echo", ua="my-agent/2.0")).json()
     assert headers["user-agent"] == "my-agent/2.0"
     assert headers["accept"] == "application/json"
+    assert headers["accept-encoding"] == "gzip, deflate, br"
+    assert not {"sec-ch-ua", "upgrade", "http2-settings"} & set(headers)
 
 
 @pytest.mark.parametrize("path", ["/gzip", "/deflate", "/deflate-raw"])
@@ -171,21 +158,8 @@ async def test_compressed_bodies_are_decoded(server, path):
     assert response.body == PAYLOAD
 
 
-async def test_unknown_content_encoding_passes_body_through(server):
-    # Like Scrapy: servers send values such as "utf-8"; the body is left as is
-    response = await fetch(f"{server}/br")
-    assert response.body == b"\x0b\x02\x80hello\x03"
-
-
-async def test_content_encoding_list_is_decoded_in_order():
-    body = gzip.compress(b"payload")
-    with respx.mock:
-        respx.get("https://shop.test/x").mock(
-            return_value=httpx.Response(
-                200, content=body, headers={"Content-Encoding": "identity, gzip"}
-            )
-        )
-        assert (await fetch("https://shop.test/x")).body == b"payload"
+def test_content_encoding_list_is_decoded_in_order():
+    assert _decode(gzip.compress(b"payload"), "identity, gzip") == b"payload"
 
 
 def test_concatenated_gzip_members_are_all_decoded():
@@ -196,16 +170,6 @@ def test_concatenated_gzip_members_are_all_decoded():
 async def test_invalid_url_is_a_fetch_error():
     with pytest.raises(FetchInvalidURL):
         await fetch("https://shop.test/bad\x7fpath")
-
-
-def test_only_certificate_failures_are_tls_errors():
-    cert = ssl.SSLCertVerificationError("certificate verify failed")
-    wrapped = httpx.ConnectError("boom")
-    wrapped.__cause__ = cert
-    assert _is_cert_error(wrapped)
-    reset = httpx.ConnectError("[SSL: UNEXPECTED_EOF_WHILE_READING]")
-    reset.__cause__ = ssl.SSLError("UNEXPECTED_EOF_WHILE_READING")
-    assert not _is_cert_error(reset)  # retried as a connection error instead
 
 
 async def test_total_deadline_applies_to_trickled_body(server):
@@ -234,12 +198,6 @@ async def test_connection_refused_raises_connection_error():
 async def test_latency_measured_to_headers_when_headers_are_slow(server):
     response = await fetch(f"{server}/slow-headers")
     assert response.latency >= 0.2
-
-
-async def test_latency_excludes_slow_body(server):
-    response = await fetch(f"{server}/slow-body")
-    assert response.body == b"ok"
-    assert response.latency < 0.15
 
 
 async def test_response_headers_lowercased(server):
@@ -319,7 +277,7 @@ def test_encode_proxy_userinfo(url, expected):
 
 
 def test_fetcher_encodes_proxy_credentials():
-    assert HttpxFetcher(proxy="http://tok?en@gw:8080")._proxy == "http://tok%3Fen@gw:8080"
+    assert CurlCffiFetcher(proxy="http://tok?en@gw:8080")._proxy == "http://tok%3Fen@gw:8080"
 
 
 def test_unencoded_environment_credentials_are_rejected(clean_proxy_env):
@@ -345,7 +303,7 @@ def test_validate_proxy_error_is_redacted():
         ({"ALL_PROXY": "socks5://gw:1080"}, "http://a.com", True),
         ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "a.com"}, "https://a.com", False),
         ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "*"}, "https://a.com", False),
-        # httpx's rule, not urllib's: a leading dot bypasses subdomains only
+        # 0.5's rule, not urllib's: a leading dot bypasses subdomains only
         ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": ".a.com"}, "https://a.com", True),
         ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": ".a.com"}, "https://www.a.com", False),
     ],
@@ -356,53 +314,143 @@ def test_uses_proxy_from_environment(clean_proxy_env, env, url, expected):
     assert uses_proxy(url, None) is expected
 
 
+# Recorded from httpx 0.28.1 before it was removed; regenerating needs it reinstalled.
+URL_PARTS_CASES = [
+    ("https://shop.test/bad\x7fpath", None),
+    ("https://shop.test/\x00", None),
+    ("https://shop.test/?q=\x01", None),
+    ("https://shop.test/#\x7f", None),
+    ("https://exa\x7fmple.com/", None),
+    ("http://\xad.com/", None),
+    # IDNA 2003 and 2008 disagree on these, so they're refused rather than guessed
+    ("https://stra\xdfe.de/", None),
+    ("https://a\u200d.com/", None),
+    ("https://shop.test/a b", ("https", "shop.test", None)),
+    ("https://Shop.Test:443/x", ("https", "shop.test", None)),
+    ("HTTPS://Shop.Test:443/x", ("https", "shop.test", 443)),
+    ("HTTP://a:80/", ("http", "a", 80)),
+    ("hTTp://a:80/", ("http", "a", 80)),
+    ("http://a:80/", ("http", "a", None)),
+    ("http://a:+80/", ("http", "a", None)),
+    ("http://h: 8080", ("http", "h", 8080)),
+    ("http://h:8080 ", ("http", "h", 8080)),
+    ("http://a:-1/", ("http", "a", -1)),
+    ("http://a:1_000/", ("http", "a", 1000)),
+    ("http://a:\u0663/", ("http", "a", 3)),
+    ("http://a: /", None),
+    (" http://a/", ("", "", None)),
+    ("\xa0http://a/", ("", "", None)),
+    ("ht tp://a/", ("", "", None)),
+    ("http://a:8080/", ("http", "a", 8080)),
+    ("http://a:99999/", ("http", "a", 99999)),
+    ("http://a:x/", None),
+    ("http://h:notaport", None),
+    ("http://[::1]:80/", ("http", "::1", None)),
+    ("http://[::1/", None),
+    ("all://[::1", None),
+    ("http://[zz]/", None),
+    ("http://999.1.1.1/", None),
+    ("http://münchen.de/", ("http", "xn--mnchen-3ya.de", None)),
+    ("http://xn--mnchen-3ya.de/", ("http", "xn--mnchen-3ya.de", None)),
+    ("http://MÜNCHEN.de/", ("http", "xn--mnchen-3ya.de", None)),
+    ("all://*münchen.de", None),
+    ("all://*.münchen.de", None),
+    ("http://a_b.com/", ("http", "a_b.com", None)),
+    ("http://-a.com/", ("http", "-a.com", None)),
+    ("http://a..b/", ("http", "a..b", None)),
+    ("http://127.1/", ("http", "127.1", None)),
+    ("http://u:p@h/", ("http", "h", None)),
+    ("http://u@p@h:81/", ("http", "h", 81)),
+    ("file:///etc/x", ("file", "", None)),
+    ("dict://h:1/", ("dict", "h", 1)),
+    ("h:8080", ("h", "", None)),
+    ("http://", ("http", "", None)),
+    ("http://:8080", ("http", "", 8080)),
+    ("http://a.com:/", ("http", "a.com", None)),
+    ("all://*example.com", ("all", "*example.com", None)),
+    ("all://*.a.com", ("all", "*.a.com", None)),
+    ("all://10.0.0.0/8", ("all", "10.0.0.0", None)),
+    ("::x", None),
+    ("//h:81/x", ("", "h", 81)),
+    ("a" * 65537, None),
+    ("http://a b.com/", ("http", "a%20b.com", None)),
+    ("http://a^b/", ("http", "a%5Eb", None)),
+    ("http://[::FFFF:1]/", ("http", "::FFFF:1", None)),
+]
+
+URL_PARTS_IDS = [ascii(url)[:40] for url, _ in URL_PARTS_CASES]
 GW = "http://gw:8080"
 ENV_PROXY_CASES = [
-    ({}, "https://example.com"),
-    ({"HTTPS_PROXY": GW, "NO_PROXY": ".example.com"}, "https://example.com"),
-    ({"HTTPS_PROXY": GW, "NO_PROXY": ".example.com"}, "https://www.example.com"),
-    ({"HTTPS_PROXY": GW, "NO_PROXY": "example.com"}, "https://www.example.com"),
-    ({"HTTPS_PROXY": GW, "NO_PROXY": "example.com"}, "https://wwwexample.com"),
-    ({"HTTPS_PROXY": GW, "NO_PROXY": "EXAMPLE.com"}, "https://example.com"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "127.0.0.1"}, "http://127.0.0.1:8000/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "127.0.0.1"}, "http://127.0.0.2/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "10.0.0.0/8"}, "http://10.0.0.0/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "::1"}, "http://[::1]:8000/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "localhost"}, "http://localhost:8000/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "localhost"}, "http://www.localhost/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "example.com:8080"}, "http://example.com:8080/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "example.com:8080"}, "http://example.com/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "http://example.com"}, "http://example.com/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "http://example.com"}, "https://example.com/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "other.com, *"}, "http://example.com/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": " , example.com"}, "http://example.com/"),
-    ({"HTTPS_PROXY": GW}, "http://example.com/"),
-    ({"HTTPS_PROXY": GW}, "https://example.com/"),
-    ({"HTTP_PROXY": "gw:3128"}, "http://example.com/"),
-    ({"ALL_PROXY": "socks5://gw:1080"}, "http://example.com/"),
-    ({"ALL_PROXY": "socks5://gw:1080", "HTTPS_PROXY": GW}, "https://example.com/"),
-    ({"ALL_PROXY": "socks5://gw:1080", "HTTPS_PROXY": GW}, "http://example.com/"),
+    ({}, "https://example.com", None),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": ".example.com"}, "https://example.com", GW),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": ".example.com"}, "https://www.example.com", None),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": "example.com"}, "https://www.example.com", None),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": "example.com"}, "https://wwwexample.com", GW),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": "EXAMPLE.com"}, "https://example.com", None),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "127.0.0.1"}, "http://127.0.0.1:8000/", None),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "127.0.0.1"}, "http://127.0.0.2/", GW),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "10.0.0.0/8"}, "http://10.0.0.0/", None),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "::1"}, "http://[::1]:8000/", None),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "localhost"}, "http://localhost:8000/", None),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "localhost"}, "http://www.localhost/", GW),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "example.com:8080"}, "http://example.com:8080/", None),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "example.com:8080"}, "http://example.com/", GW),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "http://example.com"}, "http://example.com/", None),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "http://example.com"}, "https://example.com/", None),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "other.com, *"}, "http://example.com/", None),
+    ({"HTTP_PROXY": GW, "NO_PROXY": " , example.com"}, "http://example.com/", None),
+    ({"HTTPS_PROXY": GW}, "http://example.com/", None),
+    ({"HTTPS_PROXY": GW}, "https://example.com/", GW),
+    ({"HTTP_PROXY": "gw:3128"}, "http://example.com/", "http://gw:3128"),
+    ({"ALL_PROXY": "socks5://gw:1080"}, "http://example.com/", "socks5://gw:1080"),
+    ({"ALL_PROXY": "socks5://gw:1080", "HTTPS_PROXY": GW}, "https://example.com/", GW),
+    (
+        {"ALL_PROXY": "socks5://gw:1080", "HTTPS_PROXY": GW},
+        "http://example.com/",
+        "socks5://gw:1080",
+    ),
+]
+
+ENV_CASES = [
+    ({"HTTPS_PROXY": "socks5://h:1080"}, False),
+    ({"ALL_PROXY": "socks5://h:1080", "NO_PROXY": "*"}, False),
+    ({"HTTPS_PROXY": "socks5://h:1080", "NO_PROXY": "*"}, False),
+    ({"HTTPS_PROXY": "socks5://h:1080", "NO_PROXY": "example.com, *"}, False),
+    ({"HTTP_PROXY": "http://"}, False),
+    ({"HTTP_PROXY": "http://:8080"}, False),
+    ({"HTTPS_PROXY": "h:8080"}, False),
+    ({"HTTPS_PROXY": "http://h:notaport"}, True),
+    ({"HTTPS_PROXY": "socks4://h:1"}, True),
+    ({"HTTPS_PROXY": "http://h:99999"}, False),
+    ({"ALL_PROXY": "socks5h://h:1080"}, False),
+    ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "[::1"}, True),
+    ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "::1, 10.0.0.0/8, .example.com"}, False),
+    ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "münchen.de"}, True),
 ]
 
 
-def _httpx_env_proxy(url: str) -> str | None:
-    """The environment proxy httpx itself picks for ``url`` (private API, test only)."""
-    from httpx._utils import URLPattern, get_environment_proxies
-
-    mounts = sorted({URLPattern(k): v for k, v in get_environment_proxies().items()}.items())
-    target = httpx.URL(url)
-    return next((proxy for pattern, proxy in mounts if pattern.matches(target)), None)
+def _env_id(env: dict[str, str], *rest: str) -> str:
+    return ",".join([*(f"{k}={v}" for k, v in env.items()), *rest])
 
 
-@pytest.mark.parametrize(
-    ("env", "url"),
-    ENV_PROXY_CASES,
-    ids=[",".join([*(f"{k}={v}" for k, v in env.items()), url]) for env, url in ENV_PROXY_CASES],
-)
-def test_env_proxy_for_matches_httpx(clean_proxy_env, env, url):
+ENV_PROXY_IDS = [_env_id(env, url) for env, url, _ in ENV_PROXY_CASES]
+ENV_IDS = [_env_id(env) for env, _ in ENV_CASES]
+
+
+@pytest.mark.parametrize(("url", "expected"), URL_PARTS_CASES, ids=URL_PARTS_IDS)
+def test_split_url_matches_recorded(url, expected):
+    if expected is None:
+        with pytest.raises(ValueError):
+            _split_url(url)
+    else:
+        assert _split_url(url) == expected
+
+
+@pytest.mark.parametrize(("env", "url", "expected"), ENV_PROXY_CASES, ids=ENV_PROXY_IDS)
+def test_env_proxy_for_matches_recorded(clean_proxy_env, env, url, expected):
     for name, value in env.items():
         clean_proxy_env.setenv(name, value)
-    assert env_proxy_for(url) == _httpx_env_proxy(url)
+    assert env_proxy_for(url) == expected
 
 
 @pytest.mark.parametrize(
@@ -586,7 +634,7 @@ async def test_curl_fetcher_reads_the_ca_directory_on_entry(ca_env, tmp_path):
 
 
 async def test_curl_sessions_opened_later_keep_the_ca_read_on_entry(ca_env, tmp_path):
-    """As httpx's one client does, whatever the environment says mid-run."""
+    """Whatever the environment says mid-run, as for the sessions opened first."""
     from curl_cffi import CurlOpt
 
     for name in ("a.pem", "b.pem"):
@@ -624,48 +672,21 @@ def test_explicit_proxy_skips_the_environment(clean_proxy_env):
     check_proxy_support("http://h:1")
 
 
-ENV_CASES = [
-    {"HTTPS_PROXY": "socks5://h:1080"},
-    {"ALL_PROXY": "socks5://h:1080", "NO_PROXY": "*"},
-    {"HTTPS_PROXY": "socks5://h:1080", "NO_PROXY": "*"},
-    {"HTTPS_PROXY": "socks5://h:1080", "NO_PROXY": "example.com, *"},
-    {"HTTP_PROXY": "http://"},
-    {"HTTP_PROXY": "http://:8080"},
-    {"HTTPS_PROXY": "h:8080"},
-    {"HTTPS_PROXY": "http://h:notaport"},
-    {"HTTPS_PROXY": "socks4://h:1"},
-    {"HTTPS_PROXY": "http://h:99999"},
-    {"ALL_PROXY": "socks5h://h:1080"},
-    {"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "[::1"},
-    {"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "::1, 10.0.0.0/8, .example.com"},
-]
-
-
-@pytest.mark.parametrize(
-    "env", ENV_CASES, ids=lambda env: ",".join(f"{k}={v}" for k, v in env.items())
-)
-async def test_environment_check_matches_httpx(clean_proxy_env, env):
-    """check_proxy_support mirrors httpx's env handling; this pins it to the installed httpx."""
+@pytest.mark.parametrize(("env", "raises"), ENV_CASES, ids=ENV_IDS)
+def test_environment_check_matches_recorded(clean_proxy_env, env, raises):
     for name, value in env.items():
         clean_proxy_env.setenv(name, value)
-    try:
+    if raises:
+        with pytest.raises(ValueError):
+            check_proxy_support(None)
+    else:
         check_proxy_support(None)
-        check_raised = False
-    except ValueError:
-        check_raised = True
-    try:
-        async with HttpxFetcher():
-            pass
-        httpx_raised = False
-    except Exception:
-        httpx_raised = True
-    assert check_raised == httpx_raised
 
 
 async def test_environment_socks_proxy_builds_a_client(clean_proxy_env):
     clean_proxy_env.setenv("HTTPS_PROXY", "socks5://h:1080")
     check_proxy_support(None)
-    async with HttpxFetcher():
+    async with CurlCffiFetcher():
         pass
 
 
@@ -674,7 +695,7 @@ async def test_explicit_proxy_beats_environment(clean_proxy_env, recording_proxy
         clean_proxy_env.setenv(name, DEAD_PROXY)
     proxy = recording_proxy()
     async with asyncio.timeout(5):
-        async with HttpxFetcher(proxy=proxy.url) as fetcher:
+        async with CurlCffiFetcher(None, proxy=proxy.url) as fetcher:
             response = await fetcher.fetch(make_request("http://shop.test/products.json"))
     assert response.json() == {"proxied": True}
     assert proxy.records == [("GET", "http://shop.test/products.json", None)]
@@ -684,7 +705,7 @@ async def test_environment_proxy_is_used_without_option(clean_proxy_env, recordi
     proxy = recording_proxy()
     clean_proxy_env.setenv("HTTP_PROXY", proxy.url)
     async with asyncio.timeout(5):
-        async with HttpxFetcher() as fetcher:
+        async with CurlCffiFetcher(None) as fetcher:
             await fetcher.fetch(make_request("http://shop.test/robots.txt"))
     assert proxy.records == [("GET", "http://shop.test/robots.txt", None)]
 
@@ -693,7 +714,7 @@ async def test_proxy_407_on_connect_hides_credentials(clean_proxy_env, recording
     proxy = recording_proxy(reject_connect=True)
     url = f"http://u:secret@127.0.0.1:{proxy.port}"
     async with asyncio.timeout(5):
-        async with HttpxFetcher(proxy=url) as fetcher:
+        async with CurlCffiFetcher(None, proxy=url) as fetcher:
             with pytest.raises(FetchConnectionError) as info:
                 await fetcher.fetch(make_request("https://shop.test/"))
     assert "407" in str(info.value)

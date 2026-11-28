@@ -33,14 +33,6 @@ SITE_OWNER_BLOCK_PATH = "User-agent: shopify-spy\nDisallow: /products.json\n"
 SITE_OWNER_CRAWL_DELAY = "User-agent: shopify-spy\nCrawl-delay: {}\n"
 
 
-@pytest.fixture(params=["curl_cffi", "httpx"])
-def transport(request):
-    """Extra CLI args selecting the transport: the session layer (robots.txt,
-    throttling, Crawl-delay, Retry-After, redirects, address checks) must not depend
-    on it."""
-    return [] if request.param == "curl_cffi" else ["--user-agent", "test-agent/1.0"]
-
-
 def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -389,23 +381,19 @@ EXPECTED_SHOPIFY = {
 }
 
 
-def test_shopify_diagnosis(tmp_path, stores, transport):
+def test_shopify_diagnosis(tmp_path, stores):
     urls = {scenario: stores(scenario) for scenario in EXPECTED_SHOPIFY}
-    statuses = _run(tmp_path, list(urls.values()), *transport)
+    statuses = _run(tmp_path, list(urls.values()))
     actual = {scenario: statuses[url] for scenario, url in urls.items()}
-    expected = dict(EXPECTED_SHOPIFY)
-    if transport:
-        # A fixed user agent is never switched, so a store refusing it stays refused
-        expected["user_agent_rate_limited"] = "rate limited (429)"
-    assert actual == expected
+    assert actual == EXPECTED_SHOPIFY
     # The 120 s Retry-After isn't retried after 60 s, nor waited out past --bail
     assert stores.servers["long_retry_after"].RequestHandlerClass.hits["/products.json"] == 1
 
 
-def test_crawl_delay_spaces_requests_without_throttle(tmp_path, stores, transport):
+def test_crawl_delay_spaces_requests_without_throttle(tmp_path, stores):
     """robots.txt Crawl-delay still applies with --no-throttle."""
     url = stores("crawl_delay")
-    statuses = _run(tmp_path, [url], "--no-throttle", *transport, throttle_floors=True)
+    statuses = _run(tmp_path, [url], "--no-throttle", throttle_floors=True)
     assert statuses[url] == "ok"
     arrivals = stores.servers["crawl_delay"].RequestHandlerClass.arrivals
     pages = [t for path, t in arrivals if path.startswith("/products.json")]
@@ -413,10 +401,10 @@ def test_crawl_delay_spaces_requests_without_throttle(tmp_path, stores, transpor
     assert pages[1] - pages[0] >= 1.4
 
 
-def test_min_delay_spaces_requests(tmp_path, stores, transport):
+def test_min_delay_spaces_requests(tmp_path, stores):
     """Default throttling keeps requests to one host --min-delay apart."""
     url = stores("spaced")
-    statuses = _run(tmp_path, [url], "--min-delay", "1.5", *transport, throttle_floors=True)
+    statuses = _run(tmp_path, [url], "--min-delay", "1.5", throttle_floors=True)
     assert statuses[url] == "ok"
     arrivals = [t for _, t in stores.servers["spaced"].RequestHandlerClass.arrivals]
     assert len(arrivals) == 3  # robots.txt and two pages
@@ -427,21 +415,27 @@ def test_min_delay_spaces_requests(tmp_path, stores, transport):
 # --user-agent: the shopify-spy group applies whatever user agent is sent
 
 
-def test_site_owner_block_all(tmp_path, stores, transport):
+@pytest.fixture(params=["profile", "custom"])
+def agent(request):
+    """Extra CLI args: the browser profiles, or a custom --user-agent."""
+    return [] if request.param == "profile" else ["--user-agent", "test-agent/1.0"]
+
+
+def test_site_owner_block_all(tmp_path, stores, agent):
     url = stores("owner_block_all")
-    assert _run(tmp_path, [url], *transport)[url] == "blocked by robots.txt"
+    assert _run(tmp_path, [url], *agent)[url] == "blocked by robots.txt"
     hits = stores.servers["owner_block_all"].RequestHandlerClass.hits
     assert set(hits) == {"/robots.txt"}
     # Crossing the opt-out takes --ignore-robots. A fresh output directory, since _run
     # reads whichever status file it globs first
     ignored = tmp_path / "ignored"
     ignored.mkdir()
-    assert _run(ignored, [url], "--ignore-robots", *transport)[url] == "ok"
+    assert _run(ignored, [url], "--ignore-robots", *agent)[url] == "ok"
 
 
-def test_site_owner_block_path(tmp_path, stores, transport):
+def test_site_owner_block_path(tmp_path, stores, agent):
     url = stores("owner_block_path")
-    assert _run(tmp_path, [url], *transport)[url] == "ok"
+    assert _run(tmp_path, [url], *agent)[url] == "ok"
     hits = stores.servers["owner_block_path"].RequestHandlerClass.hits
     assert "/products.json" not in hits
     # The rest of the store is still read: the sitemap, one product per request
@@ -449,9 +443,9 @@ def test_site_owner_block_path(tmp_path, stores, transport):
     assert hits["/products/p1.json"] == 1
 
 
-def test_site_owner_crawl_delay(tmp_path, stores, transport):
+def test_site_owner_crawl_delay(tmp_path, stores, agent):
     url = stores("owner_crawl_delay")
-    assert _run(tmp_path, [url], "--no-throttle", *transport)[url] == "ok"
+    assert _run(tmp_path, [url], "--no-throttle", *agent)[url] == "ok"
     arrivals = stores.servers["owner_crawl_delay"].RequestHandlerClass.arrivals
     pages = [t for path, t in arrivals if path.startswith("/products.json")]
     assert len(pages) == 2
@@ -668,7 +662,7 @@ def test_headless_store_products_come_from_its_myshopify_domain(tmp_path, stores
     assert "/sitemap.xml" not in hits
 
 
-def test_non_public_redirect_refused(tmp_path, stores, forwarding_proxy, transport):
+def test_non_public_redirect_refused(tmp_path, stores, forwarding_proxy):
     """Through a proxy only literal IPs are checked: a public-looking store's redirect
     to 127.0.0.1 is refused before any request reaches it, robots.txt included."""
     proxy_port, _ = forwarding_proxy
@@ -677,7 +671,7 @@ def test_non_public_redirect_refused(tmp_path, stores, forwarding_proxy, transpo
     stores.servers["redirect_to_loopback"].RequestHandlerClass.redirect_to = target
     url = f"http://store.test:{port}"
     proxy = f"http://127.0.0.1:{proxy_port}"
-    _, status = _run_verbose(tmp_path, [url], "--proxy", proxy, *transport)
+    _, status = _run_verbose(tmp_path, [url], "--proxy", proxy)
     assert {e["url"]: e["status"] for e in status["urls"]} == {url: "0 items"}
     assert stores.servers["loopback_target"].RequestHandlerClass.hits == {}
     assert stores.servers["redirect_to_loopback"].RequestHandlerClass.hits

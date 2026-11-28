@@ -1,4 +1,4 @@
-"""CurlCffiFetcher's contract against local servers: the same as HttpxFetcher's.
+"""CurlCffiFetcher's contract against local servers, with a browser profile and plain.
 
 A local server can't check the TLS fingerprint, only what the fetcher does with
 redirects, cookies, sizes, encodings, deadlines, errors and proxies.
@@ -33,7 +33,6 @@ from shopify_spy._fetch import (
     FetchTimeout,
     FetchTLSError,
     FetchTooLarge,
-    HttpxFetcher,
     Identity,
     Request,
 )
@@ -269,11 +268,14 @@ def socks_proxy():
     srv.server_close()
 
 
-async def fetch(url: str, transport: str = "curl", **kwargs) -> _fetch.Response:
+def _fetcher(transport: str, **kwargs) -> CurlCffiFetcher:
+    return CurlCffiFetcher("chrome" if transport == "profile" else None, **kwargs)
+
+
+async def fetch(url: str, transport: str = "profile", **kwargs) -> _fetch.Response:
     timeout = kwargs.pop("timeout", 3.0)
     headers = kwargs.pop("headers", None)
-    fetcher = CurlCffiFetcher("chrome", **kwargs) if transport == "curl" else HttpxFetcher(**kwargs)
-    async with fetcher:
+    async with _fetcher(transport, **kwargs) as fetcher:
         return await fetcher.fetch(make_request(url, timeout=timeout, headers=headers))
 
 
@@ -287,8 +289,9 @@ async def test_redirect_is_returned_not_followed(server):
     assert response.url == f"{server.url}/redirect"
 
 
-async def test_cookies_are_never_sent_back(server):
-    async with CurlCffiFetcher("chrome") as fetcher:
+@pytest.mark.parametrize("transport", ["profile", "plain"])
+async def test_cookies_are_never_sent_back(server, transport):
+    async with _fetcher(transport) as fetcher:
         await fetcher.fetch(make_request(f"{server.url}/set-cookie"))
         headers = (await fetcher.fetch(make_request(f"{server.url}/echo"))).json()
     assert "cookie" not in headers
@@ -332,6 +335,54 @@ async def test_profiles_never_share_a_connection(server):
 async def test_request_headers_override_the_profile(server):
     headers = (await fetch(f"{server.url}/echo", headers={"Accept-Language": "de"})).json()
     assert headers["accept-language"] == "de"
+
+
+async def test_plain_requests_send_the_identity(server):
+    headers = (await fetch(f"{server.url}/echo", "plain")).json()
+    assert headers["user-agent"] == "pool-agent/1.0"
+    assert headers["accept"] == DEFAULT_HEADERS["Accept"]
+    assert headers["accept-language"] == "en"
+    assert headers["accept-encoding"] == "gzip, deflate, br"
+    assert not {"sec-ch-ua", "upgrade", "http2-settings"} & set(headers)
+
+
+async def test_plain_requests_default_to_any_accept(server):
+    request = Request("GET", f"{server.url}/echo", Identity(user_agent="bare/1.0"), timeout=3.0)
+    async with CurlCffiFetcher(None) as fetcher:
+        headers = (await fetcher.fetch(request)).json()
+    assert (headers["user-agent"], headers["accept"]) == ("bare/1.0", "*/*")
+    overridden = {"Accept": "text/html", "Accept-Language": "de"}
+    headers = (await fetch(f"{server.url}/echo", "plain", headers=overridden)).json()
+    assert (headers["accept"], headers["accept-language"]) == ("text/html", "de")
+
+
+async def test_plain_session_uses_http1(monkeypatch):
+    """Shopify answers 429 to plain requests over HTTP/2; the local servers speak
+    only HTTP/1.1, so this checks what curl_cffi is asked for."""
+    import curl_cffi.requests
+    from curl_cffi import CurlHttpVersion, CurlOpt
+
+    built = []
+
+    class Recording(curl_cffi.requests.AsyncSession):
+        def __init__(self, **kwargs):
+            built.append(kwargs)
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(curl_cffi.requests, "AsyncSession", Recording)
+    async with CurlCffiFetcher(None) as fetcher:
+        fetcher._session(None)
+    [kwargs] = built
+    assert kwargs["impersonate"] is None
+    assert "akamai" not in kwargs
+    assert kwargs["headers"] == {"Accept": "*/*"}
+    assert kwargs["curl_options"][CurlOpt.HTTP_VERSION] == CurlHttpVersion.V1_1
+
+
+def test_plain_fetcher_applies_identity_headers():
+    assert CurlCffiFetcher(None).capabilities == _fetch.FetcherCapabilities()
+    assert CurlCffiFetcher().capabilities == CurlCffiFetcher.capabilities
+    assert CurlCffiFetcher.capabilities.can_impersonate
 
 
 async def test_response_headers_lowercased(server):
@@ -446,12 +497,13 @@ def test_paused_clock_excludes_time_outside_the_loop(server):
     [
         ("/gzip", PAYLOAD),
         ("/br", b"hello"),
-        ("/utf-8", b"as sent"),  # unknown token: passed through, as HttpxFetcher does
+        ("/utf-8", b"as sent"),  # unknown token: passed through, as Scrapy did
         ("/gzip-unknown", PAYLOAD),
     ],
 )
-async def test_bodies_are_decoded(server, path, expected):
-    response = await fetch(f"{server.url}{path}")
+@pytest.mark.parametrize("transport", ["profile", "plain"])
+async def test_bodies_are_decoded(server, path, expected, transport):
+    response = await fetch(f"{server.url}{path}", transport)
     assert (response.status, response.body) == (200, expected)
 
 
@@ -483,19 +535,21 @@ async def test_unknown_host():
         await fetch("http://no-such-host.invalid/", timeout=5)
 
 
-async def test_invalid_url_never_reaches_the_server(server):
+@pytest.mark.parametrize("transport", ["profile", "plain"])
+async def test_invalid_url_never_reaches_the_server(server, transport):
     before = list(server.paths)
     with pytest.raises(FetchInvalidURL):
-        await fetch(f"{server.url}/bad\x7fpath")
+        await fetch(f"{server.url}/bad\x7fpath", transport)
     assert server.paths == before
 
 
 @pytest.mark.parametrize(
     "url", ["file:///etc/hostname", "dict://127.0.0.1:1/", "ftp://127.0.0.1:1/"]
 )
-async def test_non_http_scheme_is_refused(url):
+@pytest.mark.parametrize("transport", ["profile", "plain"])
+async def test_non_http_scheme_is_refused(url, transport):
     with pytest.raises(FetchConnectionError, match="unsupported protocol"):
-        await fetch(url)
+        await fetch(url, transport)
 
 
 async def test_truncated_body(server):
@@ -548,7 +602,7 @@ def _ca_dir(directory, pem: bytes) -> str:
     return str(directory)
 
 
-@pytest.mark.parametrize("transport", ["curl", "httpx"])
+@pytest.mark.parametrize("transport", ["profile", "plain"])
 @pytest.mark.parametrize("variable", CA_VARIABLES)
 async def test_ca_from_the_environment_is_trusted(
     tls, tls_server, tmp_path, ca_env, transport, variable
@@ -561,7 +615,7 @@ async def test_ca_from_the_environment_is_trusted(
     assert (response.status, response.body) == (200, b"ok")
 
 
-@pytest.mark.parametrize("transport", ["curl", "httpx"])
+@pytest.mark.parametrize("transport", ["profile", "plain"])
 async def test_ca_file_comes_first(tls, tls_server, tmp_path, ca_env, transport):
     (tmp_path / "other.pem").write_bytes(trustme.CA().cert_pem.bytes())
     ca_env.setenv("SSL_CERT_FILE", str(tmp_path / "other.pem"))
@@ -572,7 +626,7 @@ async def test_ca_file_comes_first(tls, tls_server, tmp_path, ca_env, transport)
     assert (await fetch(f"{tls_server}/ok", transport)).status == 200
 
 
-@pytest.mark.parametrize("transport", ["curl", "httpx"])
+@pytest.mark.parametrize("transport", ["profile", "plain"])
 async def test_ca_file_and_directory_are_both_trusted(tls, tls_server, tmp_path, ca_env, transport):
     pem = open(tls.ca, "rb").read()
     (tmp_path / "other.pem").write_bytes(trustme.CA().cert_pem.bytes())
@@ -581,7 +635,7 @@ async def test_ca_file_and_directory_are_both_trusted(tls, tls_server, tmp_path,
     assert (await fetch(f"{tls_server}/ok", transport)).status == 200
 
 
-@pytest.mark.parametrize("transport", ["curl", "httpx"])
+@pytest.mark.parametrize("transport", ["profile", "plain"])
 @pytest.mark.parametrize("variable", ["SSL_CERT_FILE", "SSL_CERT_DIR"])
 async def test_ca_from_the_environment_replaces_the_default(
     tls_server, tmp_path, ca_env, transport, variable
@@ -601,7 +655,7 @@ async def test_ca_from_the_environment_replaces_the_default(
     assert (await fetch(f"{tls_server}/ok", transport, verify=False)).status == 200
 
 
-@pytest.mark.parametrize("transport", ["curl", "httpx"])
+@pytest.mark.parametrize("transport", ["profile", "plain"])
 @pytest.mark.parametrize("variable", ["REQUESTS_CA_BUNDLE", "SSL_CERT_DIR"])
 async def test_unusable_ca_location_fails_the_same_way(
     tls_server, tmp_path, ca_env, transport, variable
@@ -613,7 +667,7 @@ async def test_unusable_ca_location_fails_the_same_way(
         await fetch(f"{tls_server}/ok", transport)
 
 
-@pytest.mark.parametrize("transport", ["curl", "httpx"])
+@pytest.mark.parametrize("transport", ["profile", "plain"])
 async def test_trust_env_off_ignores_the_ca_environment(
     tls, tls_server, tmp_path, ca_env, transport
 ):
@@ -626,22 +680,26 @@ async def test_trust_env_off_ignores_the_ca_environment(
 # --- Proxies -------------------------------------------------------------------------------
 
 
-async def test_explicit_proxy_replaces_the_environment(server, clean_proxy_env, recording_proxy):
+@pytest.mark.parametrize("transport", ["profile", "plain"])
+async def test_explicit_proxy_replaces_the_environment(
+    server, clean_proxy_env, recording_proxy, transport
+):
     proxy = recording_proxy()
     for name in ("HTTP_PROXY", "http_proxy"):
         clean_proxy_env.setenv(name, DEAD_PROXY)
     clean_proxy_env.setenv("NO_PROXY", "127.0.0.1")
-    response = await fetch(f"{server.url}/echo", proxy=proxy.url)
+    response = await fetch(f"{server.url}/echo", transport, proxy=proxy.url)
     assert response.json() == {"proxied": True}
     assert proxy.records[0][:2] == ("GET", f"{server.url}/echo")
 
 
-async def test_environment_proxy_is_used(server, clean_proxy_env, recording_proxy):
+@pytest.mark.parametrize("transport", ["profile", "plain"])
+async def test_environment_proxy_is_used(server, clean_proxy_env, recording_proxy, transport):
     proxy = recording_proxy()
-    # Uppercase only: libcurl itself ignores HTTP_PROXY, httpx doesn't
+    # Uppercase only: libcurl itself ignores HTTP_PROXY, env_proxy_for doesn't
     clean_proxy_env.setenv("HTTP_PROXY", proxy.url)
     clean_proxy_env.setenv("NO_PROXY", "other.example")
-    response = await fetch(f"{server.url}/echo")
+    response = await fetch(f"{server.url}/echo", transport)
     assert response.json() == {"proxied": True}
     assert len(proxy.records) == 1
 
@@ -678,7 +736,7 @@ async def test_https_with_bypassed_environment_proxy(tls_server, clean_proxy_env
 async def test_https_proxy_receives_connect(clean_proxy_env, ca_env, tls):
     httpd = _serve(_RecordingProxyHandler, tls=tls, records=[])
     proxy = f"https://127.0.0.1:{httpd.server_address[1]}"
-    # The proxy's certificate is checked even with verify=False, as in httpx
+    # The proxy's certificate is checked even with verify=False
     ca_env.setenv("SSL_CERT_FILE", tls.ca)
     try:
         with pytest.raises(FetchConnectionError) as info:  # the proxy's 502 to CONNECT
@@ -690,7 +748,7 @@ async def test_https_proxy_receives_connect(clean_proxy_env, ca_env, tls):
         httpd.server_close()
 
 
-@pytest.mark.parametrize("transport", ["curl", "httpx"])
+@pytest.mark.parametrize("transport", ["profile", "plain"])
 @pytest.mark.parametrize("via", ["proxy", "HTTPS_PROXY"])
 async def test_https_proxy_is_checked_against_the_ca_environment(
     clean_proxy_env, ca_env, tls, transport, via
@@ -703,8 +761,6 @@ async def test_https_proxy_is_checked_against_the_ca_environment(
     try:
         with pytest.raises(FetchTLSError):
             await fetch("https://store.example:8443/", transport, **kwargs)
-        # Not SSL_CERT_FILE: OpenSSL's defaults, which httpcore loads for a proxy
-        # without a context of its own, read that one
         ca_env.setenv("REQUESTS_CA_BUNDLE", tls.ca)
         with pytest.raises(FetchConnectionError) as info:  # the proxy's 502 to CONNECT
             await fetch("https://store.example:8443/", transport, **kwargs)
@@ -715,10 +771,13 @@ async def test_https_proxy_is_checked_against_the_ca_environment(
         httpd.server_close()
 
 
-async def test_proxy_credentials_reach_the_proxy(server, clean_proxy_env, recording_proxy):
+@pytest.mark.parametrize("transport", ["profile", "plain"])
+async def test_proxy_credentials_reach_the_proxy(
+    server, clean_proxy_env, recording_proxy, transport
+):
     proxy = recording_proxy()
     url = proxy.url.replace("http://", "http://us?er:pa/ss@")
-    await fetch(f"{server.url}/echo", proxy=url)
+    await fetch(f"{server.url}/echo", transport, proxy=url)
     assert proxy.records[0][2] == "Basic " + base64.b64encode(b"us?er:pa/ss").decode()
 
 
@@ -728,9 +787,12 @@ async def test_proxy_credentials_stay_out_of_errors(server, clean_proxy_env):
     assert "hunter2" not in str(info.value)
 
 
+@pytest.mark.parametrize("transport", ["profile", "plain"])
 @pytest.mark.parametrize("scheme", ["socks5", "socks5h"])
 @pytest.mark.parametrize("via", ["proxy", "ALL_PROXY"])
-async def test_socks_proxy_resolves_the_name(server, clean_proxy_env, socks_proxy, scheme, via):
+async def test_socks_proxy_resolves_the_name(
+    server, clean_proxy_env, socks_proxy, scheme, via, transport
+):
     proxy = f"{scheme}://127.0.0.1:{socks_proxy.port}"
     port = int(server.url.rsplit(":", 1)[1])
     kwargs = {}
@@ -738,6 +800,6 @@ async def test_socks_proxy_resolves_the_name(server, clean_proxy_env, socks_prox
         kwargs["proxy"] = proxy
     else:
         clean_proxy_env.setenv("ALL_PROXY", proxy)
-    response = await fetch(f"http://{SOCKS_NAME}:{port}/ok", **kwargs)
+    response = await fetch(f"http://{SOCKS_NAME}:{port}/ok", transport, **kwargs)
     assert (response.status, response.body) == (200, b"ok")
     assert socks_proxy.records == [(3, SOCKS_NAME, port)]

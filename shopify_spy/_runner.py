@@ -30,7 +30,6 @@ from shopify_spy._fetch import (
     DEFAULT_IMPERSONATE,
     CurlCffiFetcher,
     FetcherFactory,
-    HttpxFetcher,
     impersonate_rotation,
     redact_url,
     uses_proxy,
@@ -84,7 +83,7 @@ class RunConfig:
     verify_tls: bool = True
     proxy: str | None = field(default=None, repr=False)
     # The first browser profile (None = DEFAULT_IMPERSONATE); a user_agent means
-    # httpx instead
+    # impersonation off
     impersonate: str | None = None
     rotate: bool = True  # swap the identity after a 403 or 429
     max_concurrent_stores: int | None = 16
@@ -203,14 +202,15 @@ class Runner:
         """Finish reason for a store that didn't end on its own."""
         return "shutdown" if self.shutdown.is_set() else "closed"
 
-    def _default_fetcher(self) -> HttpxFetcher | CurlCffiFetcher:
+    def _default_fetcher(self) -> CurlCffiFetcher:
         config = self.config
         if config.proxy:
             logger.info("Using proxy %s", redact_url(config.proxy))
-        if config.user_agent is not None:
-            return HttpxFetcher(verify=config.verify_tls, proxy=config.proxy)
-        first, *rest = self._profiles()
         version = importlib.metadata.version("curl_cffi")
+        if config.user_agent is not None:
+            logger.info("Sending plain requests as %s (curl_cffi %s)", config.user_agent, version)
+            return CurlCffiFetcher(None, verify=config.verify_tls, proxy=config.proxy)
+        first, *rest = self._profiles()
         if config.rotate:
             logger.info(
                 "Impersonating %s, then %s after a refusal (curl_cffi %s)",

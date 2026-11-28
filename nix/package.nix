@@ -15,7 +15,6 @@
   certifi,
   curl-cffi,
   defusedxml,
-  httpx,
   platformdirs,
   protego,
   pydantic,
@@ -30,7 +29,6 @@
   openpyxl,
   pytest-asyncio,
   pytestCheckHook,
-  respx,
   trustme,
   writableTmpDirAsHomeHook,
 }:
@@ -46,15 +44,13 @@ buildPythonPackage (finalAttrs: {
     certifi
     curl-cffi
     defusedxml
-    httpx
     platformdirs
     protego
     pydantic
     pyyaml
     rich
     typer
-  ]
-  ++ httpx.optional-dependencies.socks;
+  ];
 
   optional-dependencies = {
     excel = [ xlsxwriter ];
@@ -64,7 +60,6 @@ buildPythonPackage (finalAttrs: {
     openpyxl
     pytest-asyncio
     pytestCheckHook
-    respx
     trustme
     writableTmpDirAsHomeHook
   ]

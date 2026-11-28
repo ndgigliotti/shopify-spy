@@ -78,7 +78,7 @@ class ScrapeOptions(BaseModel):
     respect_robots_txt: bool = True
     verify_tls: bool = True
     proxy: str | None = Field(default=None, repr=False)
-    # None: DEFAULT_IMPERSONATE, or httpx when user_agent is set
+    # None: DEFAULT_IMPERSONATE, or impersonation off when user_agent is set
     impersonate: str | None = None
     rotate: bool = True
     max_concurrent_stores: int | None = Field(default=16, ge=1)
@@ -530,8 +530,9 @@ _SCRAPE_DOC = """
             the ``shopify_spy`` logger (which prints nothing until the caller
             configures logging).
         user_agent: Fixed User-Agent, never swapped. It turns impersonation off:
-            requests go through httpx with exactly this user agent. Can't be
-            combined with an ``impersonate`` profile. A blank one counts as unset.
+            plain requests through curl_cffi with no browser profile, exactly this
+            user agent and HTTP/1.1. Can't be combined with an ``impersonate``
+            profile. A blank one counts as unset.
         respect_robots_txt: Obey robots.txt (default {respect_robots_txt}), including
             its Crawl-delay as a minimum gap between requests to that host, capped
             at ``throttle_max_delay`` and applied even with ``throttle=False``.
@@ -558,7 +559,8 @@ _SCRAPE_DOC = """
             A string picks the first profile: any target the installed curl_cffi
             accepts, such as "safari" or a pinned "chrome150" (one outside that
             list comes first, then the list). The profile sets the user agent; a
-            ``user_agent`` sends plain httpx requests instead. Politeness
+            ``user_agent`` sends plain curl_cffi requests instead, with
+            impersonation off. Politeness
             (robots.txt, Crawl-delay, throttling, Retry-After) is the same either
             way. Not checked with a custom ``fetcher_factory``.
         rotate: After a 403 or 429, retry as the next browser profile (default

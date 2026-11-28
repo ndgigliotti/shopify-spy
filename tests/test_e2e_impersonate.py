@@ -1,6 +1,6 @@
 """End-to-end: the default curl_cffi transport against local stores (#95).
 
-It must leave the diagnosis as it is with httpx (--user-agent), and no hint
+It must leave the diagnosis as it is with plain requests (--user-agent), and no hint
 mentions impersonation. Run with: uv run pytest -m e2e
 """
 

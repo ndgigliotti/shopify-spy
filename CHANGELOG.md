@@ -75,19 +75,21 @@
   ([#95](https://github.com/ndgigliotti/shopify-spy/issues/95)). curl_cffi
   (`>=0.16.3,<0.18`) is a new required dependency. `--impersonate BROWSER` (`-I`,
   `network.impersonate`, `impersonate=`) picks the first profile: `chrome`,
-  `safari`, `firefox` or any other curl_cffi target. Setting your own
-  `--user-agent` (`network.user_agent`, `user_agent=`) is the only way to send
-  plain httpx requests, with exactly that string and never switched; it can't be
-  combined with `--impersonate`, and a blank one counts as unset.
-- Both transports trust the same CAs, for the store and for an `https://` proxy,
-  read from the environment during the run: the file in `SSL_CERT_FILE`, else
-  `REQUESTS_CA_BUNDLE`, else `CURL_CA_BUNDLE`, and the directory in
-  `SSL_CERT_DIR`, either one replacing certifi's bundle as `SSL_CERT_FILE`
-  already did. httpx now reads `REQUESTS_CA_BUNDLE` and
-  `CURL_CA_BUNDLE` too, and trusts `SSL_CERT_DIR` alongside `SSL_CERT_FILE`
-  rather than ignoring it when both are set. A CA file that can't be read,
-  or a directory with no hashed certificate, stops the run before it starts,
-  naming the variable, on both transports.
+  `safari`, `firefox` or any other curl_cffi target. curl_cffi replaces httpx as
+  the transport ([#114](https://github.com/ndgigliotti/shopify-spy/issues/114)):
+  setting your own `--user-agent` (`network.user_agent`, `user_agent=`) is the
+  only way to send plain requests, through curl_cffi with impersonation off, with
+  exactly that string and never switched. They stay on HTTP/1.1 and now send
+  `Accept-Encoding: gzip, deflate, br`. It can't be combined with
+  `--impersonate`, and a blank one counts as unset.
+- CAs for the store and for an `https://` proxy are read from the environment
+  during the run: the file in `SSL_CERT_FILE`, else `REQUESTS_CA_BUNDLE`, else
+  `CURL_CA_BUNDLE`, and the directory in `SSL_CERT_DIR`, either one replacing
+  certifi's bundle as `SSL_CERT_FILE` already did. `REQUESTS_CA_BUNDLE` and
+  `CURL_CA_BUNDLE` are new, and `SSL_CERT_DIR` is trusted alongside
+  `SSL_CERT_FILE` rather than ignored when both are set. A CA file that can't be
+  read, or a directory with no hashed certificate, stops the run before it
+  starts, naming the variable.
 - After a 403 or 429, a store switches to another browser profile to test
   whether the refusal is about identity: only after the retry's usual backoff,
   within the existing retries, and never again for that store if the new profile
@@ -129,10 +131,13 @@
 ### Removed
 
 - The unreleased `impersonate` extra: curl_cffi is always installed.
+- httpx and socksio (its `socks` extra) are no longer dependencies: curl_cffi
+  sends every request, and SOCKS proxies go through its libcurl
+  ([#114](https://github.com/ndgigliotti/shopify-spy/issues/114)).
 - The built-in list of browser user agents (`user_agents.json`) and
   `scripts/update_user_agents.py`, which refreshed it. Without `--user-agent`,
   requests carry the browser profile's own user agent; with it, exactly the one
-  you set, so httpx never sends one Shopify Spy picks.
+  you set, so Shopify Spy never picks one itself.
 
 ### Fixed
 

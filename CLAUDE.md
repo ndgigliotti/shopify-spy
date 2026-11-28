@@ -1,6 +1,6 @@
 ## Project Overview
 
-Shopify Spy is a Python library and CLI for extracting product and collection data from Shopify, WooCommerce, Magento, BigCommerce, Squarespace and other stores through their public JSON and GraphQL endpoints and product-page JSON-LD (httpx + asyncio).
+Shopify Spy is a Python library and CLI for extracting product and collection data from Shopify, WooCommerce, Magento, BigCommerce, Squarespace and other stores through their public JSON and GraphQL endpoints and product-page JSON-LD (curl_cffi + asyncio).
 
 ## Common Commands
 
@@ -21,7 +21,7 @@ Layers, top to bottom; lower layers never import higher ones, and only the CLI i
 - **Runner** (`_runner.py`, `_results.py`): one driver task owns all store tasks and feeds a bounded queue; per-store error isolation, `max_items_per_store`, bail, graceful shutdown; `StoreResult`/`StoreStatus`/`RunResult`. Never hold a TaskGroup or timeout across a `yield`.
 - **Adapters** (`_shopify.py`, `_woocommerce.py`, `_magento.py`, `_bigcommerce.py`, `_generic.py`, `_squarespace.py`, `_sitemap.py`, `_images.py`): `run(ctx, emit)` coroutines. Shopify tries bulk `/products.json`, falls back to the sitemap; WooCommerce pages the Store API; Magento pages the storefront GraphQL `products` query; BigCommerce reads the homepage's Storefront API token and pages `site.products` over POST `/graphql`; `_generic.py` (`generic`) reads schema.org Product data (JSON-LD or microdata) from sitemap-listed product pages; `_squarespace.py` reads those pages with robots.txt obeyed, else `?format=json` collections.
 - **Session** (`_session.py`, `_policy.py`): per-store `StoreSession` (dedupe, robots.txt, retries that may switch browser profile on a 403 or 429, hop-by-hop redirects, stats) over a run-wide `HostRegistry` (robots cache, concurrency and AutoThrottle slots keyed by origin).
-- **Transport** (`_fetch.py`): `Fetcher` protocol; `CurlCffiFetcher` (default, browser profiles), `HttpxFetcher` (custom user agent), plus `FakeFetcher`/`ReplayFetcher` for tests.
+- **Transport** (`_fetch.py`): `Fetcher` protocol; `CurlCffiFetcher` (browser profiles, or plain with `impersonate=None` for a custom user agent), plus `FakeFetcher`/`ReplayFetcher` for tests.
 
 A new runtime dependency also goes in `nix/package.nix` (checked by `nix flake check`).
 
