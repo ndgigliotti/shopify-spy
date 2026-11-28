@@ -728,7 +728,7 @@ class CurlCffiFetcher:
             curl_options={
                 CurlOpt.NOPROXY: "",
                 **({CurlOpt.HTTP_CONTENT_DECODING: 0} if raw else {}),
-                **(_curl_ca_options(self._trust_env) if self._verify is True else {}),
+                **(_curl_ca_options(self._trust_env) if self._verify else {}),
             },
         )
         return session
