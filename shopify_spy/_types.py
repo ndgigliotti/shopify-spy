@@ -160,7 +160,9 @@ class SquarespaceProductItem(TypedDict, total=False):
     Each ``structuredContent.variants`` entry has its ``id``, ``sku``, ``attributes``
     (option name to value), ``onSale``, ``priceMoney`` and ``salePriceMoney``
     (``{"currency", "value"}``, the value a decimal string), ``unlimited``,
-    ``qtyInStock`` and ``mainImage``. Dates (``addedOn``,
+    ``qtyInStock`` and ``mainImage``. A digital product (``productType`` 2) has no
+    variants; its ``priceMoney``, ``salePriceMoney`` and ``onSale`` are on
+    ``structuredContent`` itself. Dates (``addedOn``,
     ``updatedOn``, ``publishOn``) are epoch milliseconds. ``html_url`` is the store
     origin plus ``fullUrl``. ``image_urls`` lists the record's ``items`` images (else
     its ``assetUrl``) and then each variant's ``mainImage`` not already listed.

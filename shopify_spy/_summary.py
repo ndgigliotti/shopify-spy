@@ -5,7 +5,8 @@ payload in "product"/"collection"; WooCommerce is flat, with prices in minor uni
 Magento is flat, with prices in ``price_range``; BigCommerce is a GraphQL node, with
 prices in ``prices``; a generic item is the page's schema.org node, with prices in
 ``offers``; Squarespace is a ``?format=json`` record, with prices in
-``structuredContent.variants``, or a schema.org node); this reads any of them.
+``structuredContent.variants``, or on ``structuredContent`` for a product without
+variants, or a schema.org node); this reads any of them.
 """
 
 from __future__ import annotations
@@ -283,9 +284,17 @@ def _bigcommerce(item: dict[str, Any]) -> ItemSummary:
 
 
 def squarespace_variants(item: dict[str, Any]) -> list[dict[str, Any]]:
-    """The ``structuredContent.variants`` of a Squarespace record that are dicts."""
+    """The ``structuredContent.variants`` of a Squarespace record that are dicts; when
+    there are none, ``structuredContent`` itself if it has a ``priceMoney``, as one
+    implicit variant (a digital product, ``productType`` 2, has no variants and is
+    priced on ``structuredContent``)."""
     content = item.get("structuredContent")
-    return dicts(content.get("variants")) if isinstance(content, dict) else []
+    if not isinstance(content, dict):
+        return []
+    variants = dicts(content.get("variants"))
+    if not variants and isinstance(content.get("priceMoney"), dict):
+        return [content]
+    return variants
 
 
 def squarespace_price(variant: dict[str, Any]) -> tuple[Decimal | None, Decimal | None, str | None]:

@@ -50,7 +50,8 @@
   `?format=json` pages instead, giving the Squarespace product records with every
   variant, price and stock (`SquarespaceProductItem`, `source: "format_json"`), and
   falls back to the product pages when no collection gives a product. The log says
-  which source each store used, and the unified schema has a row per variant. A
+  which source each store used, and the unified schema has a row per variant (a
+  digital product, which has none, gets one row priced from its `structuredContent`). A
   store read with `--ignore-robots` whose sitemap lists product pages its
   collections don't give ends `partial`
   ([#91](https://github.com/ndgigliotti/shopify-spy/issues/91)).

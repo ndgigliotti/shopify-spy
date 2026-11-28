@@ -1496,6 +1496,33 @@ def test_csv_squarespace_product_without_variants_gets_one_row(tmp_path):
 
 
 @pytest.mark.parametrize(
+    ("sale", "price", "compare_at", "on_sale"),
+    [(None, "10.00", "", "false"), ("7.50", "7.50", "10.00", "true")],
+)
+def test_csv_squarespace_digital_product_gets_a_priced_row(
+    tmp_path, sale, price, compare_at, on_sale
+):
+    # A live digital product (productType 2) record, trimmed: no variants, priced on
+    # structuredContent
+    item = json.loads(
+        (Path(__file__).parent / "fixtures" / "squarespace-digital-product.json").read_text()
+    )
+    if sale is not None:
+        item["structuredContent"] |= {
+            "onSale": True,
+            "salePriceMoney": {"currency": "USD", "value": sale},
+        }
+    item |= {"store": "paperandstuff.shop", "platform": "squarespace", "source": "format_json"}
+    path = tmp_path / "out.csv"
+    write_items([item], path)
+    (row,) = read_csv(path)
+    assert (row["price"], row["compare_at_price"], row["on_sale"]) == (price, compare_at, on_sale)
+    assert (row["currency"], row["min_price"], row["max_price"]) == ("USD", price, price)
+    assert (row["variant_count"], row["variant_id"], row["available"]) == ("1", "", "")
+    assert row["handle"] == "greeting-card-pile-mockup-a2-size"
+
+
+@pytest.mark.parametrize(
     "odd",
     [
         {"structuredContent": {"variants": "many"}},

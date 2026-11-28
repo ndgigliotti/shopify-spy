@@ -1,7 +1,9 @@
 """spy.summarize() across platforms (plan §4.3 "Items and summarize()")."""
 
 import copy
+import json
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -385,6 +387,27 @@ def test_squarespace_format_json_product():
     assert (s.min_price, s.max_price, s.currency) == (Decimal("15.00"), Decimal("22.00"), "USD")
     assert (s.html_url, s.store) == ("https://sq.test/shop/p/tee", "sq.test")
     assert s.image_urls == ["https://images.test/tee.jpg"]
+
+
+# A live digital product (productType 2) record, trimmed: no variants, priced on
+# structuredContent
+SQUARESPACE_DIGITAL = json.loads(
+    (Path(__file__).parent / "fixtures" / "squarespace-digital-product.json").read_text()
+) | {"store": "paperandstuff.shop", "platform": "squarespace", "source": "format_json"}
+
+
+def test_squarespace_digital_product_is_priced_from_structured_content():
+    s = spy.summarize(SQUARESPACE_DIGITAL)
+    assert (s.min_price, s.max_price, s.currency) == (Decimal("10.00"), Decimal("10.00"), "USD")
+
+
+def test_squarespace_digital_product_on_sale_sells_at_its_sale_price():
+    content = SQUARESPACE_DIGITAL["structuredContent"] | {
+        "onSale": True,
+        "salePriceMoney": {"currency": "USD", "value": "7.50"},
+    }
+    s = spy.summarize(SQUARESPACE_DIGITAL | {"structuredContent": content})
+    assert (s.min_price, s.max_price) == (Decimal("7.50"), Decimal("7.50"))
 
 
 def test_squarespace_product_page_item_is_a_generic_product():

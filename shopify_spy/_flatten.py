@@ -13,7 +13,8 @@ with its own). BigCommerce products get a row per variant in the same way, with 
 GraphQL ``edges``/``node`` connections read through. Generic products get a row per
 ``hasVariant`` Product, else per offer in a list of offers, else one row; Squarespace
 items read from product pages are generic products. Squarespace ``?format=json``
-products get a row per ``structuredContent.variants`` entry. JSONL, JSON and XML keep
+products get a row per ``structuredContent.variants`` entry, or one row priced from
+``structuredContent`` when there are none (a digital product). JSONL, JSON and XML keep
 each platform's native item shape.
 """
 
