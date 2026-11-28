@@ -56,12 +56,11 @@ class HostSlot:
 
     One request leaves the slot per gate pass. While throttling is enabled, passes are
     spaced since the previous request by the larger of the delay and the minimum gap
-    times ``uniform(low, 1 + jitter)``, where ``low`` is ``1 - jitter`` but never below
-    the minimum gap (``jitter`` defaults to 0.5). A gap at the minimum is 1 to
-    ``1 + jitter`` times it, and the spacing never drops below it.
-    The minimum gap is the larger of robots.txt Crawl-delay and ``min_delay``
-    (``image_delay`` for an image download); it floors the spacing, not the adaptive
-    delay. Without throttling, only the Crawl-delay spaces requests, unjittered.
+    times ``uniform(low, 1 + jitter)``, where ``low`` is the larger of ``1 - jitter``
+    and the minimum gap divided by that pace (``jitter`` defaults to 0.5). The minimum
+    gap is the larger of robots.txt Crawl-delay and ``min_delay`` (``image_delay`` for an
+    image download); it floors the spacing, not the adaptive delay. Without throttling,
+    only the Crawl-delay spaces requests, unjittered.
 
     Rate limits work like TCP congestion control: a rate limit doubles a delay floor
     (multiplicative decrease of the rate) and each answered request lowers it a
