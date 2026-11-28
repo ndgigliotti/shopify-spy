@@ -8,6 +8,7 @@ import pytest
 import shopify_spy as spy
 from shopify_spy import _shopify
 from shopify_spy._fetch import FakeFetcher, FetchConnectionError
+from shopify_spy._runner import QUEUE_SIZE
 from shopify_spy._shopify import COLLECTION_CONCURRENCY, YIELD_WINDOW
 from tests.flow_support import (
     FAST,
@@ -1033,3 +1034,26 @@ def test_listed_product_redirected_off_its_document_counts_as_gone():
     assert [i["product"]["handle"] for i in items] == ["a"]
     store = result.stores[0]
     assert (store.status, store.complete) == (spy.StoreStatus.ok, True)
+
+
+async def test_paused_consumer_bounds_sitemap_fetches():
+    """A consumer that stops pulling stops the product fetches within the queue
+    and the fetch window, rather than letting every listed product be requested."""
+    handles = [f"p{i}" for i in range(400)]
+    routes = {
+        bulk_url(1): (404, ""),
+        SITEMAP: urlset(*(f"{STORE}/products/{h}" for h in handles)),
+        **{
+            f"{STORE}/products/{h}.json": {"product": {"id": i, "handle": h}}
+            for i, h in enumerate(handles)
+        },
+    }
+    fetcher = FakeFetcher(routes)
+    run = spy.scrape_async(STORE, fetcher_factory=lambda: fetcher, max_items_per_store=110, **FAST)
+    async with asyncio.timeout(5), run:
+        items = aiter(run)  # held, so the run isn't closed when the loop is left
+        await anext(items)
+        await asyncio.sleep(0.5)
+        fetched = sum(r.url.endswith(".json") and "/products/" in r.url for r in fetcher.requests)
+    # The queue, the delivery slot, the consumed item and one window of fetches
+    assert fetched <= QUEUE_SIZE + 2 + _shopify.FETCH_CONCURRENCY
