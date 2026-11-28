@@ -1,6 +1,6 @@
 """End-to-end: the default curl_cffi transport against local stores (#95).
 
-It must leave the diagnosis as it is with httpx (--no-impersonate), and no hint
+It must leave the diagnosis as it is with httpx (--user-agent), and no hint
 mentions impersonation. Run with: uv run pytest -m e2e
 """
 
@@ -100,7 +100,7 @@ def _scrape(out_dir, url, *args):
 )
 def test_same_diagnosis_on_both_transports(store, tmp_path_factory, scenario, expected):
     url, agents = store(scenario)
-    plain = _scrape(tmp_path_factory.mktemp("plain"), url, "--no-impersonate")
+    plain = _scrape(tmp_path_factory.mktemp("plain"), url, "--user-agent", "test-agent/1.0")
     agents.clear()
     output, entry, items = _scrape(tmp_path_factory.mktemp("browser"), url)
 
@@ -122,11 +122,17 @@ def test_store_that_refuses_one_profile_is_served_by_the_next(store, tmp_path_fa
     assert "Chrome/" in agents[0] and "Version/" in agents[1]
 
 
-@pytest.mark.parametrize("args", [[], ["--no-impersonate"]], ids=["curl_cffi", "httpx"])
-def test_store_that_refuses_every_identity_switches_once(store, tmp_path_factory, args):
+def test_store_that_refuses_every_profile_switches_once(store, tmp_path_factory):
     url, agents = store("store_403")
-    _, entry, _ = _scrape(tmp_path_factory.mktemp("browser"), url, *args)
+    _, entry, _ = _scrape(tmp_path_factory.mktemp("browser"), url)
     assert (entry["status"], entry["identity_changes"]) == ("403 Forbidden", 1)
     # Every later request keeps the second identity, robots.txt's included
     assert len(set(agents)) == 2
     assert all(agent == agents[1] for agent in agents[1:])
+
+
+def test_user_agent_is_never_switched(store, tmp_path_factory):
+    url, agents = store("store_403")
+    _, entry, _ = _scrape(tmp_path_factory.mktemp("plain"), url, "--user-agent", "test-agent/1.0")
+    assert (entry["status"], entry["identity_changes"]) == ("403 Forbidden", 0)
+    assert set(agents) == {"test-agent/1.0"}

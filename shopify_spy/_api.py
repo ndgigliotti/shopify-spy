@@ -21,7 +21,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from shopify_spy._fetch import (
     DEFAULT_IMPERSONATE,
@@ -75,8 +75,8 @@ class ScrapeOptions(BaseModel):
     respect_robots_txt: bool = True
     verify_tls: bool = True
     proxy: str | None = Field(default=None, repr=False)
-    # None: impersonate from DEFAULT_IMPERSONATE, or send user_agent through httpx
-    impersonate: str | Literal[False] | None = None
+    # None: DEFAULT_IMPERSONATE, or httpx when user_agent is set
+    impersonate: str | None = None
     rotate: bool = True
     max_concurrent_stores: int | None = Field(default=16, ge=1)
     throttle: bool = True
@@ -88,14 +88,6 @@ class ScrapeOptions(BaseModel):
     on_failure: Literal["raise", "warn", "ignore"] = "raise"
     strict: bool = False
     fetcher_factory: Callable[[], Any] | None = None  # provisional
-
-    @field_validator("impersonate", mode="before")
-    @classmethod
-    def _profile_or_false(cls, value: Any) -> Any:
-        # Literal[False] alone would take 0 for False
-        if value is not None and not isinstance(value, (str, bool)):
-            raise ValueError("expected a browser profile name or False")
-        return value
 
 
 def _prepare(
@@ -163,9 +155,8 @@ def _prepare_urls(urls: str | Iterable[str]) -> list[tuple[str, str]]:
 
 
 def _first_profile(opts: ScrapeOptions) -> str | None:
-    """The browser profile a run starts with, or None for httpx (a custom user agent
-    or ``impersonate=False``)."""
-    if opts.impersonate is False or opts.user_agent is not None:
+    """The browser profile a run starts with, or None for httpx (a custom user agent)."""
+    if opts.user_agent is not None:
         return None
     return opts.impersonate or DEFAULT_IMPERSONATE
 
@@ -534,14 +525,13 @@ _SCRAPE_DOC = """
             (see ``rotate``) moves the store to the next of {profiles}.
             A string picks the first profile: any target the installed curl_cffi
             accepts, such as "safari" or a pinned "chrome150" (one outside that
-            list comes first, then the list). The profile sets the user agent.
-            False sends requests through httpx instead, with a random browser user
-            agent per store.
-            Politeness (robots.txt, Crawl-delay, throttling, Retry-After) is the
-            same either way. Not checked with a custom ``fetcher_factory``.
-        rotate: After a 403 or 429, retry as another identity (default {rotate}):
-            the next browser profile, or another user agent with
-            ``impersonate=False``. It tests whether the refusal is about identity:
+            list comes first, then the list). The profile sets the user agent; a
+            ``user_agent`` sends plain httpx requests instead. Politeness
+            (robots.txt, Crawl-delay, throttling, Retry-After) is the same either
+            way. Not checked with a custom ``fetcher_factory``.
+        rotate: After a 403 or 429, retry as the next browser profile (default
+            {rotate}; a ``user_agent`` is never switched). It tests whether the
+            refusal is about identity:
             the retry still waits its backoff and counts against ``retries``; once a
             switched-to identity is refused too, the store stops switching; a host's
             refusals are remembered for the run, so no store switches to an identity

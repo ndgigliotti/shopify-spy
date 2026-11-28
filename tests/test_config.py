@@ -219,17 +219,17 @@ def test_network_proxy_defaults_to_none():
     assert Config().to_kwargs()["proxy"] is None
 
 
-@pytest.mark.parametrize(("value", "expected"), [("safari", "safari"), ("false", False)])
-def test_network_impersonate_from_file(tmp_path, value, expected):
+def test_network_impersonate_from_file(tmp_path):
     path = tmp_path / "config.yaml"
-    path.write_text(f"network:\n  impersonate: {value}\n")
-    assert load_config_from_file(path).to_kwargs()["impersonate"] == expected
+    path.write_text("network:\n  impersonate: safari\n")
+    assert load_config_from_file(path).to_kwargs()["impersonate"] == "safari"
     assert Config().to_kwargs()["impersonate"] is None
 
 
-def test_network_impersonate_true_is_rejected():
+@pytest.mark.parametrize("value", [True, False])
+def test_network_impersonate_bool_is_rejected(value):
     with pytest.raises(ValidationError):
-        Config(network={"impersonate": True})
+        Config(network={"impersonate": value})
 
 
 def test_default_config_template_has_commented_impersonate():

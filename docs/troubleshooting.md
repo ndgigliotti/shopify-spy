@@ -28,7 +28,7 @@ Every store ends with a status, which the CLI lists when a store fails and the [
 ## Exit status
 
 - **0:** at least one store produced items. Stores that failed are listed with their statuses.
-- **1:** no store produced items, the output couldn't be written, or the input was invalid (no URLs or no valid ones, `--verbose` with `--quiet`, an option value the CLI rejects, such as a bad `--proxy` or an unknown `--impersonate` browser, `--impersonate` with `--user-agent` or `--no-impersonate`, or `--format xlsx` without the `excel` extra, which `--peek` doesn't check). The CLI prints the reason.
+- **1:** no store produced items, the output couldn't be written, or the input was invalid (no URLs or no valid ones, `--verbose` with `--quiet`, an option value the CLI rejects, such as a bad `--proxy` or an unknown `--impersonate` browser, `--impersonate` with `--user-agent`, or `--format xlsx` without the `excel` extra, which `--peek` doesn't check). The CLI prints the reason.
 - **2:** a usage error, such as an unknown option.
 
 ## The status file
@@ -50,7 +50,7 @@ Each run except `--peek` writes a status file to `<output>/status/`, with each U
 }
 ```
 
-`products_from` is `null` unless a store's products came from another host, such as the `myshopify.com` domain of a [headless store](#headless-shopify-stores). `identity_changes` counts the store's switches to another browser profile (or user agent) after a refusal; see [Retries and identities](#retries-and-identities).
+`products_from` is `null` unless a store's products came from another host, such as the `myshopify.com` domain of a [headless store](#headless-shopify-stores). `identity_changes` counts the store's switches to another browser profile after a refusal; see [Retries and identities](#retries-and-identities).
 
 `finish_reason` summarizes the run: `finished`, `item_limit` (a store reached `--limit`), `bail` (a store hit the `--bail` timeout), `crawler_failed` (a store failed with an error: unexpected, or a Magento answer without products), or `shutdown` (interrupted). `items_written` is how many items the data file holds. A crash or a killed process writes no status file.
 
@@ -68,18 +68,18 @@ Detailed logs go to a log file rather than the terminal, in the platform's state
 Stores usually rate-limit by IP address: past some request rate they answer 429 (Too Many Requests). A store that stays rate-limited ends as `rate_limited`; retry it later, with a lower `--concurrent` and throttling on.
 
 - **Throttling:** auto-throttling is on by default. Each host is slowed to match its response times, never to less than 1 second between page and API requests (`--min-delay`, at most 1 per second) or 0.25 seconds between image downloads (`--image-delay`, at most 4 per second). A robots.txt `Crawl-delay` spaces that host's requests too, capped at the throttle's `max_delay` (60 seconds). A 429 or 503 pauses that host for its full `Retry-After` time, even when it is longer than 60 seconds, and such a request isn't retried early. `--no-throttle` drops the adaptive delay and both minimums, but `Crawl-delay` and `Retry-After` pauses still apply. The [config file](cli.md#configuration)'s `throttle` settings adjust the rest.
-- **Identities:** some stores rate-limit by user agent, so a 429 may be retried as another browser; see [Retries and identities](#retries-and-identities). Shopify answers 429 to every request from a plain Linux browser user agent (`X11; Linux x86_64`, as Chrome on Linux and headless Chrome send), so neither the browser profiles nor the user agents of `--no-impersonate` use one. Avoid that token in a custom `--user-agent`.
+- **Identities:** some stores rate-limit by user agent, so a 429 may be retried as another browser; see [Retries and identities](#retries-and-identities). Shopify answers 429 to every request from a plain Linux browser user agent (`X11; Linux x86_64`, as Chrome on Linux and headless Chrome send), so none of the browser profiles uses one. Avoid that token in a custom `--user-agent`.
 - **Bail and waits:** waiting out a `Retry-After` of up to 60 seconds doesn't count against `--bail`, and waits are excused for each request. So a store limited by IP can wait (retries + 1) × up to 60 seconds for every request it makes before its first item. That has no fixed bound: a Shopify store that answers 429 with `Retry-After` to each of the thousands of products its sitemap lists can run for hours before it fails. A longer `Retry-After` isn't excused from `--bail`. Once a store has produced its first item, though, `--bail` no longer applies, so a long `Retry-After` on its host (for example during Shopify's collections or sitemap fallback) holds that store for the whole pause. The log file then has a `Pausing requests to ...` warning giving the length of the pause, and Ctrl-C stops the run with what it has.
 - **Images:** the same holds for an image host, which every store in the run shares. A long `Retry-After` from the image CDN pauses image downloads for every store, and since images are fetched as each item is delivered, each `--images` store stalls until the pause ends (`--no-images` or Ctrl-C ends it sooner).
 - **Proxies** don't get around rate limits; see [Proxies](cli.md#proxies).
 
 ## Retries and identities
 
-Requests go out as a browser: by default a curl_cffi browser profile (`chrome` first), with `--no-impersonate` a random browser user agent through httpx (see [Browser profiles](cli.md#browser-profiles)). A 403 or 429 may come from the store refusing that one identity, as Shopify once did with a 429 for a single user agent ([#62](https://github.com/ndgigliotti/shopify-spy/issues/62)), so the retry switches the store to another identity to find out. The switch never changes the pace:
+Requests go out as a browser: a curl_cffi browser profile, `chrome` first (see [Browser profiles](cli.md#browser-profiles)). A custom `--user-agent` sends plain requests with exactly that string and is never switched. A 403 or 429 may come from the store refusing that one identity, as Shopify once did with a 429 for a single user agent ([#62](https://github.com/ndgigliotti/shopify-spy/issues/62)), so the retry switches the store to another identity to find out. The switch never changes the pace:
 
 - **Backoff first.** The retry with the new identity waits like any retry: a 429 for its `Retry-After` or the doubled host delay, a 403 for the usual short retry delay. It counts against the retries (2 by default) and never adds one.
 - **One test.** If the new identity is refused too before it gets a normal answer, the block isn't about identity: the store stops switching for the rest of the run, and the request ends as it would have (`forbidden` or `rate_limited`). A store that refuses one profile and serves the next ends `ok` with one identity change.
-- **Remembered refusals.** A host's refusals are remembered for the run, so no store switches to a profile (or user agent) that host already refused ([#67](https://github.com/ndgigliotti/shopify-spy/issues/67)).
+- **Remembered refusals.** A host's refusals are remembered for the run, so no store switches to a profile that host already refused ([#67](https://github.com/ndgigliotti/shopify-spy/issues/67)).
 - **No switch on explicit refusals.** A robots.txt disallow, a 401, a challenge page (a Cloudflare `cf-mitigated: challenge` response or its "Just a moment..." page, which ends the request without a retry), and refusals from `*.myshopify.com` hosts keep the identity.
 - **Reported.** Each switch is logged at INFO as `Switching browser profile for HOST: chrome -> safari`, and the [status file](#the-status-file)'s `identity_changes` and `StoreResult.identity_changes` count them per store.
 - **Off switch.** `--no-rotate` (`network.rotate: false`, `rotate=False`) keeps one identity for the whole run; refusals are still retried. A custom `--user-agent` is never switched either.
@@ -110,7 +110,7 @@ A headless Shopify store runs its storefront on a custom frontend (Hydrogen or a
 
 - The `myshopify.com` domain is used only when the homepage names exactly one; none or several (an app or marketplace domain, say) go straight to the sitemap.
 - A `myshopify.com` domain behind a password page (a redirect to `/password`), or one that fails in any other way, falls back to the sitemap as before.
-- Requests to `*.myshopify.com`, robots.txt included, go one at a time across the whole run, since those hosts are Shopify's rather than the store's. A 403 or 429 there doesn't switch the store's browser profile or user agent.
+- Requests to `*.myshopify.com`, robots.txt included, go one at a time across the whole run, since those hosts are Shopify's rather than the store's. A 403 or 429 there doesn't switch the store's browser profile.
 - With `--bail`, the homepage and the wait for the first item take at most half of the store's remaining bail time before the sitemap is tried with the rest.
 
 ## WooCommerce stores

@@ -61,18 +61,9 @@ class NetworkConfig(BaseModel):
     verify_tls: bool = True
     max_concurrent_stores: int | None = Field(default=16, ge=1)  # None = no limit
     proxy: str | None = None  # None = HTTPS_PROXY/HTTP_PROXY/ALL_PROXY from the environment
-    # First browser profile (None = chrome); false = httpx with browser UAs. Checked
-    # when the run starts
-    impersonate: str | Literal[False] | None = None
+    # First browser profile (None = chrome), checked when the run starts
+    impersonate: str | None = None
     rotate: bool = True  # Switch browser profile (or user agent) after a 403 or 429
-
-    @field_validator("impersonate", mode="before")
-    @classmethod
-    def _profile_or_false(cls, value: Any) -> Any:
-        # Literal[False] alone would take 0 for False
-        if value is not None and not isinstance(value, (str, bool)):
-            raise ValueError("expected a browser profile name or false")
-        return value
 
     @field_validator("proxy")
     @classmethod
@@ -159,7 +150,7 @@ network:
   retries: 2               # Retry failed requests
   # user_agent: MyBot/1.0 (+https://example.com)  # Custom user agent (turns impersonation off)
   # proxy: http://proxy.example.com:8080  # Fixed proxy (overrides HTTPS_PROXY)
-  # impersonate: safari  # First browser profile (default chrome); false = no impersonation
+  # impersonate: safari  # First browser profile (default chrome)
   rotate: true             # Try another browser profile after a 403 or 429 (false = --no-rotate)
   respect_robots_txt: true
   verify_tls: true         # Verify TLS certificates (false = --insecure)

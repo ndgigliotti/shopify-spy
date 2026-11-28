@@ -4,8 +4,6 @@
 
 ### Added
 
-- `--no-impersonate` (`network.impersonate: false`, `impersonate=False`) sends
-  requests through httpx with a random browser user agent per store, as before.
 - `--rotate/--no-rotate` (`network.rotate`, `rotate=`) turns the identity switch
   after a refusal on or off (default on), and the status file's
   `identity_changes` and `StoreResult.identity_changes` count the switches per
@@ -26,15 +24,15 @@
   ([#95](https://github.com/ndgigliotti/shopify-spy/issues/95)). curl_cffi
   (`>=0.16.3,<0.18`) is a new required dependency. `--impersonate BROWSER` (`-I`,
   `network.impersonate`, `impersonate=`) picks the first profile: `chrome`,
-  `safari`, `firefox` or any other curl_cffi target. A custom `--user-agent` now
-  means httpx with exactly that user agent, and can't be combined with
-  `--impersonate`.
-- After a 403 or 429, a store switches to another browser profile (another user
-  agent with `--no-impersonate`) to test whether the refusal is about identity:
-  only after the retry's usual backoff, within the existing retries, and never
-  again for that store if the new identity is refused too. A host's refusals
-  are remembered for the run, so no store switches to an identity it refused
-  ([#67](https://github.com/ndgigliotti/shopify-spy/issues/67)). Challenge pages
+  `safari`, `firefox` or any other curl_cffi target. Setting your own
+  `--user-agent` (`network.user_agent`, `user_agent=`) is the only way to send
+  plain httpx requests, with exactly that string and never switched; it can't be
+  combined with `--impersonate`.
+- After a 403 or 429, a store switches to another browser profile to test
+  whether the refusal is about identity: only after the retry's usual backoff,
+  within the existing retries, and never again for that store if the new profile
+  is refused too. A host's refusals are remembered for the run, so no store
+  switches to a profile it refused ([#67](https://github.com/ndgigliotti/shopify-spy/issues/67)). Challenge pages
   (Cloudflare's `cf-mitigated: challenge`), 401s and `*.myshopify.com` refusals
   never switch, and a challenge page isn't retried. Each switch is logged at INFO.
 - Throttling is more conservative by default. A robots.txt `Crawl-delay` (for the

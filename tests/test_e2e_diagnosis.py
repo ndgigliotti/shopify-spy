@@ -31,7 +31,7 @@ def transport(request):
     """Extra CLI args selecting the transport: the session layer (robots.txt,
     throttling, Crawl-delay, Retry-After, redirects, address checks) must not depend
     on it."""
-    return [] if request.param == "curl_cffi" else ["--no-impersonate"]
+    return [] if request.param == "curl_cffi" else ["--user-agent", "test-agent/1.0"]
 
 
 def _free_port() -> int:
@@ -357,7 +357,11 @@ def test_shopify_diagnosis(tmp_path, stores, transport):
     urls = {scenario: stores(scenario) for scenario in EXPECTED_SHOPIFY}
     statuses = _run(tmp_path, list(urls.values()), *transport)
     actual = {scenario: statuses[url] for scenario, url in urls.items()}
-    assert actual == EXPECTED_SHOPIFY
+    expected = dict(EXPECTED_SHOPIFY)
+    if transport:
+        # A fixed user agent is never switched, so a store refusing it stays refused
+        expected["user_agent_rate_limited"] = "rate limited (429)"
+    assert actual == expected
     # The 120 s Retry-After isn't retried after 60 s, nor waited out past --bail
     assert stores.servers["long_retry_after"].RequestHandlerClass.hits["/products.json"] == 1
 

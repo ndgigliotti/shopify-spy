@@ -410,13 +410,14 @@ class _NotFound(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
 
-def test_run_without_impersonation_never_imports_curl_cffi(clean_proxy_env):
+def test_run_with_a_user_agent_never_imports_curl_cffi(clean_proxy_env):
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _NotFound)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     store = f"http://127.0.0.1:{httpd.server_address[1]}"
     code = (
         "import sys, shopify_spy as spy; "
-        f"run = spy.scrape({store!r}, impersonate=False, on_failure='ignore', throttle=False); "
+        f"run = spy.scrape({store!r}, user_agent='test-agent/1.0', on_failure='ignore', "
+        "throttle=False); "
         "list(run); "
         "print(404 in run.result.stores[0].responses_by_status, 'curl_cffi' in sys.modules)"
     )
@@ -690,8 +691,8 @@ def test_impersonate_with_user_agent_raises_with_custom_fetcher():
         spy.scrape("a.com", impersonate="chrome", user_agent="foo/1.0", fetcher_factory=fake({}))
 
 
-@pytest.mark.parametrize("value", [True, 1, ""])
-def test_impersonate_rejects_values_that_are_not_a_profile_or_false(value):
+@pytest.mark.parametrize("value", [True, False, 0, ""])
+def test_impersonate_rejects_values_that_are_not_a_profile(value):
     with pytest.raises(ValueError, match="impersonate"):
         spy.scrape("a.com", impersonate=value)
 
@@ -743,12 +744,9 @@ def test_impersonate_picks_the_first_profile(monkeypatch, clean_proxy_env, caplo
     assert "Impersonating chrome146, then chrome, safari, firefox after" in caplog.text
 
 
-@pytest.mark.parametrize(
-    "options", [{"impersonate": False}, {"user_agent": "MyBot/1.0"}], ids=["off", "user_agent"]
-)
-def test_runs_on_httpx_without_impersonation(monkeypatch, clean_proxy_env, options):
+def test_user_agent_runs_on_httpx(monkeypatch, clean_proxy_env):
     made = _record_transports(monkeypatch)
-    assert len(list(spy.scrape(STORE, **options, **FAST))) == 2
+    assert len(list(spy.scrape(STORE, user_agent="MyBot/1.0", **FAST))) == 2
     assert made == [("httpx", True, None)]
 
 
@@ -811,13 +809,3 @@ def test_each_store_starts_with_the_first_profile():
     for store in (STORE, other_store):
         sent = [r.identity.impersonate for r in fetcher.requests if r.url == bulk_url(1, store)]
         assert sent == ["chrome", "safari"]
-
-
-def test_impersonate_false_with_an_impersonating_fetcher_rotates_user_agents():
-    fetcher = _CurlLike(
-        {f"{STORE}/robots.txt": (404, ""), bulk_url(1): Seq([(403, ""), products(2)])}
-    )
-    scrape(fetcher, impersonate=False)
-    sent = [r.identity for r in fetcher.requests if r.url == bulk_url(1)]
-    assert [i.impersonate for i in sent] == [None, None]
-    assert sent[0].user_agent != sent[1].user_agent

@@ -481,21 +481,6 @@ def _scrape_without_fake(*args: str):
     return result.exit_code, " ".join(strip_ansi(result.stderr).split())
 
 
-def test_impersonate_and_no_impersonate_is_a_clean_error(cli):
-    run = cli(shop("shop.test", 1), "-I", "safari", "--no-impersonate", "shop.test")
-    assert run.exit_code == 1
-    assert "Error: Cannot use both --impersonate and --no-impersonate" in run.stderr
-    assert not run.requests
-
-
-def test_no_impersonate_overrides_config(cli, monkeypatch, tmp_path):
-    seen = _seen_kwargs(monkeypatch)
-    config_file = tmp_path / "spy.yaml"
-    config_file.write_text("network:\n  impersonate: safari\n")
-    cli(shop("shop.test", 1), "shop.test", "-c", str(config_file), "--no-impersonate")
-    assert seen["impersonate"] is False
-
-
 def test_rotate_flag_overrides_config():
     config = Config(network={"rotate": False})
     assert _overrides(config).to_kwargs()["rotate"] is False
@@ -515,11 +500,11 @@ def test_impersonate_defaults_to_none(cli, monkeypatch):
     assert seen["impersonate"] is None
 
 
-def test_user_agent_with_no_impersonate_is_allowed(cli, monkeypatch):
+def test_user_agent_alone_reaches_library(cli, monkeypatch):
     seen = _seen_kwargs(monkeypatch)
-    run = cli(shop("shop.test", 1), "shop.test", "--no-impersonate", "-A", "MyBot/1.0")
+    run = cli(shop("shop.test", 1), "shop.test", "-A", "MyBot/1.0")
     assert run.exit_code == 0, run.stderr
-    assert (seen["impersonate"], seen["user_agent"]) == (False, "MyBot/1.0")
+    assert (seen["impersonate"], seen["user_agent"]) == (None, "MyBot/1.0")
 
 
 def test_unknown_impersonate_target_is_a_clean_error():

@@ -91,8 +91,7 @@ def test_piped_help_lists_options_by_task():
     assert out.index("--ignore-robots") < out.index("--bail") < out.index("--quiet")
     network = out[out.index("Network:") : out.index("Run control:")]
     assert network.index("--user-agent") < network.index("-I, --impersonate BROWSER")
-    assert network.index("-I, --impersonate BROWSER") < network.index("--no-impersonate")
-    assert network.index("--no-impersonate") < network.index("--rotate / --no-rotate")
+    assert network.index("-I, --impersonate BROWSER") < network.index("--rotate / --no-rotate")
     assert network.index("--rotate / --no-rotate") < network.index("--proxy")
 
 

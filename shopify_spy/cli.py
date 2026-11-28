@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable, Container
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any
 
 import platformdirs
 import typer
@@ -409,21 +409,12 @@ def scrape(
             rich_help_panel=NETWORK_PANEL,
         ),
     ] = None,
-    no_impersonate: Annotated[
-        bool,
-        typer.Option(
-            "--no-impersonate",
-            help="Send requests through httpx with a random browser user agent per "
-            "store, swapped after a 403 or 429, instead of impersonating a browser.",
-            rich_help_panel=NETWORK_PANEL,
-        ),
-    ] = False,
     rotate: Annotated[
         bool | None,
         typer.Option(
             "--rotate/--no-rotate",
-            help="After a 403 or 429, retry with another browser profile (user agent "
-            "with --no-impersonate), once per refusal and only after the usual backoff; "
+            help="After a 403 or 429, retry with another browser profile, once per "
+            "refusal and only after the usual backoff; "
             "--no-rotate keeps one identity for the whole run "
             f"(default: {_on_off(_DEFAULTS.network.rotate)}).",
             rich_help_panel=NETWORK_PANEL,
@@ -495,9 +486,6 @@ def scrape(
     # ValidationError traceback from Config()
     if proxy is not None:
         _exit_on_invalid(lambda: validate_proxy(proxy))
-    if no_impersonate and impersonate is not None:
-        err_console.print("[red]Error: Cannot use both --impersonate and --no-impersonate[/red]")
-        raise typer.Exit(1)
 
     # Apply CLI overrides
     config = apply_cli_overrides(
@@ -515,7 +503,7 @@ def scrape(
         image_delay=image_delay,
         limit=limit,
         user_agent=user_agent,
-        impersonate=False if no_impersonate else impersonate,
+        impersonate=impersonate,
         rotate=rotate,
         ignore_robots=ignore_robots,
         bail=bail,
@@ -645,7 +633,7 @@ def apply_cli_overrides(
     throttle: bool | None,
     limit: int | None,
     user_agent: str | None,
-    impersonate: str | Literal[False] | None = None,
+    impersonate: str | None = None,
     rotate: bool | None = None,
     ignore_robots: bool = False,
     bail: int | None = None,
