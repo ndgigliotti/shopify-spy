@@ -481,18 +481,35 @@ def _scrape_without_fake(*args: str):
     return result.exit_code, " ".join(strip_ansi(result.stderr).split())
 
 
-def test_impersonate_without_the_extra_is_a_clean_error(monkeypatch):
-    monkeypatch.setitem(sys.modules, "curl_cffi", None)
-    code, err = _scrape_without_fake("--impersonate", "chrome")
-    assert code == 1
-    assert (
-        "Error: --impersonate needs the impersonate extra: "
-        "uv tool install 'shopify-spy[impersonate]'" in err
-    )
+def test_impersonate_and_no_impersonate_is_a_clean_error(cli):
+    run = cli(shop("shop.test", 1), "-I", "safari", "--no-impersonate", "shop.test")
+    assert run.exit_code == 1
+    assert "Error: Cannot use both --impersonate and --no-impersonate" in run.stderr
+    assert not run.requests
+
+
+def test_no_impersonate_overrides_config(cli, monkeypatch, tmp_path):
+    seen = _seen_kwargs(monkeypatch)
+    config_file = tmp_path / "spy.yaml"
+    config_file.write_text("network:\n  impersonate: safari\n")
+    cli(shop("shop.test", 1), "shop.test", "-c", str(config_file), "--no-impersonate")
+    assert seen["impersonate"] is False
+
+
+def test_impersonate_defaults_to_none(cli, monkeypatch):
+    seen = _seen_kwargs(monkeypatch)
+    cli(shop("shop.test", 1), "shop.test")
+    assert seen["impersonate"] is None
+
+
+def test_user_agent_with_no_impersonate_is_allowed(cli, monkeypatch):
+    seen = _seen_kwargs(monkeypatch)
+    run = cli(shop("shop.test", 1), "shop.test", "--no-impersonate", "-A", "MyBot/1.0")
+    assert run.exit_code == 0, run.stderr
+    assert (seen["impersonate"], seen["user_agent"]) == (False, "MyBot/1.0")
 
 
 def test_unknown_impersonate_target_is_a_clean_error():
-    pytest.importorskip("curl_cffi")
     code, err = _scrape_without_fake("--impersonate", "nosuchbrowser")
     assert code == 1
     assert "Error: " in err and "'nosuchbrowser'" in err
@@ -513,6 +530,7 @@ def test_impersonate_with_user_agent_is_a_clean_error(cli, tmp_path, from_config
     assert run.exit_code == 1
     err = " ".join(run.stderr.split())
     assert "Error: --impersonate sets the user agent from the browser profile" in err
+    assert "--user-agent, which turns impersonation off" in err
     assert "network.impersonate or network.user_agent" in err
     assert not run.requests
 

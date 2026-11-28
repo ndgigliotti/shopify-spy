@@ -217,8 +217,13 @@ class RetryPolicy:
 
 
 def retry_policy_for(capabilities: FetcherCapabilities, retries: int, backoff: bool) -> RetryPolicy:
-    """Pick retry behavior for a transport. Browsers don't rotate identities."""
-    rotate = frozenset() if not capabilities.applies_identity_headers else ROTATE_ON_STATUSES
+    """Pick retry behavior for a transport.
+
+    A transport rotates identities if it sends the identity's user agent or its
+    impersonation profile; one that brings its own (a real browser) doesn't.
+    """
+    rotates = capabilities.applies_identity_headers or capabilities.can_impersonate
+    rotate = ROTATE_ON_STATUSES if rotates else frozenset()
     return RetryPolicy(retries=retries, rotate_on=rotate, backoff=backoff)
 
 
@@ -238,25 +243,42 @@ USER_AGENTS = load_user_agents()
 
 @dataclass
 class IdentityPool:
-    """A store's browser identity: one random UA, swapped only after a 403 or 429.
+    """A store's browser identity, swapped only after a 403 or 429.
 
-    A fixed ``user_agent`` disables rotation.
+    With ``profiles`` (an impersonating transport), the identity is the first
+    profile, and each swap moves to the next, wrapping around; the profile brings
+    its own user agent. Otherwise it is a random UA from ``agents``, swapped for
+    another at random. A fixed ``user_agent`` disables rotation and can't be
+    combined with ``profiles``.
     """
 
     user_agent: str | None = None
     agents: list[str] = field(default_factory=lambda: list(USER_AGENTS))
+    profiles: tuple[str, ...] = ()
     current: Identity = field(init=False)
+    _index: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.profiles and self.user_agent is not None:
+            raise ValueError("a fixed user_agent can't be combined with profiles")
+        if self.profiles:
+            self.current = Identity(user_agent=None, impersonate=self.profiles[0])
+            return
         ua = self.user_agent or random.choice(self.agents)
         self.current = Identity(user_agent=ua, headers=dict(DEFAULT_HEADERS))
 
     @property
     def rotates(self) -> bool:
+        if self.profiles:
+            return len(self.profiles) > 1
         return self.user_agent is None and len(self.agents) > 1
 
     def rotate(self) -> None:
         if not self.rotates:
+            return
+        if self.profiles:
+            self._index = (self._index + 1) % len(self.profiles)
+            self.current = Identity(user_agent=None, impersonate=self.profiles[self._index])
             return
         previous = self.current.user_agent
         ua = previous

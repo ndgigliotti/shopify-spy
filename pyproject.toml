@@ -53,11 +53,11 @@ dependencies = [
     "httpx[socks]>=0.28",
     "protego>=0.4",
     "defusedxml>=0.7",
+    "curl_cffi>=0.16.3,<0.18",
 ]
 
 [project.optional-dependencies]
 excel = ["xlsxwriter>=3.0"]
-impersonate = ["curl_cffi>=0.16.3,<0.18"]
 
 [project.urls]
 Homepage = "https://github.com/ndgigliotti/shopify-spy"
@@ -108,6 +108,5 @@ dev = [
     "pre-commit>=4.0",
     "xlsxwriter>=3.0",
     "openpyxl>=3.1",
-    "curl_cffi>=0.16.3,<0.18",
     "trustme>=1.2.1",
 ]

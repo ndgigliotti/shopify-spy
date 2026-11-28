@@ -7,7 +7,6 @@ import http.server
 import json
 import socket
 import ssl
-import sys
 import threading
 import time
 import zlib
@@ -18,6 +17,8 @@ import respx
 
 from shopify_spy._fetch import (
     ACCEPT_ENCODING,
+    DEFAULT_IMPERSONATE,
+    IMPERSONATE_PROFILES,
     FakeFetcher,
     FetchConnectionError,
     FetchIncomplete,
@@ -36,9 +37,9 @@ from shopify_spy._fetch import (
     decompress,
     encode_proxy_userinfo,
     env_proxy_for,
+    impersonate_rotation,
     load_corpus,
     redact_url,
-    require_curl_cffi,
     uses_proxy,
     validate_impersonate,
     validate_proxy,
@@ -422,20 +423,42 @@ def test_env_proxy_for_unparseable_url_goes_direct(clean_proxy_env):
     assert env_proxy_for("https://exa\x7fmple.com/") is None
 
 
-def test_require_curl_cffi_missing(monkeypatch):
-    monkeypatch.setitem(sys.modules, "curl_cffi", None)
-    with pytest.raises(ModuleNotFoundError, match=r"shopify-spy\[impersonate\]") as info:
-        require_curl_cffi("needs shopify-spy[impersonate]")
-    assert info.value.name == "curl_cffi"
+def test_impersonate_profiles_are_current_desktop_browsers():
+    """Pinned: the aliases resolve to each browser's newest desktop profile on every
+    supported curl_cffi (checked on 0.16.3 and 0.17.0); "edge" is Edge 101."""
+    from curl_cffi.requests.impersonate import resolve_latest_browser_type
+
+    assert IMPERSONATE_PROFILES == ("chrome", "safari", "firefox")
+    assert DEFAULT_IMPERSONATE == "chrome"
+    resolved = [resolve_latest_browser_type(p) for p in IMPERSONATE_PROFILES]
+    assert len(set(resolved)) == len(resolved)
+    for profile, target in zip(IMPERSONATE_PROFILES, resolved, strict=True):
+        assert validate_impersonate(profile) == profile
+        assert target.startswith(profile)
+        assert not target.endswith(("_android", "_ios"))
 
 
-def test_require_curl_cffi_returns_module():
-    curl_cffi = pytest.importorskip("curl_cffi")
-    assert require_curl_cffi("unused") is curl_cffi
+@pytest.mark.parametrize(
+    ("start", "expected"),
+    [
+        ("chrome", ("chrome", "safari", "firefox")),
+        ("safari", ("safari", "firefox", "chrome")),
+        ("firefox", ("firefox", "chrome", "safari")),
+        ("chrome146", ("chrome146", "chrome", "safari", "firefox")),
+    ],
+)
+def test_impersonate_rotation(start, expected):
+    assert impersonate_rotation(start) == expected
+
+
+def test_impersonate_rotation_skips_the_alias_a_pinned_profile_resolves_to():
+    from curl_cffi.requests.impersonate import resolve_latest_browser_type
+
+    newest = resolve_latest_browser_type("safari")
+    assert impersonate_rotation(newest) == (newest, "chrome", "firefox")
 
 
 def test_validate_impersonate_matches_what_curl_cffi_can_use():
-    pytest.importorskip("curl_cffi")
     from typing import get_args
 
     from curl_cffi.requests import Session
@@ -465,7 +488,6 @@ def test_validate_impersonate_matches_what_curl_cffi_can_use():
 
 @pytest.mark.parametrize("target", ["nosuchbrowser", "", "Chrome", "chrome "])
 def test_validate_impersonate_rejects(target):
-    pytest.importorskip("curl_cffi")
     with pytest.raises(ValueError, match="chrome, firefox or safari") as info:
         validate_impersonate(target)
     assert repr(target) in str(info.value)

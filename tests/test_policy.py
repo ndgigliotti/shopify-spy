@@ -7,7 +7,7 @@ import time
 import pytest
 
 from shopify_spy import _policy as policy
-from shopify_spy._fetch import CurlCffiFetcher, FetcherCapabilities
+from shopify_spy._fetch import CurlCffiFetcher, FetcherCapabilities, Identity
 from shopify_spy._policy import (
     RETRY_MAX_DELAY,
     HostSlot,
@@ -528,11 +528,10 @@ def test_retry_policy_for_browser_does_not_rotate():
     assert 403 in retry.statuses  # still retried, just without rotation
 
 
-def test_retry_policy_for_impersonating_transport_keeps_retries_without_rotation():
+def test_retry_policy_for_impersonating_transport_rotates_on_403_and_429():
     retry = retry_policy_for(CurlCffiFetcher.capabilities, retries=3, backoff=True)
-    assert retry.rotate_on == frozenset()
+    assert retry.rotate_on == frozenset({403, 429})
     assert (retry.retries, retry.backoff) == (3, True)
-    assert {403, 429} <= retry.statuses
 
 
 # --- IdentityPool ---------------------------------------------------------------------
@@ -553,6 +552,36 @@ def test_identity_rotate_picks_different_agent():
         pool.rotate()
         assert pool.current.user_agent != before
         assert pool.current.user_agent in {"a", "b", "c"}
+
+
+def test_identity_profiles_rotate_in_order_and_wrap_around():
+    pool = IdentityPool(profiles=("chrome", "safari", "firefox"))
+    assert pool.rotates
+    seen = [pool.current.impersonate]
+    for _ in range(4):
+        pool.rotate()
+        seen.append(pool.current.impersonate)
+    assert seen == ["chrome", "safari", "firefox", "chrome", "safari"]
+
+
+def test_identity_profile_brings_its_own_user_agent_and_headers():
+    pool = IdentityPool(profiles=("safari", "chrome"))
+    assert pool.current == Identity(user_agent=None, impersonate="safari")
+    assert pool.current.headers == {}
+    pool.rotate()
+    assert pool.current == Identity(user_agent=None, impersonate="chrome")
+
+
+def test_identity_single_profile_cannot_rotate():
+    pool = IdentityPool(profiles=("chrome",))
+    assert not pool.rotates
+    pool.rotate()
+    assert pool.current.impersonate == "chrome"
+
+
+def test_identity_fixed_user_agent_with_profiles_is_refused():
+    with pytest.raises(ValueError, match="user_agent"):
+        IdentityPool(user_agent="fixed/1.0", profiles=("chrome", "safari"))
 
 
 def test_identity_single_agent_cannot_rotate():

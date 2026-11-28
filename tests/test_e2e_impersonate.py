@@ -1,7 +1,7 @@
-"""End-to-end: spy scrape --impersonate against local stores (#95).
+"""End-to-end: the default curl_cffi transport against local stores (#95).
 
-The curl_cffi transport must leave the diagnosis as it is with httpx, and no hint
-may ever suggest --impersonate. Run with: uv run pytest -m e2e
+It must leave the diagnosis as it is with httpx (--no-impersonate), and no hint
+mentions impersonation. Run with: uv run pytest -m e2e
 """
 
 import http.server
@@ -14,8 +14,6 @@ import threading
 import urllib.parse
 
 import pytest
-
-pytest.importorskip("curl_cffi")
 
 pytestmark = pytest.mark.e2e
 
@@ -98,17 +96,17 @@ def _scrape(out_dir, url, *args):
     ("scenario", "expected"),
     [("shop", "ok"), ("robots_disallow", "blocked by robots.txt"), ("store_403", "403 Forbidden")],
 )
-def test_same_diagnosis_with_and_without(store, tmp_path_factory, scenario, expected):
+def test_same_diagnosis_on_both_transports(store, tmp_path_factory, scenario, expected):
     url, agents = store(scenario)
-    plain = _scrape(tmp_path_factory.mktemp("plain"), url)
+    plain = _scrape(tmp_path_factory.mktemp("plain"), url, "--no-impersonate")
     agents.clear()
-    browser_dir = tmp_path_factory.mktemp("browser")
-    output, entry, items = _scrape(browser_dir, url, "--impersonate", "chrome")
+    output, entry, items = _scrape(tmp_path_factory.mktemp("browser"), url)
 
     assert entry["status"] == plain[1]["status"] == expected
     assert items == plain[2]
     assert len(items) == (len(PRODUCTS) if scenario == "shop" else 0)
-    assert agents and all("Chrome/" in agent for agent in agents)
+    assert agents and "Chrome/" in agents[0]
+    assert all(any(t in a for t in ("Chrome/", "Version/", "Firefox/")) for a in agents)
     # Neither the summary hints nor the status file point at the option
     assert "impersonate" not in output.lower()
     assert "impersonate" not in json.dumps(entry).lower()

@@ -20,11 +20,10 @@ from types import SimpleNamespace
 import pytest
 import trustme
 
-pytest.importorskip("curl_cffi")
-
-from shopify_spy import _fetch  # noqa: E402
-from shopify_spy._api import _PausedClockLoop  # noqa: E402
-from shopify_spy._fetch import (  # noqa: E402
+from shopify_spy import _fetch
+from shopify_spy._api import _PausedClockLoop
+from shopify_spy._fetch import (
+    IMPERSONATE_PROFILES,
     CurlCffiFetcher,
     FetchConnectionError,
     FetchIncomplete,
@@ -35,8 +34,8 @@ from shopify_spy._fetch import (  # noqa: E402
     Identity,
     Request,
 )
-from shopify_spy._policy import DEFAULT_HEADERS  # noqa: E402
-from tests.conftest import _RecordingProxyHandler  # noqa: E402
+from shopify_spy._policy import DEFAULT_HEADERS
+from tests.conftest import _RecordingProxyHandler
 
 pytestmark = [
     pytest.mark.e2e,
@@ -297,6 +296,33 @@ async def test_profile_headers_replace_identity(server):
     assert "pool-agent" not in headers["user-agent"]
     for name, value in DEFAULT_HEADERS.items():
         assert headers.get(name.lower()) != value
+
+
+@pytest.mark.parametrize(
+    ("profile", "token"), [("chrome", "Chrome/"), ("safari", "Version/"), ("firefox", "Firefox/")]
+)
+async def test_each_pool_profile_sends_its_own_desktop_user_agent(server, profile, token):
+    assert profile in IMPERSONATE_PROFILES
+    request = Request(
+        method="GET",
+        url=f"{server.url}/echo",
+        identity=Identity(user_agent=None, impersonate=profile),
+        timeout=3.0,
+    )
+    async with CurlCffiFetcher("firefox" if profile == "chrome" else "chrome") as fetcher:
+        agent = (await fetcher.fetch(request)).json()["user-agent"]
+    assert token in agent
+    # Shopify answers 429 to Linux desktop user agents (see policy.USER_AGENTS)
+    assert "Linux" not in agent and "Mobile" not in agent
+    assert "Macintosh" in agent or "Windows" in agent
+
+
+async def test_profiles_never_share_a_connection(server):
+    async with CurlCffiFetcher() as fetcher:
+        for profile in ("chrome", "safari", "chrome"):
+            identity = Identity(user_agent=None, impersonate=profile)
+            await fetcher.fetch(Request("GET", f"{server.url}/echo", identity, timeout=3.0))
+        assert set(fetcher._sessions) == {("chrome", False), ("safari", False)}
 
 
 async def test_request_headers_override_the_profile(server):

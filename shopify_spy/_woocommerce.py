@@ -51,7 +51,7 @@ PER_PAGE = 100
 # ID tiebreak, repeating some products and skipping others; IDs are unique and fixed
 BY_ID = {"orderby": "id", "order": "asc"}
 # Optional: not counted toward the store's diagnosis (products came back, so the store
-# works), and a 403 mustn't swap the user agent the product pages use. Not deduped: a
+# works), and a 403 mustn't swap the identity the product pages use. Not deduped: a
 # page in the default order can repeat the last page's variable products
 VARIATIONS = RequestKind("variations", counted=False, dedupe=False, rotate=False)
 

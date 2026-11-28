@@ -65,7 +65,9 @@ class RequestKind:
     check_robots: bool = True  # obey robots.txt for this request
     counted: bool = True  # counts toward the store's diagnosis stats
     dedupe: bool = True  # skip a URL this store already requested
-    rotate: bool = True  # a 403 or 429 may swap the store's user agent; without it a 403 is final
+    # A 403 or 429 may swap the store's user agent or browser profile; without it a 403
+    # is final
+    rotate: bool = True
     # A 429 counts toward StoreStats.rate_limits: its pause holds up the store's data
     # (images come after the data they belong to)
     rate_limits: bool = True
@@ -84,7 +86,7 @@ PROBE = RequestKind("probe", counted=False, dedupe=False)  # e.g. a wrong-platfo
 FALLBACK = RequestKind("fallback", counted=False)
 # A headless store's products read from its *.myshopify.com domain (issue #92). Those
 # hosts belong to Shopify, not the store: one run-wide slot keeps a run over many
-# stores from bursting at them, and a refusal there doesn't change the store's agent
+# stores from bursting at them, and a refusal there doesn't change the store's identity
 MYSHOPIFY = RequestKind("myshopify", counted=False, rotate=False, slot="*.myshopify.com")
 
 
@@ -579,18 +581,20 @@ class StoreSession:
                         url, slot, kind.image, attempt, retry_after, rate_limited, will_retry
                     ):
                         return response
-                    # A concurrent refusal of the same agent may have swapped it already
+                    # A concurrent refusal of the same identity may have swapped it already
                     if (
                         kind.rotate
                         and response.status in self.retry.rotate_on
                         and self.identity.rotates
-                        and self.identity.current.user_agent == sent.user_agent
+                        and self.identity.current == sent
                     ):
                         self.identity.rotate()
+                        current = self.identity.current
                         logger.debug(
-                            "Swapped user agent after %d: %s",
+                            "Swapped %s after %d: %s",
+                            "browser profile" if current.impersonate else "user agent",
                             response.status,
-                            self.identity.current.user_agent,
+                            current.impersonate or current.user_agent,
                         )
                     reason = str(response.status)
                 else:

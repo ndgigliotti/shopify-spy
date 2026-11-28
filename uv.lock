@@ -925,6 +925,7 @@ name = "shopify-spy"
 version = "0.5.1"
 source = { editable = "." }
 dependencies = [
+    { name = "curl-cffi" },
     { name = "defusedxml" },
     { name = "httpx", extra = ["socks"] },
     { name = "platformdirs" },
@@ -939,13 +940,9 @@ dependencies = [
 excel = [
     { name = "xlsxwriter" },
 ]
-impersonate = [
-    { name = "curl-cffi" },
-]
 
 [package.dev-dependencies]
 dev = [
-    { name = "curl-cffi" },
     { name = "openpyxl" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -959,7 +956,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "curl-cffi", marker = "extra == 'impersonate'", specifier = ">=0.16.3,<0.18" },
+    { name = "curl-cffi", specifier = ">=0.16.3,<0.18" },
     { name = "defusedxml", specifier = ">=0.7" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.28" },
     { name = "platformdirs", specifier = ">=4.0" },
@@ -970,11 +967,10 @@ requires-dist = [
     { name = "typer", specifier = ">=0.15" },
     { name = "xlsxwriter", marker = "extra == 'excel'", specifier = ">=3.0" },
 ]
-provides-extras = ["excel", "impersonate"]
+provides-extras = ["excel"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "curl-cffi", specifier = ">=0.16.3,<0.18" },
     { name = "openpyxl", specifier = ">=3.1" },
     { name = "pre-commit", specifier = ">=4.0" },
     { name = "pytest", specifier = ">=8.0" },

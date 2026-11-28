@@ -50,7 +50,7 @@ class Identity:
 
     user_agent: str | None
     headers: Mapping[str, str] = field(default_factory=dict)
-    # Unread: CurlCffiFetcher takes its profile from its constructor instead
+    # A curl_cffi browser profile, for transports that impersonate (CurlCffiFetcher)
     impersonate: str | None = None
 
 
@@ -361,13 +361,35 @@ def uses_proxy(url: str, proxy: str | None) -> bool:
     return proxy is not None or env_proxy_for(url) is not None
 
 
-def require_curl_cffi(message: str) -> Any:
-    """Import and return curl_cffi, or raise ModuleNotFoundError with ``message``."""
-    try:
-        import curl_cffi
-    except ModuleNotFoundError as e:
-        raise ModuleNotFoundError(message, name="curl_cffi") from e
-    return curl_cffi
+# The browser profiles a store rotates through on refusals, starting with the first.
+# Aliases curl_cffi resolves to its newest desktop profile of that browser; each is
+# accepted by every curl_cffi in the supported range (0.16.3 to 0.17). "edge" is left
+# out: it resolves to Edge 101, from 2022.
+IMPERSONATE_PROFILES = ("chrome", "safari", "firefox")
+DEFAULT_IMPERSONATE = IMPERSONATE_PROFILES[0]
+
+
+def curl_cffi_version() -> str:
+    import curl_cffi
+
+    return curl_cffi.__version__
+
+
+def impersonate_rotation(start: str) -> tuple[str, ...]:
+    """The profiles a store tries in turn, starting with ``start``.
+
+    A pool profile starts the pool at its place; any other comes first, followed by
+    the pool without the profile it resolves to (``chrome150`` for ``chrome`` when
+    that is curl_cffi's newest Chrome).
+    """
+    from curl_cffi.requests.impersonate import resolve_latest_browser_type
+
+    pool = IMPERSONATE_PROFILES
+    if start in pool:
+        i = pool.index(start)
+        return pool[i:] + pool[:i]
+    same = resolve_latest_browser_type(start)
+    return (start, *(p for p in pool if resolve_latest_browser_type(p) != same))
 
 
 def validate_impersonate(target: str) -> str:
@@ -557,25 +579,35 @@ def _scrub(message: str, proxy: str | None) -> str:
 
 
 class CurlCffiFetcher:
-    """Transport that presents one browser profile's TLS and HTTP/2 fingerprint and
-    headers, through curl_cffi (the ``impersonate`` extra). One hop per fetch.
+    """Transport that presents a browser profile's TLS and HTTP/2 fingerprint and
+    headers, through curl_cffi. One hop per fetch.
 
     It keeps HttpxFetcher's contract: no redirects followed, no cookies kept, the
     MAX_SIZE cap, the same errors, a total deadline on the loop clock, and proxies
     chosen by httpx's rules (an explicit ``proxy`` replaces the environment's).
-    The profile brings its own user agent and headers, so ``Request.identity`` is
-    never applied; ``Request.headers`` override the profile's.
+    Each request uses ``Request.identity.impersonate``, or ``impersonate`` when that
+    is None. The profile brings its own user agent and headers, so the identity's
+    are never applied; ``Request.headers`` override the profile's.
     """
 
     capabilities = FetcherCapabilities(applies_identity_headers=False, can_impersonate=True)
 
-    def __init__(self, impersonate: str, *, verify: bool = True, proxy: str | None = None) -> None:
+    def __init__(
+        self,
+        impersonate: str = DEFAULT_IMPERSONATE,
+        *,
+        verify: bool = True,
+        proxy: str | None = None,
+    ) -> None:
         self._impersonate = impersonate
         self._verify = verify
         self._proxy = None if proxy is None else encode_proxy_userinfo(proxy)
-        self._session: Any = None
-        self._raw: Any = None  # for bodies libcurl can't decode, opened on first use
+        # One session per (profile, raw): a session's connections keep the TLS and
+        # HTTP/2 settings of the profile that opened them, so profiles never share
+        # one. Raw sessions read bodies libcurl can't decode; all open on first use
+        self._sessions: dict[tuple[str, bool], Any] = {}
         self._curls: list[Any] = []
+        self._entered = False
 
     async def __aenter__(self) -> Self:
         from curl_cffi.utils import CurlCffiWarning
@@ -583,19 +615,28 @@ class CurlCffiFetcher:
         # Installed on every entry: a caller's catch_warnings may have reset the
         # filters since. Never removed, since that could drop someone else's entry
         warnings.filterwarnings("ignore", message=_HTTPS_PROXY_WARNING, category=CurlCffiWarning)
-        self._session = self._open_session()
+        self._entered = True
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        for session in (self._session, self._raw):
-            if session is not None:
-                await session.close()
+        for session in self._sessions.values():
+            await session.close()
         for acurl in self._curls:  # a session doesn't close an AsyncCurl it was given
             await acurl.close()
-        self._session = self._raw = None
+        self._sessions = {}
         self._curls = []
+        self._entered = False
 
-    def _open_session(self, curl_options: Mapping[Any, Any] | None = None) -> Any:
+    def _session(self, profile: str, raw: bool = False) -> Any:
+        from curl_cffi import CurlOpt
+
+        session = self._sessions.get((profile, raw))
+        if session is None:
+            options = {CurlOpt.HTTP_CONTENT_DECODING: 0} if raw else None
+            session = self._sessions[profile, raw] = self._open_session(profile, options)
+        return session
+
+    def _open_session(self, profile: str, curl_options: Mapping[Any, Any] | None = None) -> Any:
         from curl_cffi import AsyncCurl, CurlOpt
         from curl_cffi.requests import AsyncSession
         from curl_cffi.utils import CurlCffiWarning
@@ -610,7 +651,7 @@ class CurlCffiFetcher:
         return AsyncSession(
             async_curl=acurl,
             max_clients=MAX_CURL_CLIENTS,
-            impersonate=self._impersonate,
+            impersonate=profile,
             verify=self._verify,
             discard_cookies=True,  # the session is shared by every store in a run
             allow_redirects=False,
@@ -619,17 +660,11 @@ class CurlCffiFetcher:
             curl_options={CurlOpt.NOPROXY: "", **(curl_options or {})},
         )
 
-    def _raw_session(self) -> Any:
-        from curl_cffi import CurlOpt
-
-        if self._raw is None:
-            self._raw = self._open_session({CurlOpt.HTTP_CONTENT_DECODING: 0})
-        return self._raw
-
     async def fetch(self, request: Request) -> Response:
         import httpx
 
-        assert self._session is not None, "use CurlCffiFetcher as an async context manager"
+        assert self._entered, "use CurlCffiFetcher as an async context manager"
+        profile = request.identity.impersonate or self._impersonate
         try:
             # httpx's rule, so both fetchers refuse the same URLs; curl_cffi would
             # percent-encode control characters and send them
@@ -651,20 +686,20 @@ class CurlCffiFetcher:
             # which keeps going while scrape() is paused
             async with asyncio.timeout(request.timeout):
                 try:
-                    return await self._attempt(self._session, request, route, proxy)
+                    return await self._attempt(profile, False, request, route, proxy)
                 except _UndecodableBody:
                     # Every request the adapters make is a GET, so resending is safe
-                    return await self._attempt(self._raw_session(), request, route, proxy)
+                    return await self._attempt(profile, True, request, route, proxy)
         except TimeoutError as exc:
             raise FetchTimeout(f"no complete response within {request.timeout}s") from exc
 
     async def _attempt(
-        self, session: Any, request: Request, route: dict[str, Any], proxy: str | None
+        self, profile: str, raw: bool, request: Request, route: dict[str, Any], proxy: str | None
     ) -> Response:
         from curl_cffi.curl import CURL_WRITEFUNC_ERROR
         from curl_cffi.requests.exceptions import RequestException
 
-        raw = session is self._raw
+        session = self._session(profile, raw)
         loop = asyncio.get_running_loop()
         chunks: list[bytes] = []
         size = 0

@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable, Container
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import platformdirs
 import typer
@@ -38,9 +38,10 @@ from shopify_spy._export import (
     write_status,
 )
 from shopify_spy._fetch import (
+    DEFAULT_IMPERSONATE,
+    IMPERSONATE_PROFILES,
     FetcherFactory,
     check_proxy_support,
-    require_curl_cffi,
     validate_impersonate,
     validate_proxy,
 )
@@ -192,8 +193,8 @@ SCRAPE_EPILOG = "\n\n".join(
         "--peek writes nothing.",
         "Exit status: 0 when any store produced items (failed stores are listed); 1 when "
         "none did, the output couldn't be written, or the input was invalid (no or "
-        "invalid URLs, a bad --proxy, --verbose with --quiet, a missing excel or "
-        "impersonate extra, --impersonate with --user-agent); 2 "
+        "invalid URLs, a bad --proxy or --impersonate, --verbose with --quiet, a missing "
+        "excel extra, --impersonate with --user-agent); 2 "
         "for a usage error such as an unknown option.",
         "Config: without --config, ./shopify-spy.yaml or else "
         "~/.config/shopify-spy/config.yaml is read if it exists, and its values replace "
@@ -390,8 +391,8 @@ def scrape(
         typer.Option(
             "--user-agent",
             "-A",
-            help="Fixed User-Agent header, never swapped (default: a random browser UA "
-            "per store, swapped after a 403 or 429). Can't be combined with --impersonate.",
+            help="Fixed User-Agent header, never swapped; turns impersonation off "
+            "(requests go through httpx). Can't be combined with --impersonate.",
             rich_help_panel=NETWORK_PANEL,
         ),
     ] = None,
@@ -401,12 +402,22 @@ def scrape(
             "--impersonate",
             "-I",
             metavar="BROWSER",
-            help="Send requests with a browser's TLS fingerprint and headers through "
-            "curl_cffi: chrome, firefox, safari, ... (needs the shopify-spy[impersonate] "
-            "extra; default: off).",
+            help="Browser profile to start with: requests use that browser's TLS and "
+            "HTTP/2 settings and headers, and a 403 or 429 switches the store to the next "
+            f"of {', '.join(IMPERSONATE_PROFILES)} (default: {DEFAULT_IMPERSONATE}). Any "
+            "curl_cffi target, e.g. chrome150.",
             rich_help_panel=NETWORK_PANEL,
         ),
     ] = None,
+    no_impersonate: Annotated[
+        bool,
+        typer.Option(
+            "--no-impersonate",
+            help="Send requests through httpx with a random browser user agent per "
+            "store, swapped after a 403 or 429, instead of impersonating a browser.",
+            rich_help_panel=NETWORK_PANEL,
+        ),
+    ] = False,
     proxy: Annotated[
         str | None,
         typer.Option(
@@ -473,6 +484,9 @@ def scrape(
     # ValidationError traceback from Config()
     if proxy is not None:
         _exit_on_invalid(lambda: validate_proxy(proxy))
+    if no_impersonate and impersonate is not None:
+        err_console.print("[red]Error: Cannot use both --impersonate and --no-impersonate[/red]")
+        raise typer.Exit(1)
 
     # Apply CLI overrides
     config = apply_cli_overrides(
@@ -490,7 +504,7 @@ def scrape(
         image_delay=image_delay,
         limit=limit,
         user_agent=user_agent,
-        impersonate=impersonate,
+        impersonate=False if no_impersonate else impersonate,
         ignore_robots=ignore_robots,
         bail=bail,
         insecure=insecure,
@@ -559,7 +573,7 @@ def _check_options(config: Config, peek: bool) -> None:
     schema_for(config.output.format, config.output.schema_)
     if config.output.format == "xlsx" and not peek:
         require_xlsxwriter()
-    if config.network.impersonate is not None:
+    if isinstance(config.network.impersonate, str):
         _check_impersonate(config.network.impersonate, config.network.user_agent)
     if FETCHER_FACTORY is None:
         check_proxy_support(config.network.proxy)
@@ -569,14 +583,11 @@ def _check_impersonate(target: str, user_agent: str | None) -> None:
     if user_agent is not None:
         raise ValueError(
             "--impersonate sets the user agent from the browser profile, so it can't be "
-            "combined with --user-agent; drop one (each may come from network.impersonate "
-            "or network.user_agent in the config file)"
+            "combined with --user-agent, which turns impersonation off; drop one (each "
+            "may come from network.impersonate or network.user_agent in the config file)"
         )
     # A test transport ignores the profile, as the library does with fetcher_factory
     if FETCHER_FACTORY is None:
-        require_curl_cffi(
-            "--impersonate needs the impersonate extra: uv tool install 'shopify-spy[impersonate]'"
-        )
         validate_impersonate(target)
 
 
@@ -622,7 +633,7 @@ def apply_cli_overrides(
     throttle: bool | None,
     limit: int | None,
     user_agent: str | None,
-    impersonate: str | None = None,
+    impersonate: str | Literal[False] | None = None,
     ignore_robots: bool = False,
     bail: int | None = None,
     insecure: bool = False,

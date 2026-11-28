@@ -12,6 +12,7 @@
   hatchling,
 
   # dependencies
+  curl-cffi,
   defusedxml,
   httpx,
   platformdirs,
@@ -22,7 +23,6 @@
   typer,
 
   # optional-dependencies
-  curl-cffi,
   xlsxwriter,
 
   # tests
@@ -42,6 +42,7 @@ buildPythonPackage (finalAttrs: {
   build-system = [ hatchling ];
 
   dependencies = [
+    curl-cffi
     defusedxml
     httpx
     platformdirs
@@ -55,7 +56,6 @@ buildPythonPackage (finalAttrs: {
 
   optional-dependencies = {
     excel = [ xlsxwriter ];
-    impersonate = [ curl-cffi ];
   };
 
   nativeCheckInputs = [

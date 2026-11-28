@@ -26,15 +26,12 @@ BAIL = 4
 DISALLOW_ALL = b"User-agent: *\nDisallow: /\n"
 
 
-@pytest.fixture(params=["httpx", "curl_cffi"])
+@pytest.fixture(params=["curl_cffi", "httpx"])
 def transport(request):
     """Extra CLI args selecting the transport: the session layer (robots.txt,
     throttling, Crawl-delay, Retry-After, redirects, address checks) must not depend
     on it."""
-    if request.param == "httpx":
-        return []
-    pytest.importorskip("curl_cffi")
-    return ["--impersonate", "chrome"]
+    return [] if request.param == "curl_cffi" else ["--no-impersonate"]
 
 
 def _free_port() -> int:
@@ -360,12 +357,7 @@ def test_shopify_diagnosis(tmp_path, stores, transport):
     urls = {scenario: stores(scenario) for scenario in EXPECTED_SHOPIFY}
     statuses = _run(tmp_path, list(urls.values()), *transport)
     actual = {scenario: statuses[url] for scenario, url in urls.items()}
-    expected = dict(EXPECTED_SHOPIFY)
-    if transport:
-        # The browser profile keeps its user agent through retries, so a store that
-        # refuses one user agent stays refused
-        expected["user_agent_rate_limited"] = "rate limited (429)"
-    assert actual == expected
+    assert actual == EXPECTED_SHOPIFY
     # The 120 s Retry-After isn't retried after 60 s, nor waited out past --bail
     assert stores.servers["long_retry_after"].RequestHandlerClass.hits["/products.json"] == 1
 

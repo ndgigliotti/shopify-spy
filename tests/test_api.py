@@ -410,13 +410,14 @@ class _NotFound(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
 
-def test_plain_run_never_imports_curl_cffi(clean_proxy_env):
+def test_run_without_impersonation_never_imports_curl_cffi(clean_proxy_env):
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _NotFound)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     store = f"http://127.0.0.1:{httpd.server_address[1]}"
     code = (
         "import sys, shopify_spy as spy; "
-        f"run = spy.scrape({store!r}, on_failure='ignore', throttle=False); list(run); "
+        f"run = spy.scrape({store!r}, impersonate=False, on_failure='ignore', throttle=False); "
+        "list(run); "
         "print(404 in run.result.stores[0].responses_by_status, 'curl_cffi' in sys.modules)"
     )
     try:
@@ -651,7 +652,7 @@ def test_default_transport_resolves_hostnames_for_the_check(clean_proxy_env):
     store = "https://shop.example"
     fetcher = FakeFetcher({bulk_url(1, store): (302, "", {"Location": "https://internal.test/x"})})
     clean_proxy_env.setattr(_address, "resolve", stub)
-    clean_proxy_env.setattr(_runner, "HttpxFetcher", lambda **kw: fetcher)
+    clean_proxy_env.setattr(_runner, "CurlCffiFetcher", lambda *a, **kw: fetcher)
     list(spy.scrape(store, **FAST))
     assert set(calls) == {"shop.example", "internal.test"}
     assert not [r.url for r in fetcher.requests if "internal.test" in r.url]
@@ -689,15 +690,13 @@ def test_impersonate_with_user_agent_raises_with_custom_fetcher():
         spy.scrape("a.com", impersonate="chrome", user_agent="foo/1.0", fetcher_factory=fake({}))
 
 
-def test_impersonate_without_extra_raises_at_call_time(monkeypatch):
-    monkeypatch.setitem(sys.modules, "curl_cffi", None)
-    with pytest.raises(ModuleNotFoundError, match=r"shopify-spy\[impersonate\]") as info:
-        spy.scrape("a.com", impersonate="chrome")
-    assert info.value.name == "curl_cffi"
+@pytest.mark.parametrize("value", [True, 1, ""])
+def test_impersonate_rejects_values_that_are_not_a_profile_or_false(value):
+    with pytest.raises(ValueError, match="impersonate"):
+        spy.scrape("a.com", impersonate=value)
 
 
 def test_unknown_impersonate_target_raises_at_call_time():
-    pytest.importorskip("curl_cffi")
     with pytest.raises(ValueError, match="'nosuchbrowser'.*chrome, firefox or safari"):
         spy.scrape("a.com", impersonate="nosuchbrowser")
 
@@ -708,60 +707,99 @@ def test_custom_fetcher_ignores_impersonate(monkeypatch):
     assert len(items) == 2
 
 
-def test_impersonate_runs_on_curl_cffi_fetcher(monkeypatch, clean_proxy_env, caplog):
-    pytest.importorskip("curl_cffi")
-    from shopify_spy import _runner
-
+def _record_transports(monkeypatch, routes=None):
+    """Replace both default transports with fakes; return the constructor calls."""
     made = []
 
     def curl_fetcher(impersonate, *, verify, proxy):
-        made.append((impersonate, verify, proxy))
-        return _CurlLike(ok_routes())
+        made.append(("curl_cffi", impersonate, verify, proxy))
+        return _CurlLike(routes or ok_routes())
 
-    def httpx_fetcher(**kwargs):
-        pytest.fail("HttpxFetcher built for an impersonated run")
+    def httpx_fetcher(*, verify, proxy):
+        made.append(("httpx", verify, proxy))
+        return FakeFetcher(routes or ok_routes())
 
     monkeypatch.setattr(_runner, "CurlCffiFetcher", curl_fetcher)
     monkeypatch.setattr(_runner, "HttpxFetcher", httpx_fetcher)
+    return made
+
+
+def test_default_run_impersonates_chrome(monkeypatch, clean_proxy_env, caplog):
+    made = _record_transports(monkeypatch)
     caplog.set_level("INFO", logger="shopify_spy")
     proxy = "http://u:secret@127.0.0.1:8000"
-    run = spy.scrape(STORE, impersonate="chrome", verify_tls=False, proxy=proxy, **FAST)
+    run = spy.scrape(STORE, verify_tls=False, proxy=proxy, **FAST)
     assert len(list(run)) == 2
-    assert made == [("chrome", False, proxy)]
-    assert "Impersonating chrome (curl_cffi " in caplog.text
+    assert made == [("curl_cffi", "chrome", False, proxy)]
+    assert "Impersonating chrome, then safari, firefox after a refusal (curl_cffi " in caplog.text
     assert "secret" not in caplog.text
 
 
-def test_plain_run_stays_on_httpx_fetcher(monkeypatch, clean_proxy_env):
-    from shopify_spy import _runner
+def test_impersonate_picks_the_first_profile(monkeypatch, clean_proxy_env, caplog):
+    made = _record_transports(monkeypatch)
+    caplog.set_level("INFO", logger="shopify_spy")
+    assert len(list(spy.scrape(STORE, impersonate="chrome146", **FAST))) == 2
+    assert made == [("curl_cffi", "chrome146", True, None)]
+    assert "Impersonating chrome146, then chrome, safari, firefox after" in caplog.text
 
-    made = []
 
-    def httpx_fetcher(*, verify, proxy):
-        made.append((verify, proxy))
-        return FakeFetcher(ok_routes())
+@pytest.mark.parametrize(
+    "options", [{"impersonate": False}, {"user_agent": "MyBot/1.0"}], ids=["off", "user_agent"]
+)
+def test_runs_on_httpx_without_impersonation(monkeypatch, clean_proxy_env, options):
+    made = _record_transports(monkeypatch)
+    assert len(list(spy.scrape(STORE, **options, **FAST))) == 2
+    assert made == [("httpx", True, None)]
 
-    monkeypatch.setattr(_runner, "CurlCffiFetcher", lambda *a, **kw: pytest.fail("curl"))
-    monkeypatch.setattr(_runner, "HttpxFetcher", httpx_fetcher)
-    assert len(list(spy.scrape(STORE, **FAST))) == 2
-    assert made == [(True, None)]
+
+def test_user_agent_is_sent_unchanged_without_rotation():
+    fetcher = FakeFetcher({f"{STORE}/robots.txt": (404, "")}, default_status=403)
+    store = _status(fetcher, retries=2, user_agent="MyBot/1.0")
+    assert store.status == "forbidden"
+    assert {(r.identity.user_agent, r.identity.impersonate) for r in fetcher.requests} == {
+        ("MyBot/1.0", None)
+    }
 
 
 @pytest.mark.parametrize("status", [403, 429])
-def test_impersonated_refusal_retried_without_identity_swap(status):
+def test_impersonated_refusal_retried_with_the_next_profile(status):
     fetcher = _CurlLike(
         {f"{STORE}/robots.txt": (404, ""), bulk_url(1): Seq([(status, ""), products(2)])}
     )
     items, _, _ = scrape(fetcher)
     assert len(items) == 2
-    agents = [r.identity.user_agent for r in fetcher.requests if r.url == bulk_url(1)]
-    assert len(agents) == 2
-    assert agents[0] == agents[1]
+    profiles = [r.identity.impersonate for r in fetcher.requests if r.url == bulk_url(1)]
+    assert profiles == ["chrome", "safari"]
 
 
-def test_impersonated_forbidden_store_uses_every_retry_on_one_identity():
+def test_impersonated_forbidden_store_tries_every_profile():
     fetcher = _CurlLike({f"{STORE}/robots.txt": (404, "")}, default_status=403)
-    store = _status(fetcher, retries=2)
+    store = _status(fetcher, retries=3)
     assert store.status == "forbidden"
-    assert fetcher.count(bulk_url(1)) == 3
-    assert len({r.identity.user_agent for r in fetcher.requests}) == 1
+    profiles = [r.identity.impersonate for r in fetcher.requests if r.url == bulk_url(1)]
+    assert profiles == ["chrome", "safari", "firefox", "chrome"]
+
+
+def test_each_store_starts_with_the_first_profile():
+    other_store = "https://other.test"
+    fetcher = _CurlLike(
+        {
+            bulk_url(1): Seq([(403, ""), products(1)]),
+            bulk_url(1, other_store): Seq([(403, ""), products(1)]),
+        }
+    )
+    run = spy.scrape([STORE, other_store], fetcher_factory=lambda: fetcher, **FAST)
+    list(run)
+    for store in (STORE, other_store):
+        sent = [r.identity.impersonate for r in fetcher.requests if r.url == bulk_url(1, store)]
+        assert sent == ["chrome", "safari"]
+
+
+def test_impersonate_false_with_an_impersonating_fetcher_rotates_user_agents():
+    fetcher = _CurlLike(
+        {f"{STORE}/robots.txt": (404, ""), bulk_url(1): Seq([(403, ""), products(2)])}
+    )
+    scrape(fetcher, impersonate=False)
+    sent = [r.identity for r in fetcher.requests if r.url == bulk_url(1)]
+    assert [i.impersonate for i in sent] == [None, None]
+    assert sent[0].user_agent != sent[1].user_agent

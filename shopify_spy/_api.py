@@ -21,9 +21,14 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from shopify_spy._fetch import check_proxy_support, require_curl_cffi, validate_impersonate
+from shopify_spy._fetch import (
+    DEFAULT_IMPERSONATE,
+    IMPERSONATE_PROFILES,
+    check_proxy_support,
+    validate_impersonate,
+)
 from shopify_spy._policy import ThrottleSettings
 from shopify_spy._results import RunResult, ScrapeFailed, StoreResult, run_finish_reason
 from shopify_spy._runner import RunConfig, Runner
@@ -70,7 +75,8 @@ class ScrapeOptions(BaseModel):
     respect_robots_txt: bool = True
     verify_tls: bool = True
     proxy: str | None = Field(default=None, repr=False)
-    impersonate: str | None = None
+    # None: impersonate from DEFAULT_IMPERSONATE, or send user_agent through httpx
+    impersonate: str | Literal[False] | None = None
     max_concurrent_stores: int | None = Field(default=16, ge=1)
     throttle: bool = True
     throttle_start_delay: float = Field(default=1.0, ge=0)
@@ -81,6 +87,14 @@ class ScrapeOptions(BaseModel):
     on_failure: Literal["raise", "warn", "ignore"] = "raise"
     strict: bool = False
     fetcher_factory: Callable[[], Any] | None = None  # provisional
+
+    @field_validator("impersonate", mode="before")
+    @classmethod
+    def _profile_or_false(cls, value: Any) -> Any:
+        # Literal[False] alone would take 0 for False
+        if value is not None and not isinstance(value, (str, bool)):
+            raise ValueError("expected a browser profile name or False")
+        return value
 
 
 def _prepare(
@@ -99,16 +113,14 @@ def _prepare(
         opts = ScrapeOptions(**options)
     except ValidationError as exc:
         raise ValueError(str(exc)) from None
-    if opts.impersonate is not None and opts.user_agent is not None:
+    if isinstance(opts.impersonate, str) and opts.user_agent is not None:
         raise ValueError(
-            "impersonate sets the user agent from the browser profile; drop user_agent"
+            "impersonate sets the user agent from the browser profile; drop user_agent, "
+            "or drop impersonate to send user_agent without impersonation"
         )
     if opts.fetcher_factory is None:  # a custom transport ignores the transport settings
         check_proxy_support(opts.proxy)
-        if opts.impersonate is not None:
-            require_curl_cffi(
-                "impersonate needs the impersonate extra: uv add 'shopify-spy[impersonate]'"
-            )
+        if isinstance(opts.impersonate, str):
             validate_impersonate(opts.impersonate)
     if opts.images and opts.images_dir is None:
         raise ValueError(
@@ -149,6 +161,14 @@ def _prepare_urls(urls: str | Iterable[str]) -> list[tuple[str, str]]:
     return stores
 
 
+def _first_profile(opts: ScrapeOptions) -> str | None:
+    """The browser profile a run starts with, or None for httpx (a custom user agent
+    or ``impersonate=False``)."""
+    if opts.impersonate is False or opts.user_agent is not None:
+        return None
+    return opts.impersonate or DEFAULT_IMPERSONATE
+
+
 def _config(opts: ScrapeOptions, backoff: bool) -> RunConfig:
     return RunConfig(
         platform=opts.platform,
@@ -165,7 +185,7 @@ def _config(opts: ScrapeOptions, backoff: bool) -> RunConfig:
         respect_robots_txt=opts.respect_robots_txt,
         verify_tls=opts.verify_tls,
         proxy=opts.proxy,
-        impersonate=opts.impersonate,
+        impersonate=_first_profile(opts),
         max_concurrent_stores=opts.max_concurrent_stores,
         throttle=ThrottleSettings(
             enabled=opts.throttle,
@@ -483,17 +503,18 @@ _SCRAPE_DOC = """
         request_timeout: Seconds allowed for one request, not the whole run
             (default {request_timeout}).
         retries: Retries for 403/429/5xx responses and network errors (default
-            {retries}). A 403 or 429 also swaps the user agent (not with
-            ``impersonate``), and a 429 or 503 pauses and slows every request to
-            that host. A Retry-After up to 60s is waited out before the retry; a
-            longer one isn't retried early: the host is paused for it,
-            the request ends as if its retries ran out (a store with no successful
-            response is ``rate_limited`` after a 429, ``unavailable`` after a 503),
-            and the pause is logged as a WARNING on the ``shopify_spy`` logger (which
-            prints nothing until the caller configures logging).
-        user_agent: Fixed User-Agent, never swapped; by default each store gets a
-            random browser UA, swapped after a 403 or 429. Can't be combined with
-            ``impersonate``.
+            {retries}). A 403 or 429 also switches the store to the next browser
+            profile (the next user agent with ``impersonate=False``), and a 429 or
+            503 pauses and slows every request to that host. A Retry-After up to
+            60s is waited out before the retry; a longer one isn't retried early:
+            the host is paused for it, the request ends as if its retries ran out
+            (a store with no successful response is ``rate_limited`` after a 429,
+            ``unavailable`` after a 503), and the pause is logged as a WARNING on
+            the ``shopify_spy`` logger (which prints nothing until the caller
+            configures logging).
+        user_agent: Fixed User-Agent, never swapped. It turns impersonation off:
+            requests go through httpx with exactly this user agent. Can't be
+            combined with an ``impersonate`` profile.
         respect_robots_txt: Obey robots.txt (default {respect_robots_txt}), including
             its Crawl-delay as a minimum gap between requests to that host, capped
             at ``throttle_max_delay`` and applied even with ``throttle=False``.
@@ -505,14 +526,17 @@ _SCRAPE_DOC = """
             around a store's rate limits. Ignored with a custom ``fetcher_factory``.
             Through a proxy, only literal IPs and localhost names are checked
             against the refusal of non-public addresses.
-        impersonate: Send requests through curl_cffi with this browser profile's
-            TLS and HTTP/2 fingerprint and headers (default {impersonate}: off),
-            for sites that refuse clients that don't look like a browser. Any target
-            the installed curl_cffi accepts: "chrome", "firefox", "safari", or a pinned
-            profile such as "chrome150". The profile sets the user agent, and one
-            profile serves the whole run; a 403 or 429 retries with the same one.
-            robots.txt, its Crawl-delay and throttling apply as usual. Needs the
-            ``impersonate`` extra. Ignored with a custom ``fetcher_factory``.
+        impersonate: The browser profile a store's requests start with. By default
+            (None), requests go through curl_cffi with a current browser's TLS and
+            HTTP/2 settings and headers, starting as "{default_profile}"; each 403
+            or 429 moves the store to the next profile of {profiles},
+            wrapping around. A string picks the first profile: any target the
+            installed curl_cffi accepts, such as "safari" or a pinned "chrome150"
+            (one outside that list comes first, then the list). The profile sets
+            the user agent. False sends requests through httpx instead, with a
+            random browser user agent per store, swapped after a 403 or 429.
+            Politeness (robots.txt, Crawl-delay, throttling, Retry-After) is the
+            same either way. Not checked with a custom ``fetcher_factory``.
         max_concurrent_stores: Stores scraped at once (default {max_concurrent_stores};
             None = no limit).
         throttle, throttle_start_delay, throttle_max_delay, throttle_min_delay,
@@ -553,6 +577,10 @@ _SCRAPE_DOC = """
     Nothing is written to disk unless ``images=True``, and no config file is read.
 """.format_map(
     {name: _doc_default(field.default) for name, field in ScrapeOptions.model_fields.items()}
+    | {
+        "default_profile": DEFAULT_IMPERSONATE,
+        "profiles": ", ".join(f'"{p}"' for p in IMPERSONATE_PROFILES),
+    }
 )
 
 
