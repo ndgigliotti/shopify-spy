@@ -26,14 +26,14 @@ To use it as a Python library (`import shopify_spy`), the package has to be in t
 uv add shopify-spy
 
 # A one-off script, no project or virtual environment needed
-uv run --with 'shopify-spy>=0.6' python script.py
+uv run --with 'shopify-spy>=0.5' python script.py
 ```
 
 A script can also declare the dependency itself ([inline script metadata](https://packaging.python.org/en/latest/specifications/inline-script-metadata/)), so `uv run script.py` works from any directory:
 
 ```python
 # /// script
-# dependencies = ["shopify-spy>=0.6"]
+# dependencies = ["shopify-spy>=0.5"]
 # ///
 import shopify_spy as spy
 ```

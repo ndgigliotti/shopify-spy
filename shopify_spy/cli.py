@@ -61,7 +61,7 @@ LIBRARY_EPILOG = (
     "Also a Python library: import shopify_spy as spy; "
     "spy.scrape(urls) yields items as dicts (options: help(spy.scrape)). "
     "Run a script without installing anything: "
-    "uv run --with 'shopify-spy>=0.6' python script.py"
+    "uv run --with 'shopify-spy>=0.5' python script.py"
 )
 # Whole pages, not headings: installed help keeps these links for good
 DOCS_EPILOG = (

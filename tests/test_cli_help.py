@@ -81,7 +81,7 @@ def test_piped_scrape_help_content():
         "StoreResult.hint",
         "Most requests in flight to one host at once",
         "they go out about one at a time",
-        "uv run --with 'shopify-spy>=0.6' python script.py",
+        "uv run --with 'shopify-spy>=0.5' python script.py",
         "./shopify-spy.yaml",
         "~/.config/shopify-spy/config.yaml",
     ):
