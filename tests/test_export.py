@@ -1,5 +1,6 @@
 """Writers match Scrapy's feed exporters byte for byte (JSONL/JSON/XML fixtures were
-captured from Scrapy 2.14 before it was removed; CSV differs on purpose, D2)."""
+captured from Scrapy 2.14 before it was removed; CSV differs on purpose, D2, and the XML
+fixture's declaration was changed from Scrapy's "utf8", which parsers reject, to "UTF-8")."""
 
 import csv
 import json
@@ -7,6 +8,7 @@ import os
 import threading
 from decimal import Decimal
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pytest
 
@@ -535,7 +537,7 @@ def test_unified_xml_has_an_item_per_row(tmp_path):
     path = tmp_path / "out.xml"
     write_items([SHOPIFY_PRODUCT], path, schema="unified", fields=["platform", "available", "sku"])
     assert path.read_text(encoding="utf-8") == (
-        '<?xml version="1.0" encoding="utf8"?>\n<items>\n'
+        '<?xml version="1.0" encoding="UTF-8"?>\n<items>\n'
         "<item><platform>shopify</platform><available>true</available><sku></sku></item>\n"
         "<item><platform>shopify</platform><available>false</available><sku></sku></item>\n"
         "</items>"
@@ -1561,3 +1563,75 @@ def test_item_platform_names_squarespace():
     assert item_platform(SQUARESPACE_PRODUCT) == "squarespace"
     assert item_platform(page_item) == "squarespace"
     assert item_platform({"platform": "squarespace", "structuredContent": None}) is None
+
+
+def test_csv_append_with_fields_in_another_order_keeps_the_header_order(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([{"sku": "S1", "title": "T1"}], path)
+    write_items([{"sku": "S2", "title": "T2"}], path, fields=["title", "sku"], append=True)
+    assert path.read_text(encoding="utf-8").splitlines()[0] == "sku,title"
+    assert read_csv(path) == [{"sku": "S1", "title": "T1"}, {"sku": "S2", "title": "T2"}]
+
+
+def test_csv_append_with_other_fields_is_refused_before_writing(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([{"sku": "S1", "title": "T1"}], path)
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match=r"sku, title.*price"):
+        write_items([{"sku": "S2", "title": "T2"}], path, fields=["sku", "price"], append=True)
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("fmt", ["jsonl", "csv"])
+def test_append_to_a_file_without_a_final_newline_starts_a_new_line(tmp_path, fmt):
+    path = tmp_path / f"out.{fmt}"
+    path.write_text('{"a": 1}' if fmt == "jsonl" else "a\r\n1", encoding="utf-8")
+    write_items([{"a": 2}], path, append=True)
+    if fmt == "jsonl":
+        lines = path.read_text(encoding="utf-8").splitlines()
+        assert [json.loads(line) for line in lines] == [{"a": 1}, {"a": 2}]
+    else:
+        assert read_csv(path) == [{"a": "1"}, {"a": "2"}]
+
+
+# Text a writer must get back out intact: non-ASCII, quotes, separators, markup
+ROUND_TRIP = {"title": 'Café "Crème", 50% <off> & more', "sku": "Ü-1\n2"}
+
+
+def test_csv_round_trip(tmp_path):
+    path = tmp_path / "out.csv"
+    write_items([ROUND_TRIP], path)
+    write_items([ROUND_TRIP], path, append=True)
+    assert read_csv(path) == [ROUND_TRIP, ROUND_TRIP]
+
+
+def test_jsonl_round_trip(tmp_path):
+    path = tmp_path / "out.jsonl"
+    write_items([ROUND_TRIP], path)
+    write_items([ROUND_TRIP], path, append=True)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert [json.loads(line) for line in lines] == [ROUND_TRIP, ROUND_TRIP]
+
+
+@pytest.mark.parametrize("schema", ["native", "unified"])
+def test_xml_round_trip(tmp_path, schema):
+    path = tmp_path / "out.xml"
+    item = ROUND_TRIP | {"nested": {"k": "Ä"}, "tags": ["ü", "ß"]}
+    write_items([item], path, schema=schema)
+    (element,) = ElementTree.parse(path).getroot()
+    if schema == "native":
+        assert {e.tag: e.text for e in element if len(e) == 0} == ROUND_TRIP
+        assert element.find("nested/k").text == "Ä"
+        assert [v.text for v in element.findall("tags/value")] == ["ü", "ß"]
+    else:
+        assert element.find("title").text == ROUND_TRIP["title"]
+        assert element.find("tags").text == "ü,ß"
+
+
+def test_xml_replaces_characters_xml_forbids(tmp_path):
+    path = tmp_path / "out.xml"
+    bad = json.loads('{"title": "a\\u000bb\\u0001c\\ufffed\\uffffe \\ud83d", "ok": "\\t\\n"}')
+    write_items([bad], path)
+    (element,) = ElementTree.parse(path).getroot()
+    assert element.find("title").text == "a�b�c�d�e �"
+    assert element.find("ok").text == "\t\n"

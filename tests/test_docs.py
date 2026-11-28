@@ -103,3 +103,15 @@ def test_site_owner_examples_match_the_e2e_tests():
         e2e.SITE_OWNER_CRAWL_DELAY.format(10),
     ]
     assert blocks == examples
+
+
+def test_cli_config_example_is_the_init_template(tmp_path):
+    from shopify_spy._config import DEFAULT_CONFIG_YAML, load_config_from_file
+
+    text = (DOCS / "cli.md").read_text(encoding="utf-8")
+    example = re.search(r"```yaml\n# shopify-spy\.yaml\n(.*?)```", text, re.S).group(1)
+    assert example == DEFAULT_CONFIG_YAML.split("\n\n", 1)[1]
+    # And with every commented-out setting turned on, it still validates
+    path = tmp_path / "config.yaml"
+    path.write_text(re.sub(r"^(\s*)# (\w+:)", r"\1\2", example, flags=re.M), encoding="utf-8")
+    load_config_from_file(path)
