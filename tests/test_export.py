@@ -944,6 +944,31 @@ def test_csv_bigcommerce_variant_rows(tmp_path):
     assert (row["option3"], row["url"], row["source"]) == ("", "", "")
 
 
+def test_csv_bigcommerce_gtin_and_mpn(tmp_path):
+    variants = [
+        _bc_variant(101, "TEE-R-S", "Red", "S", 20),
+        _bc_variant(102, "TEE-B-L", "Blue", "L", 30),
+        _bc_variant(103, "TEE-B-S", "Blue", "S", 30),
+    ]
+    variants[0]["node"] |= {"gtin": "4006381333931", "mpn": "M-RS"}
+    variants[1]["node"] |= {"gtin": "", "upc": "012345678905"}
+    product = BIGCOMMERCE_PRODUCT | {
+        "gtin": "10012345678902",
+        "mpn": "M",
+        "variants": {"edges": variants},
+    }
+    path = tmp_path / "out.csv"
+    write_items([product], path)
+    assert [(r["gtin"], r["mpn"]) for r in read_csv(path)] == [
+        ("4006381333931", "M-RS"),
+        ("012345678905", "M"),
+        ("10012345678902", "M"),
+    ]
+    write_items([BIGCOMMERCE_SIMPLE | {"upc": "012345678905", "mpn": " "}], path)
+    (row,) = read_csv(path)
+    assert (row["gtin"], row["mpn"]) == ("012345678905", "")
+
+
 def test_csv_bigcommerce_product_without_variants(tmp_path):
     path = tmp_path / "out.csv"
     write_items([BIGCOMMERCE_SIMPLE], path)

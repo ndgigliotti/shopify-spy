@@ -67,7 +67,7 @@ VARIANT_PAGE_SIZE = 250  # BigCommerce's maximum for ``variants(first:)``
 MAX_VARIANTS = 2500
 
 _VARIANT_FIELDS = """
-  entityId sku isPurchasable
+  entityId sku gtin mpn upc isPurchasable
   prices {
     price { value currencyCode } basePrice { value currencyCode }
     salePrice { value currencyCode } retailPrice { value currencyCode }
@@ -85,7 +85,7 @@ _QUERY = " ".join(
 query Products($first: Int!, $after: String) { site { products(first: $first, after: $after) {
   pageInfo { hasNextPage endCursor }
   edges { node {
-    id entityId sku name path description createdAt { utc }
+    id entityId sku gtin mpn upc name path description createdAt { utc }
     brand { name }
     categories(first: 50) { edges { node { name } } }
     prices {

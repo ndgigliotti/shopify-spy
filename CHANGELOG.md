@@ -42,9 +42,10 @@
 
 - The unified schema (CSV, XLSX and `--schema unified`) has two new columns,
   `gtin` and `mpn`, after `sku`: a JSON-LD item's `gtin` (or `gtin13`, `gtin12`,
-  `gtin14`, `gtin8`) and `mpn`, the variant's own when it has them. They're blank
-  for Shopify, Magento and WooCommerce Store API items, whose APIs have no such
-  fields. Appending to a CSV written by an earlier version keeps that file's columns,
+  `gtin14`, `gtin8`) and `mpn`, and a BigCommerce item's `gtin` (else `upc`) and
+  `mpn`, the variant's own when it has them. They're blank for Shopify, Magento and
+  WooCommerce Store API items, whose APIs have no such fields (Magento's only as
+  store-defined custom attributes). Appending to a CSV written by an earlier version keeps that file's columns,
   without these. JSON-LD items (and WooCommerce items read from product pages) also
   fill `average_rating` and `review_count` from `aggregateRating`, with a rating on
   another `bestRating` scale converted to one out of 5.

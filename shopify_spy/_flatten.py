@@ -521,6 +521,7 @@ def _bigcommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
         "review_count": reviews,
         "variant_count": len(variants),
         **_bigcommerce_offer(item),
+        **_bigcommerce_codes(item),
     } | _image_paths(item)
     ids = [o.get("entityId") for o in options]
     return [product | _bigcommerce_variant(v, ids, item) for v in variants] or [product]
@@ -538,7 +539,20 @@ def _bigcommerce_variant(
         {"variant_id": variant.get("entityId"), "is_purchasable": variant.get("isPurchasable")}
         | _variant_options(labels, option_ids)
         | _bigcommerce_offer(variant, fallback=item)
+        | _bigcommerce_codes(variant, item)
         | {"variant_image_url": _dig(variant, "defaultImage", "urlOriginal")}
+    )
+
+
+def _bigcommerce_codes(*nodes: Any) -> dict[str, str | None]:
+    """The first ``gtin`` (else ``upc``, a GTIN-12) and ``mpn`` among ``nodes``: a
+    variant, then its product."""
+    return jsonld.codes(
+        *(
+            {"gtin": n.get("gtin") or n.get("upc"), "mpn": n.get("mpn")}
+            for n in nodes
+            if isinstance(n, dict)
+        )
     )
 
 
