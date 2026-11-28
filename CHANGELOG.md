@@ -160,8 +160,10 @@
   failed (no response, or an error status other than 404 or 410), instead of `ok`.
   A listed product's `.json` that answers 2xx without a product (no `product`
   object with an `id`, such as `{"errors": ...}`) is no longer emitted as an item,
-  and counts as failed. So does a child sitemap of the store's sitemap index that
-  failed, answered an error status or didn't parse, since its products went unread.
+  and counts as failed, unless it was redirected to another page (a stale sitemap
+  entry), which counts as gone like a 404. A child sitemap of the store's sitemap
+  index that failed, answered an error status or didn't parse also makes the
+  store `partial`, since its products went unread.
 - `StoreResult.complete` is False for a store whose status is a failure, and for
   one that produced no item while its platform reported part of the catalog
   missed, such as a generic store whose sitemaps all answered 5xx. It was True

@@ -1005,3 +1005,17 @@ def test_failed_child_sitemap_makes_the_store_partial():
     assert [i["product"]["handle"] for i in items] == ["a"]
     store = result.stores[0]
     assert (store.status, store.complete) == (spy.StoreStatus.partial, False)
+
+
+def test_listed_product_redirected_off_its_document_counts_as_gone():
+    routes = {
+        bulk_url(1): (404, ""),
+        SITEMAP: urlset(f"{STORE}/products/a", f"{STORE}/products/old"),
+        f"{STORE}/products/a.json": {"product": {"id": 1, "handle": "a"}},
+        f"{STORE}/products/old.json": redirect(f"{STORE}/collections/sale"),
+        f"{STORE}/collections/sale": (200, "<html></html>"),
+    }
+    items, result, _ = scrape(routes)
+    assert [i["product"]["handle"] for i in items] == ["a"]
+    store = result.stores[0]
+    assert (store.status, store.complete) == (spy.StoreStatus.ok, True)

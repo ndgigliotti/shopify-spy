@@ -583,8 +583,9 @@ async def _fetch_documents(
 ) -> int:
     """Fetch each entry's JSON document, skipping products whose handles were seen.
 
-    Returns how many listed products failed: no response, or an error status other
-    than 404 or 410, which mean the product no longer exists.
+    Returns how many listed products failed: no response, an error status other
+    than 404 or 410, or an answer without a product. A 404, a 410 or a redirect
+    to another page means the product no longer exists.
     """
     limiter = asyncio.Semaphore(FETCH_CONCURRENCY)
     failed = 0
@@ -608,6 +609,11 @@ async def _fetch_documents(
             return
         data = response.json_or_none()
         if not _is_product_document(data):
+            if urllib.parse.urlsplit(response.url).path != urllib.parse.urlsplit(url).path:
+                # A stale sitemap entry the store redirects elsewhere (a collection,
+                # the homepage): the product no longer exists, like a 404
+                logger.info("Product %s redirected to %s", url, response.url)
+                return
             # A 2xx can still be an error document ({"errors": ...}) or a page
             logger.warning("No product in the response from %s", url)
             failed += 1
