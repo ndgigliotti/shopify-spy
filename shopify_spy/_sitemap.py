@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator, Callable
 from defusedxml import ElementTree
 from defusedxml.common import DefusedXmlException
 
-from shopify_spy._fetch import FetchTooLarge, decompress
+from shopify_spy._fetch import FetchTooLarge, Response, decompress
 from shopify_spy._session import STORE, RequestFailed, RequestKind, StoreSession
 from shopify_spy._utils import hostname
 
@@ -98,16 +98,8 @@ class SitemapWalk:
         if url in self._visited or depth > MAX_DEPTH:
             return
         self._visited.add(url)
-        try:
-            response = await self.session.get(url, kind=self.kind)
-        except RequestFailed as exc:
-            logger.info("Sitemap request failed: %s", exc)
-            self._failed(url, depth)
-            return
-        if response is None:  # robots.txt, or a redirect target already fetched
-            return
-        if not response.ok:
-            self._failed(url, depth)
+        response = await self._fetch(url, depth)
+        if response is None:
             return
         root, locs = parse(response.body)
         if depth == 0:
@@ -125,6 +117,19 @@ class SitemapWalk:
         elif root == "urlset":
             for loc in locs:
                 yield loc
+
+    async def _fetch(self, url: str, depth: int) -> Response | None:
+        """The sitemap's 2xx response, else None (a failed child sitemap is recorded)."""
+        try:
+            response = await self.session.get(url, kind=self.kind)
+        except RequestFailed as exc:
+            logger.info("Sitemap request failed: %s", exc)
+        else:
+            # None is a skip (robots.txt, or a redirect target already fetched)
+            if response is None or response.ok:
+                return response
+        self._failed(url, depth)
+        return None
 
     def _failed(self, url: str, depth: int) -> None:
         if depth > 0:
