@@ -409,3 +409,15 @@ def test_a_null_item_without_an_error_stays_complete():
     assert [i["sku"] for i in items] == ["SKU1"]
     assert result.stores[0].status == "ok"
     assert result.stores[0].complete
+
+
+def test_a_null_item_stays_partial_when_the_next_page_is_past_the_end():
+    # total_count counts hidden products, so a second page is asked for
+    error = {"message": "Internal server error", "path": ["products", "items", 99]}
+    message = "currentPage value 2 specified is greater than the 1 page(s) available."
+    items_ = [*(mg_product(i) for i in range(99)), None]
+    routes = {magento_url(1): answer(items_, 150, errors=[error]), magento_url(2): errors(message)}
+    items, result, _ = scrape_mg(routes)
+    assert len(items) == 99
+    assert result.stores[0].status == "partial"
+    assert not result.stores[0].complete

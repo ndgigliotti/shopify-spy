@@ -96,25 +96,26 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
     base = ctx.url
     page, size = 1, PAGE_SIZE
     seen = _Seen()
-    missed = 0  # items a resolver failed on
+    missed = False  # whether a resolver failed on an item
     while (response := await _get(ctx, get_api_url(base, page, size))) is not None:
         where = f"{_endpoint(response.url)} page {page}"
         products, problem = _read(response)
         if products is None:
             smaller = _smaller_page_size(page, size, problem)
             if smaller is None:
-                return await _failed(ctx, response, where, page, problem, size != PAGE_SIZE)
+                ended = await _failed(ctx, response, where, page, problem, size != PAGE_SIZE)
+                return ended and not missed
             logger.info("Magento page size limit (%s); retrying with %d", problem, smaller)
             size = smaller
             continue
         if problem is not None:
             if not dicts(products["items"]):
                 # Resolver errors null out the items they hit, so this is a failed page
-                return await _failed(ctx, response, where, page, problem)
+                return await _failed(ctx, response, where, page, problem) and not missed
             logger.warning("Magento GraphQL answered with errors for %s: %s", where, problem)
             if failed := _failed_items(response, products["items"]):
                 logger.warning("Magento: %d products failed to resolve on %s", failed, where)
-                missed += failed
+                missed = True
         if page == 1:
             size = _effective_page_size(products, size, where)
         done = await _take_page(ctx, emit, response, products, seen, where, page, size)
@@ -203,7 +204,7 @@ def _failed_items(response: Response, items: list[Any]) -> int:
     (``["products", "items", 1, ...]``): products a resolver failed on."""
     errors = _dig(response.json_or_none(), "errors")
     failed = set()
-    for error in dicts(errors if isinstance(errors, list) else []):
+    for error in dicts(errors):
         path = error.get("path")
         if not isinstance(path, list) or len(path) < 3 or path[:2] != ["products", "items"]:
             continue
