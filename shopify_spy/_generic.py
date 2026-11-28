@@ -158,13 +158,14 @@ class _Listing:
         self._dropped += 1
         return False
 
-    def _kept(self, url: str) -> bool:
-        # Tested before _on_site, so an off-site page that wouldn't be read anyway
+    def _wanted(self, url: str) -> bool:
+        """Whether to yield a page loc: ``keep`` accepts it and it's on the site."""
+        # keep is tested first, so an off-site page that wouldn't be read anyway
         # doesn't make the listing incomplete
-        if self.keep is None or self.keep(url):
-            return True
-        self.filtered += 1
-        return False
+        if self.keep is not None and not self.keep(url):
+            self.filtered += 1
+            return False
+        return self._on_site(url)
 
     async def locs(self) -> AsyncIterator[str]:
         found, missing = await self._top_level()
@@ -176,7 +177,7 @@ class _Listing:
                 self.unread.append(source)
             elif self._on_site(source):
                 async for loc in self._source_locs(source, read):
-                    if self._kept(loc) and self._on_site(loc):
+                    if self._wanted(loc):
                         yield loc
         if self._dropped:
             logger.info("Sitemaps listed %d off-site links", self._dropped)
