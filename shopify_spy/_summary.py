@@ -225,8 +225,6 @@ def jsonld_prices(item: dict[str, Any]) -> tuple[Decimal | None, Decimal | None,
 
 def _jsonld(item: dict[str, Any]) -> ItemSummary:
     low, high, currency = jsonld_prices(item)
-    # Not ``image_urls``, which is filled only with --images
-    urls = jsonld.product_image_urls(item, item.get("html_url"))
     return ItemSummary(
         kind="product",
         platform="jsonld",
@@ -237,7 +235,8 @@ def _jsonld(item: dict[str, Any]) -> ItemSummary:
         currency=currency,
         html_url=item.get("html_url"),
         store=item.get("store"),
-        image_urls=[u for u in urls if isinstance(u, str)],
+        # Not ``item["image_urls"]``, which is filled only with --images
+        image_urls=jsonld.product_image_urls(item, item.get("html_url")),
     )
 
 
