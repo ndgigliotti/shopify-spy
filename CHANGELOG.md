@@ -161,6 +161,10 @@
   A listed product's `.json` that answers 2xx without a product (no `product`
   object with an `id`, such as `{"errors": ...}`) is no longer emitted as an item,
   and counts as failed.
+- `StoreResult.complete` is False for a store whose status is a failure, and for
+  one that produced no item while its platform reported part of the catalog
+  missed, such as a generic store whose sitemaps all answered 5xx. It was True
+  for these when the store's run otherwise finished.
 
 ## 0.5.1
 

@@ -982,3 +982,11 @@ def test_listed_document_that_is_not_a_product_is_not_emitted(document):
     assert [i["product"]["handle"] for i in items] == ["a"]
     store = result.stores[0]
     assert (store.status, store.complete) == (spy.StoreStatus.partial, False)
+
+
+def test_unreadable_store_is_not_complete():
+    routes = {bulk_url(1): (503, ""), SITEMAP: (503, "")}
+    items, result, _ = scrape(routes)
+    assert items == []
+    store = result.stores[0]
+    assert (store.status, store.complete) == (spy.StoreStatus.unavailable, False)

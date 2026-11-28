@@ -229,3 +229,16 @@ def test_retry_waits_survive_zero_throttle_max_delay():
     items, _, _ = scrape(fetcher, throttle_max_delay=0, _backoff=True)
     assert len(items) == 1
     assert time.monotonic() - start >= 0.2  # a real backoff wait happened
+
+
+def test_store_failing_with_no_items_is_not_complete():
+    # Every sitemap the generic platform tries answers 503
+    fetcher = FakeFetcher(default_status=503)
+    items, result, _ = scrape(fetcher, platform="generic")
+    assert items == []
+    store = result.stores[0]
+    assert (store.status, store.finish_reason, store.complete) == (
+        spy.StoreStatus.unavailable,
+        "finished",
+        False,
+    )
