@@ -148,9 +148,7 @@ EXPECTED = {
 
 def test_magento_diagnosis(tmp_path, stores):
     urls = {scenario: stores(scenario) for scenario in EXPECTED}
-    # The retries in errors_only make several requests to one host before giving up: at
-    # the default 1 s minimum they come close to the short e2e --bail on a slow runner
-    statuses = _run(tmp_path, list(urls.values()), "--platform", "magento", "--min-delay", "0")
+    statuses = _run(tmp_path, list(urls.values()), "--platform", "magento")
     assert {scenario: statuses[url] for scenario, url in urls.items()} == EXPECTED
     [output] = tmp_path.rglob("*.jsonl")
     items = [json.loads(line) for line in output.read_text().splitlines()]
