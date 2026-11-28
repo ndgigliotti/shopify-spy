@@ -186,12 +186,12 @@ def _pick(
     if variants.get(id(found)):
         listed = product.get("hasVariant")
         merged = listify(listed) if listed is not None else []
+        # Only hasVariant's own entries count as duplicates: variants without
+        # their own SKU inherit the group's, so two of them can share one
         known = {key for v in merged for key in graph.variant_keys(v)}
-        for variant in variants[id(found)]:
-            keys = graph.variant_keys(variant)
-            if not keys & known:
-                merged.append(graph.resolve(variant))
-            known |= keys
+        merged += [
+            graph.resolve(v) for v in variants[id(found)] if not graph.variant_keys(v) & known
+        ]
         product["hasVariant"] = merged
     return product
 
@@ -261,12 +261,13 @@ class _Graph:
 
     def variant_keys(self, variant: Any) -> set[str]:
         """What identifies a variant across ``hasVariant`` and ``isVariantOf``: its
-        ``@id`` and ``sku``. Not its ``url``, which variants can share with the page."""
+        ``@id`` (either scheme) and ``sku``. Not its ``url``, which variants can share
+        with the page."""
         if not isinstance(variant, dict):
             return set()
         keys = set()
         if isinstance(ref := variant.get("@id"), str) and ref.strip():
-            keys.add(f"@id:{self.key(ref)}")
+            keys.add(f"@id:{_HTTP_SCHEME.sub('//', self.key(ref))}")
         if (sku := text(variant.get("sku"))) and sku.strip():
             keys.add(f"sku:{sku.strip()}")
         return keys

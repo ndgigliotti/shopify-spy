@@ -327,3 +327,20 @@ def test_merged_variants_are_deduplicated_by_sku():
     group = {"@type": "ProductGroup", "@id": "#g", "hasVariant": inline}
     found = parse(ld_page(group, small, large), groups=True, fallback=False)
     assert found["hasVariant"] == [inline, large]
+
+
+def test_variants_sharing_their_group_sku_are_all_kept():
+    group = {"@type": "ProductGroup", "@id": "#g", "name": "Tee", "sku": "TEE"}
+    sizes = [
+        {"@type": "Product", "isVariantOf": {"@id": "#g"}, "sku": "TEE", "size": s} for s in "SML"
+    ]
+    found = parse(ld_page({"@graph": [group, *sizes]}), groups=True, fallback=False)
+    assert [v["size"] for v in found["hasVariant"]] == ["S", "M", "L"]
+
+
+def test_merged_variants_match_ids_across_http_and_https():
+    inline = {"@id": PAGE.replace("https://", "http://") + "#s", "offers": {"price": "1"}}
+    small = {"@type": "Product", "@id": f"{PAGE}#s", "isVariantOf": {"@id": "#g"}}
+    group = {"@type": "ProductGroup", "@id": "#g", "hasVariant": [inline]}
+    found = parse(ld_page(group, small), groups=True, fallback=False)
+    assert found["hasVariant"] == [inline]

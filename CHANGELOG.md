@@ -160,8 +160,8 @@
   collections counted. A generic store's sitemaps can list pages that aren't
   products, so they still don't count there.
 - A `ProductGroup` that lists some variants in `hasVariant` while others name it
-  in `isVariantOf` keeps all of them, without repeats by `@id` or `sku`, for
-  generic, Squarespace and WooCommerce product-page items; before, the
+  in `isVariantOf` keeps all of them, skipping an `isVariantOf` one whose `@id`
+  or `sku` a listed one has, for generic, Squarespace and WooCommerce product-page items; before, the
   `isVariantOf` ones were dropped when `hasVariant` was set.
 - A BigCommerce product whose later variants page fails (or that stops at the
   2,500-variant bound) keeps the variants read so far and makes the store
