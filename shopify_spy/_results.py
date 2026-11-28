@@ -46,7 +46,13 @@ class StoreStatus(StrEnum):
         return _LABELS[self]
 
 
-_PLATFORM_NAMES = {"shopify": "Shopify", "woocommerce": "WooCommerce", "magento": "Magento"}
+_PLATFORM_NAMES = {
+    "shopify": "Shopify",
+    "woocommerce": "WooCommerce",
+    "magento": "Magento",
+    "jsonld": "JSON-LD",
+    "bigcommerce": "BigCommerce",
+}
 
 _LABELS = {
     StoreStatus.ok: "ok",

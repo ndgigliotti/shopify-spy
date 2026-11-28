@@ -54,6 +54,18 @@ def test_negative_image_delay_rejected():
         Config(throttle={"image_delay": -1})
 
 
+def test_config_file_jitter_reaches_kwargs(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("throttle:\n  jitter: 0.2\n")
+    assert load_config_from_file(path).to_kwargs()["throttle_jitter"] == 0.2
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.1])
+def test_jitter_outside_zero_to_one_rejected(value):
+    with pytest.raises(ValidationError):
+        Config(throttle={"jitter": value})
+
+
 def test_config_images_dir():
     config = Config()
     assert config.output.images_dir == Path("./output/images")
@@ -87,6 +99,22 @@ def test_load_config_magento(tmp_path):
     config = load_config_from_file(config_file)
     assert config.scrape.platform == "magento"
     assert config.to_kwargs()["platform"] == "magento"
+
+
+def test_load_config_bigcommerce(tmp_path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("scrape:\n  platform: bigcommerce\n")
+    config = load_config_from_file(config_file)
+    assert config.scrape.platform == "bigcommerce"
+    assert config.to_kwargs()["platform"] == "bigcommerce"
+
+
+def test_load_config_jsonld(tmp_path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("scrape:\n  platform: jsonld\n")
+    config = load_config_from_file(config_file)
+    assert config.scrape.platform == "jsonld"
+    assert config.to_kwargs()["platform"] == "jsonld"
 
 
 def test_load_config_is_utf8_whatever_the_locale(tmp_path):

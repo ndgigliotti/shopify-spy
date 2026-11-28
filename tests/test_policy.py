@@ -27,7 +27,7 @@ from shopify_spy._policy import (
 
 @pytest.fixture
 def no_jitter(monkeypatch):
-    monkeypatch.setattr(policy.random, "uniform", lambda a, b: 1.0)
+    monkeypatch.setattr(policy.random, "uniform", lambda a, b: (a + b) / 2)
 
 
 def slot(**throttle) -> HostSlot:
@@ -104,7 +104,7 @@ def test_disabled_throttle_has_zero_delay_and_ignores_adjust():
 
 @pytest.fixture
 def low_jitter(monkeypatch):
-    monkeypatch.setattr(policy.random, "uniform", lambda a, b: 0.5)
+    monkeypatch.setattr(policy.random, "uniform", lambda a, b: a)
 
 
 def test_default_min_delay_is_one_second():
@@ -132,7 +132,7 @@ async def test_wait_turn_never_closer_than_min_delay(low_jitter):
 
 
 async def test_wait_turn_jitters_above_min_delay_when_the_delay_is_below_it(monkeypatch):
-    monkeypatch.setattr(policy.random, "uniform", lambda a, b: 1.5)
+    monkeypatch.setattr(policy.random, "uniform", lambda a, b: b)
     s = slot(start_delay=0.0, min_delay=0.2)
     loop = asyncio.get_running_loop()
     async with asyncio.timeout(2):
@@ -141,6 +141,84 @@ async def test_wait_turn_jitters_above_min_delay_when_the_delay_is_below_it(monk
         await s.wait_turn()
         t2 = loop.time()
     assert t2 - t1 >= 0.29  # 1.5 * min_delay, not a fixed min_delay beat
+
+
+async def test_wait_turn_jitters_only_upward_from_min_delay(monkeypatch):
+    """Below the minimum gap the draw is 1 to 1.5 times it, so no send lands under it
+    and none is pinned to it by the clamp."""
+    draws = []
+
+    def uniform(a, b):
+        draws.append((a, b))
+        return a
+
+    monkeypatch.setattr(policy.random, "uniform", uniform)
+    s = slot(start_delay=0.0, min_delay=0.2)
+    async with asyncio.timeout(2):
+        await s.wait_turn()
+        await s.wait_turn()
+    assert draws == [(0.2, pytest.approx(0.3))]
+
+
+async def test_wait_turn_jitters_around_a_delay_above_min_delay(monkeypatch):
+    draws = []
+
+    def uniform(a, b):
+        draws.append((a, b))
+        return (a + b) / 2
+
+    monkeypatch.setattr(policy.random, "uniform", uniform)
+    s = slot(start_delay=0.3, min_delay=0.1)
+    async with asyncio.timeout(2):
+        await s.wait_turn()
+        await s.wait_turn()
+    assert draws == [(pytest.approx(0.15), pytest.approx(0.45))]
+
+
+async def test_jitter_setting_scales_the_spread(monkeypatch):
+    draws = []
+
+    def uniform(a, b):
+        draws.append((a, b))
+        return a
+
+    monkeypatch.setattr(policy.random, "uniform", uniform)
+    below = slot(start_delay=0.0, min_delay=0.2, jitter=0.2)
+    above = slot(start_delay=0.3, min_delay=0.1, jitter=0.2)
+    async with asyncio.timeout(2):
+        for s in (below, above):
+            await s.wait_turn()
+            await s.wait_turn()
+    assert [x for d in draws for x in d] == pytest.approx([0.2, 0.24, 0.24, 0.36])
+
+
+async def test_jitter_draw_starts_at_the_minimum_just_above_it(monkeypatch):
+    """A delay just above the minimum draws from the minimum up, so it's never faster
+    on average than a delay just below it."""
+    draws = []
+
+    def uniform(a, b):
+        draws.append((a, b))
+        return a
+
+    monkeypatch.setattr(policy.random, "uniform", uniform)
+    s = slot(start_delay=0.202, min_delay=0.2)
+    async with asyncio.timeout(2):
+        await s.wait_turn()
+        await s.wait_turn()
+    [(low, high)] = draws
+    assert low == 0.2 and high == pytest.approx(0.303)
+
+
+async def test_zero_jitter_spaces_exactly_at_the_minimum():
+    s = slot(start_delay=0.0, min_delay=0.2, jitter=0.0)
+    loop = asyncio.get_running_loop()
+    async with asyncio.timeout(2):
+        await s.wait_turn()
+        t1 = loop.time()
+        await s.wait_turn()
+        t2 = loop.time()
+    assert 0.19 <= t2 - t1 < 0.25
 
 
 def test_default_image_delay_is_a_quarter_second():
@@ -217,7 +295,7 @@ async def test_crawl_delay_spaces_requests_without_throttle():
 
 
 async def test_crawl_delay_not_jittered_without_throttle(monkeypatch):
-    monkeypatch.setattr(policy.random, "uniform", lambda a, b: 1.5)
+    monkeypatch.setattr(policy.random, "uniform", lambda a, b: b)
     s = slot(enabled=False)
     s.set_crawl_delay(0.2)
     loop = asyncio.get_running_loop()
@@ -690,3 +768,17 @@ def test_crawl_delay_unusable_is_none(text):
 def test_robots_html_page_has_no_rules():
     rules = RobotsRules("<html><body><h1>404 Not Found</h1></body></html>")
     assert rules.allowed("https://a.com/products.json", "shopify-spy")
+
+
+def test_robots_sitemaps_keep_values_as_written():
+    rules = RobotsRules(
+        "User-agent: *\nDisallow: /cart\n"
+        "Sitemap: https://a.com/sitemap.xml\n"
+        "Sitemap: /sitemaps/index.xml\n"
+    )
+    assert rules.sitemaps == ["https://a.com/sitemap.xml", "/sitemaps/index.xml"]
+
+
+@pytest.mark.parametrize("text", [None, "", "User-agent: *\nDisallow: /cart\n"])
+def test_robots_without_sitemap_lines_lists_none(text):
+    assert RobotsRules(text).sitemaps == []

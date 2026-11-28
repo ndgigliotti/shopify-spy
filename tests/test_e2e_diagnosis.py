@@ -428,6 +428,8 @@ def test_woocommerce_failed_variation_listing(tmp_path, stores, scenario):
 def test_woocommerce_variation_rows_in_csv(tmp_path, stores):
     """The CLI's CSV gives each variation row its own price, SKU and stock."""
     url = stores("woo_variations_ok")
+    # Like the variation-listing tests above: several requests to one host before the
+    # first item would come close to the short e2e --bail at the default 1 s minimum
     statuses = _run(
         tmp_path, [url], "--platform", "woocommerce", "--format", "csv", "--min-delay", "0"
     )

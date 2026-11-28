@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from typing import Any
+from xml.sax.saxutils import escape
 
 import shopify_spy as spy
+from shopify_spy import _bigcommerce
 from shopify_spy._fetch import FakeFetcher
 from shopify_spy._magento import get_api_url
 
@@ -31,6 +35,20 @@ def magento_url(page: int, page_size: int = 100, store: str = STORE) -> str:
     return get_api_url(store, page, page_size)
 
 
+def bigcommerce_api(store: str = STORE) -> str:
+    return _bigcommerce.get_api_url(store)
+
+
+def bc_token(**claims: Any) -> str:
+    """An unsigned three-part JWT shaped like a BigCommerce Storefront API token."""
+
+    def part(data: dict[str, Any]) -> str:
+        return base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
+
+    payload = {"iss": "BC", "sub": "BC", "cors": [STORE], "eat": 2_000_000_000, **claims}
+    return f"{part({'alg': 'ES256', 'typ': 'JWT'})}.{part(payload)}.c2lnbmF0dXJl"
+
+
 def product(i: int | str, **extra: Any) -> dict[str, Any]:
     return {
         "id": i,
@@ -50,7 +68,7 @@ def urlset(*locs: str) -> tuple[int, str, dict[str, str]]:
     body = (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
-        + "".join(f"<url><loc>{loc}</loc></url>" for loc in locs)
+        + "".join(f"<url><loc>{escape(loc)}</loc></url>" for loc in locs)
         + "</urlset>"
     )
     return 200, body, {"Content-Type": "application/xml"}
@@ -60,10 +78,19 @@ def sitemapindex(*locs: str) -> tuple[int, str, dict[str, str]]:
     body = (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
-        + "".join(f"<sitemap><loc>{loc}</loc></sitemap>" for loc in locs)
+        + "".join(f"<sitemap><loc>{escape(loc)}</loc></sitemap>" for loc in locs)
         + "</sitemapindex>"
     )
     return 200, body, {"Content-Type": "application/xml"}
+
+
+def product_page(*nodes: Any) -> tuple[int, str, dict[str, str]]:
+    """An HTML page with each node in its own JSON-LD script."""
+    scripts = "".join(
+        f'<script type="application/ld+json">{json.dumps(node)}</script>' for node in nodes
+    )
+    body = f"<html><head>{scripts}</head><body></body></html>"
+    return 200, body, {"Content-Type": "text/html"}
 
 
 def redirect(location: str, status: int = 301) -> tuple[int, str, dict[str, str]]:

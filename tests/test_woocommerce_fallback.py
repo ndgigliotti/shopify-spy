@@ -3,13 +3,14 @@
 import html
 import json
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
 import shopify_spy as spy
 from shopify_spy._flatten import COLUMNS, flatten
 from shopify_spy._jsonld import offers as read_offers
-from shopify_spy._jsonld import parse_product_page
+from shopify_spy._jsonld import parse_product_page, site_name
 from shopify_spy._jsonld import variation_form as read_form
 from shopify_spy._woocommerce import _prices, page_item
 from tests.flow_support import STORE, scrape, sitemapindex, urlset, woo_url
@@ -265,6 +266,19 @@ def test_pages_without_product_data_are_skipped():
         woo_url(1): (500, ""),
         wp_list(1): [{"id": 1, "link": product_url("a")}, {"id": 2, "link": product_url("b")}],
         product_url("a"): (200, "<html><body>no structured data</body></html>"),
+        product_url("b"): page_html("b"),
+    }
+    items, _, _ = scrape_woo(routes)
+    assert [item["slug"] for item in items] == ["b"]
+
+
+def test_page_of_unmatched_products_is_skipped():
+    # Related-product cards, and no product that names the page: as for --platform jsonld
+    card = '<div itemscope itemtype="https://schema.org/Product"><b itemprop="name">{}</b></div>'
+    routes = {
+        woo_url(1): (500, ""),
+        wp_list(1): [{"id": 1, "link": product_url("a")}, {"id": 2, "link": product_url("b")}],
+        product_url("a"): (200, f"<html><body>{card.format('X')}{card.format('Y')}</body></html>"),
         product_url("b"): page_html("b"),
     }
     items, _, _ = scrape_woo(routes)
@@ -911,3 +925,128 @@ def test_site_name_from_open_graph():
     )
     assert site_name(head + "<body></body>") == "Shop & Co"
     assert site_name("<head></head><body></body>") is None
+
+
+FIXTURES = Path(__file__).parent / "fixtures" / "pages"
+NALGENE = "https://nalgene.com/product/32oz-wide-mouth-mythical-creatures/"
+
+
+def nalgene_item():
+    page = (FIXTURES / "nalgene-product-group.html").read_text()
+    product, post_id = parse_product_page(page, NALGENE, groups=True)
+    return page_item(product, NALGENE, post_id, None, site_name(page))
+
+
+def test_page_item_from_a_yoast_product_group():
+    item = nalgene_item()
+    assert (item["id"], item["name"], item["sku"]) == (
+        877583,
+        "32oz Wide Mouth Mythical Creatures Bottles",
+        "32oz-Mythical-Creatures",
+    )
+    # The group has no offers of its own; its variants' give the price
+    assert (item["prices"]["price"], item["prices"]["currency_code"]) == ("1424", "USD")
+    assert item["prices"]["price_range"] is None
+    assert item["is_in_stock"] is None
+
+
+def test_product_group_page_becomes_an_item():
+    group = {
+        "@type": "ProductGroup",
+        "name": "Bottle",
+        "hasVariant": [
+            {
+                "@type": "Product",
+                "sku": "B-1",
+                "offers": offer(price="12", availability="OutOfStock"),
+            },
+            {"@type": "Product", "sku": "B-2", "offers": offer(price="15", availability="InStock")},
+        ],
+    }
+    page = f'<script type="application/ld+json">{json.dumps(group)}</script><body class="postid-7">'
+    routes = {
+        woo_url(1): (403, ""),
+        wp_list(1): [{"id": 7, "link": product_url("bottle")}],
+        product_url("bottle"): (200, page),
+    }
+    items, _, _ = scrape_woo(routes)
+    assert [i["name"] for i in items] == ["Bottle"]
+    prices = items[0]["prices"]
+    assert (prices["price_range"], items[0]["is_in_stock"]) == (
+        {"min_amount": "12", "max_amount": "15"},
+        True,
+    )
+
+
+def test_page_item_resolves_relative_images():
+    product = {"@type": "Product", "name": "Hat", "image": ["/media/hat.jpg", "//cdn.test/b.jpg"]}
+    item = page_item(product, f"{STORE}/product/hat/", None)
+    assert [i["src"] for i in item["images"]] == [
+        f"{STORE}/media/hat.jpg",
+        "https://cdn.test/b.jpg",
+    ]
+
+
+def test_page_item_text_unescaped_until_stable():
+    product = {
+        "@type": "Product",
+        "name": "Hat\n &amp;amp; Scarf",
+        "description": "Wool&amp;nbsp;blend",
+    }
+    item = page_item(product, f"{STORE}/product/hat/", None)
+    assert (item["name"], item["description"]) == ("Hat &amp; Scarf", "Wool\xa0blend")
+
+
+def test_page_item_images_from_references():
+    # Yoast lists the group's images by @id: the first in the WebPage's script, the
+    # rest inside its variants
+    images = [i["src"] for i in nalgene_item()["images"]]
+    assert [i.rsplit("/", 1)[-1] for i in images] == [
+        "Sasquatch_Front-667x1000-1.jpg",
+        "Sasquatch_Back-667x1000-1.jpg",
+        "Aliens_Front-667x1000-1.jpg",
+        "Werewolf_Front-667x1000-1.jpg",
+    ]
+
+
+def test_microdata_page_becomes_an_item():
+    page = (
+        '<body class="postid-7"><div itemscope itemtype="http://schema.org/Product">'
+        '<h1 itemprop="name">Mug</h1><img itemprop="image" src="/m.jpg">'
+        '<div itemprop="offers" itemscope itemtype="http://schema.org/Offer">'
+        '<meta itemprop="price" content="8"><link itemprop="availability" href="http://schema.org/InStock">'
+        "</div></div></body>"
+    )
+    routes = {
+        woo_url(1): (403, ""),
+        wp_list(1): [{"id": 7, "link": product_url("mug")}],
+        product_url("mug"): (200, page),
+    }
+    (item,), _, _ = scrape_woo(routes)
+    assert (item["id"], item["name"], item["prices"]["price"], item["is_in_stock"]) == (
+        7,
+        "Mug",
+        "8",
+        True,
+    )
+    assert item["images"] == [{"src": f"{STORE}/m.jpg"}]
+
+
+def test_page_item_row_has_the_json_ld_codes_and_rating():
+    product = {
+        "@type": "Product",
+        "name": "Hat",
+        "gtin13": "4006381333931",
+        "mpn": "H-1",
+        "aggregateRating": {"ratingValue": "4.5", "reviewCount": 2},
+        "offers": offer(price="5"),
+    }
+    (row,) = flatten(page_item(product, f"{STORE}/product/hat/", None) | {"store": "shop.test"})
+    assert (row["gtin"], row["mpn"]) == ("4006381333931", "H-1")
+    assert (row["average_rating"], row["review_count"]) == (Decimal("4.5"), 2)
+
+
+def test_store_api_row_has_no_codes():
+    item = {"id": 1, "name": "Hat", "permalink": f"{STORE}/product/hat/", "prices": {}}
+    (row,) = flatten(item)
+    assert (row.get("gtin"), row.get("mpn")) == (None, None)

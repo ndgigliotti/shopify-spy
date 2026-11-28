@@ -21,6 +21,8 @@ class Platform(StrEnum):
     shopify = "shopify"
     woocommerce = "woocommerce"
     magento = "magento"
+    bigcommerce = "bigcommerce"
+    jsonld = "jsonld"
 
 
 class ScrapeConfig(BaseModel):
@@ -85,6 +87,7 @@ class ThrottleConfig(BaseModel):
     max_delay: float = Field(default=60.0, ge=0)
     min_delay: float = Field(default=1.0, ge=0)
     image_delay: float = Field(default=0.25, ge=0)
+    jitter: float = Field(default=0.5, ge=0, le=1)
     target_concurrency: float = Field(default=1.0, ge=0.1)
 
 
@@ -121,6 +124,7 @@ class Config(BaseModel):
             "throttle_max_delay": self.throttle.max_delay,
             "throttle_min_delay": self.throttle.min_delay,
             "throttle_image_delay": self.throttle.image_delay,
+            "throttle_jitter": self.throttle.jitter,
             "throttle_target_concurrency": self.throttle.target_concurrency,
         }
 
@@ -137,7 +141,7 @@ DEFAULT_CONFIG_YAML = """\
 # See https://github.com/ndgigliotti/shopify-spy for documentation
 
 scrape:
-  platform: shopify   # Platform: shopify, woocommerce, magento
+  platform: shopify   # Platform: shopify, woocommerce, magento, bigcommerce, jsonld
   products: true      # Scrape product data (Shopify only)
   collections: false  # Scrape collection data (Shopify only)
   images: false       # Download product images
@@ -168,6 +172,7 @@ throttle:
   max_delay: 60            # Maximum download delay (seconds)
   min_delay: 1             # Minimum seconds between page and API requests to one host
   image_delay: 0.25        # Minimum seconds between image downloads from one host
+  jitter: 0.5              # Random spread of the gaps, 0 (exact) to 1
   target_concurrency: 1.0  # Target concurrent requests (higher = faster)
 """
 

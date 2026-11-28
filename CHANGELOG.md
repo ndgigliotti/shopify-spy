@@ -16,6 +16,31 @@
   without products reports `failed` with Magento's message, and one whose robots.txt
   disallows URLs with query strings (`Disallow: /*?`) gets a hint saying so
   ([#89](https://github.com/ndgigliotti/shopify-spy/issues/89)).
+- A `bigcommerce` platform (`--platform bigcommerce`, `platform="bigcommerce"`) for
+  BigCommerce Stencil storefronts, read through the Storefront GraphQL API at
+  `/graphql` with the public API token the storefront's homepage carries. Items are
+  the GraphQL product nodes plus `store`, `platform`, `html_url` and `image_urls`
+  (`BigCommerceProductItem`), and the unified schema has a row per variant. A store
+  whose homepage has no unexpired token (such as the default Cornerstone theme)
+  reports `failed` with that reason. The theme's own Stencil token is preferred
+  over app tokens, a headless storefront's page that names its
+  `store-<hash>.mybigcommerce.com/graphql` endpoint is read through it, and
+  products with more than 250 variants are paged in full
+  ([#90](https://github.com/ndgigliotti/shopify-spy/issues/90)).
+- A `jsonld` platform (`--platform jsonld`, `platform="jsonld"`) for stores on
+  platforms without their own adapter. It reads the product pages listed in the
+  store's sitemaps (robots.txt `Sitemap:` lines, `/sitemap.xml`,
+  `/sitemap_index.xml` or `/xmlsitemap.php`, product sitemaps first) and keeps each
+  page's schema.org `Product` or `ProductGroup` JSON-LD, or its microdata on a page
+  without a JSON-LD Product. Items are the JSON-LD node
+  plus `store`, `platform`, `html_url` and `image_urls` (`JsonLdProductItem`), and
+  the unified schema has a row per `hasVariant` Product or per offer. It is a
+  best-effort fallback at one request per product. A store whose pages have no
+  Product data reports `failed` with the number of pages checked and what stopped
+  it: the end of the listing, 50 pages, or `--bail` (about 20 to 25 pages at the
+  default on a throttled store). Its hint names Shopify, WooCommerce or Magento when
+  the store answers like one
+  ([#93](https://github.com/ndgigliotti/shopify-spy/issues/93)).
 
 ### Changed
 
@@ -44,14 +69,33 @@
   switches to a profile it refused ([#67](https://github.com/ndgigliotti/shopify-spy/issues/67)). Challenge pages
   (Cloudflare's `cf-mitigated: challenge`), 401s, image downloads and
   `*.myshopify.com` refusals never switch, and a challenge page isn't retried. Each switch is logged at INFO.
+- The unified schema (CSV, XLSX and `--schema unified`) has two new columns,
+  `gtin` and `mpn`, after `sku`: a JSON-LD item's `gtin` (or `gtin13`, `gtin12`,
+  `gtin14`, `gtin8`) and `mpn`, and a BigCommerce item's `gtin` (else `upc`) and
+  `mpn`, the variant's own when it has them. They're blank for Shopify, Magento and
+  WooCommerce Store API items, whose APIs have no such fields (Magento's only as
+  store-defined custom attributes). Appending to a CSV written by an earlier version keeps that file's columns,
+  without these. JSON-LD items (and WooCommerce items read from product pages) also
+  fill `average_rating` and `review_count` from `aggregateRating`, with a rating on
+  another `bestRating` scale converted to one out of 5.
+- The WooCommerce product-page fallback reads more pages: a Yoast `ProductGroup`
+  (a variable product, priced from its variants' offers), schema.org microdata on a
+  page without a JSON-LD Product, JSON-LD in an HTML comment or with empty values
+  (`"description": ,`), `@type` written as an IRI or `schema:Product`, and a Product
+  under a page's `mainEntity`. Images given as `{"@id": ...}` references or relative
+  URLs are resolved, and names and descriptions escaped twice (`&amp;amp;`) are
+  unescaped. Prices with a currency symbol or separators (`$19.99`, `1.234,56`) are
+  read. A page's product is chosen as `jsonld` chooses it, so a page of several
+  products, none of which names the page, is now skipped rather than read as the
+  first.
 - Throttling is more conservative by default. A robots.txt `Crawl-delay` (for the
   `shopify-spy` group, else `*`) spaces that host's requests, capped at the
   throttle's `max_delay` and applied even with `--no-throttle`. Throttled page and
-  API requests to one host are at least 1 second apart, set by the new
+  API requests to one host are at least 1 second apart (typically 1 to 1.5 seconds), set by the new
   `--min-delay` option, config `throttle.min_delay` and library option
   `throttle_min_delay`. Throttled image downloads from one host, the store's own
   included, are at least 0.25 seconds apart, set by the new `--image-delay`
-  option, config `throttle.image_delay` and library option `throttle_image_delay`. A `Retry-After` longer than 60 seconds is no longer
+  option, config `throttle.image_delay` and library option `throttle_image_delay`. The gaps vary randomly by up to half again (config `throttle.jitter`, library option `throttle_jitter`, 0 for exact spacing). A `Retry-After` longer than 60 seconds is no longer
   retried after 60 seconds: the host is paused for the whole `Retry-After` and the
   request ends as if its retries had run out, so a store with no successful
   response ends `rate_limited` for a 429 (`unavailable` for a 503).

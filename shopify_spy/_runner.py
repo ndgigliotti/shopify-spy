@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any
 
 from shopify_spy import _address
+from shopify_spy import _bigcommerce as bigcommerce
+from shopify_spy import _generic as generic
 from shopify_spy import _magento as magento
 from shopify_spy import _shopify as shopify
 from shopify_spy import _woocommerce as woocommerce
@@ -56,6 +58,8 @@ ADAPTERS: dict[str, Callable[[StoreContext, Emit], Awaitable[bool]]] = {
     "shopify": shopify.run,
     "woocommerce": woocommerce.run,
     "magento": magento.run,
+    "bigcommerce": bigcommerce.run,
+    "jsonld": generic.run,
 }
 
 
@@ -356,6 +360,7 @@ class Runner:
             ):
                 logger.warning("No items scraped from %s in %ss, aborting", state.url, config.bail)
                 state.finish_reason = "bail"
+                _report_no_item_reason(state, ctx, config.bail)
             else:
                 complete = await adapter_task
                 state.truncated = not complete and ctx.items > 0
@@ -423,6 +428,19 @@ class Runner:
             s.result(self.config.platform, not custom and uses_proxy(s.url, self.config.proxy))
             for s in self.states
         ]
+
+
+def _report_no_item_reason(state: StoreState, ctx: StoreContext, bail: float) -> None:
+    """Make a bailed store an error with the adapter's reason for having no item.
+
+    Also when pages were rate limited, which the reason counts: the store then ends
+    as it would have without --bail.
+    """
+    if ctx.no_item_reason is not None:
+        state.errored = True
+        state.errors.append(
+            f"{ctx.no_item_reason}; stopped at --bail ({bail:g}s); raise --bail to check more pages"
+        )
 
 
 def _unwrap(exc: BaseException) -> BaseException:
