@@ -305,9 +305,93 @@ def _no_proxy_pattern(host: str) -> str:
     return f"all://*{host}"
 
 
+_URL_RE = re.compile(
+    r"(?:(?P<scheme>[a-zA-Z][a-zA-Z0-9+.-]*)?:)?(?://(?P<authority>[^/?#]*))?(?P<path>[^?#]*)"
+)
+_AUTHORITY_RE = re.compile(r"(?:(?P<userinfo>.*)@)?(?P<host>\[.*\]|[^:@]*):?(?P<port>.*)")
+_IPV4_STYLE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+")
+_DEFAULT_PORTS = {"ftp": 21, "http": 80, "https": 443, "ws": 80, "wss": 443}
+MAX_URL_LENGTH = 65536
+
+
+def _split_url(url: str) -> tuple[str, str, int | None]:
+    """``(scheme, host, port)`` of ``url``, or ValueError for one Shopify Spy refuses.
+
+    These are the rules 0.5 and earlier applied, frozen by URL_PARTS_CASES in
+    tests/test_fetch.py, quirks included: ``int()`` parses the port (``+80`` and
+    ``99999`` pass) and a default port is dropped only for a lowercase scheme, since
+    environment proxies and NO_PROXY entries that worked then must keep working. The
+    host is lowercased and in ASCII (IDNA) form; a scheme must start the URL.
+    """
+    if len(url) > MAX_URL_LENGTH:
+        raise ValueError("URL too long")
+    if bad := re.search(r"[\x00-\x1f\x7f]", url):
+        raise ValueError(
+            f"Invalid non-printable ASCII character in URL, {bad[0]!r} at position {bad.start()}."
+        )
+    match = _URL_RE.match(url)
+    assert match is not None  # every group is optional
+    typed_scheme = match["scheme"] or ""
+    authority = _AUTHORITY_RE.fullmatch(match["authority"] or "")
+    assert authority is not None
+    host = _split_host(authority["host"])
+    port_text = authority["port"]
+    port = None
+    if port_text:
+        try:
+            port = int(port_text)
+        except ValueError:
+            raise ValueError(f"Invalid port: {port_text!r}") from None
+        if port == _DEFAULT_PORTS.get(typed_scheme):
+            port = None
+    has_authority = bool(authority["userinfo"] or host) or port is not None
+    if not (typed_scheme or has_authority) and match["path"].startswith(("//", ":")):
+        start = "//" if match["path"].startswith("//") else ":"
+        raise ValueError(f"Relative URLs cannot have a path starting with {start!r}")
+    return typed_scheme.lower(), host, port
+
+
+def _split_host(host: str) -> str:
+    if not host:
+        return ""
+    if _IPV4_STYLE.fullmatch(host):
+        try:
+            ipaddress.IPv4Address(host)
+        except ValueError:
+            raise ValueError(f"Invalid IPv4 address: {host!r}") from None
+        return host
+    if host.startswith("[") and host.endswith("]"):
+        try:
+            ipaddress.IPv6Address(host[1:-1])
+        except ValueError:
+            raise ValueError(f"Invalid IPv6 address: {host!r}") from None
+        return host[1:-1]
+    if host.isascii():
+        # Not IDNA-checked: a_b.com, -a.com and *example.com are all accepted
+        return re.sub(r"[ <>\[\]^]", lambda c: f"%{ord(c[0]):02X}", host.lower())
+    # The stdlib codec would turn *münchen.de into xn--*mnchen-o2a.de, a NO_PROXY
+    # pattern that matches nothing, so hosts meant to go direct would be proxied
+    if "*" in host:
+        raise ValueError(f"Invalid IDNA hostname: {host!r}")
+    try:
+        encoded = host.lower().encode("idna").decode("ascii")
+    except UnicodeError:
+        encoded = ""
+    # The stdlib codec (IDNA 2003) maps and passes characters such as "+", "_" and
+    # spaces that an internationalized name can't hold, and hyphens at a label's ends
+    names = host.removesuffix(".").split(".")
+    labels = encoded.removesuffix(".").split(".")
+    if any(name.startswith("-") or name.endswith("-") for name in names) or not all(
+        re.fullmatch(r"[a-z0-9-]+", label) for label in labels
+    ):
+        raise ValueError(f"Invalid IDNA hostname: {host!r}")
+    return encoded
+
+
 @dataclass(frozen=True)
 class _URLPattern:
-    """Mirrors httpx._utils.URLPattern, which orders and matches proxy mounts."""
+    """A proxy mount pattern (``all://*.example.com``), ordered and matched by the
+    rules 0.5 and earlier used."""
 
     scheme: str
     host_regex: re.Pattern[str] | None
@@ -316,11 +400,9 @@ class _URLPattern:
 
     @classmethod
     def parse(cls, pattern: str) -> _URLPattern:
-        import httpx
-
-        url = httpx.URL(pattern)
-        scheme = "" if url.scheme == "all" else url.scheme
-        host = "" if url.host == "*" else url.host
+        scheme, host, port = _split_url(pattern)
+        scheme = "" if scheme == "all" else scheme
+        host = "" if host == "*" else host
         if not host:
             regex = None
         elif host.startswith("*."):
@@ -329,35 +411,34 @@ class _URLPattern:
             regex = re.compile(rf"^(.+\.)?{re.escape(host[1:])}$")
         else:
             regex = re.compile(rf"^{re.escape(host)}$")
-        priority = (0 if url.port is not None else 1, -len(host), -len(scheme))
-        return cls(scheme, regex, url.port, priority)
+        priority = (0 if port is not None else 1, -len(host), -len(scheme))
+        return cls(scheme, regex, port, priority)
 
-    def matches(self, url: httpx.URL) -> bool:
+    def matches(self, url: tuple[str, str, int | None]) -> bool:
+        scheme, host, port = url
         return (
-            (not self.scheme or self.scheme == url.scheme)
-            and (self.host_regex is None or bool(self.host_regex.match(url.host)))
-            and (self.port is None or self.port == url.port)
+            (not self.scheme or self.scheme == scheme)
+            and (self.host_regex is None or bool(self.host_regex.match(host)))
+            and (self.port is None or self.port == port)
         )
 
 
 def env_proxy_for(url: str) -> str | None:
-    """The proxy httpx would use for ``url`` from the environment, or None to go direct.
+    """The proxy the environment gives ``url``, or None to go direct.
 
-    A URL httpx can't parse gets None: no request goes anywhere for it.
+    A URL _split_url refuses gets None: no request goes anywhere for it.
     """
-    import httpx
-
     try:
-        target = httpx.URL(url)
-    except (httpx.InvalidURL, UnicodeError, ValueError):
+        target = _split_url(url)
+    except ValueError:
         return None
     mounts = []
     for key, proxy in _env_proxy_mounts().items():
         try:
             mounts.append((_URLPattern.parse(key), proxy))
-        except (httpx.InvalidURL, UnicodeError, ValueError):
-            continue  # httpx itself refuses to build a client for it
-    # Stable, like httpx's sort, so equal priorities keep the environment's order
+        except ValueError:
+            continue  # check_proxy_support refuses the run before it gets here
+    # A stable sort, so equal priorities keep the environment's order
     for pattern, proxy in sorted(mounts, key=lambda mount: mount[0].priority):
         if pattern.matches(target):
             return proxy
@@ -426,8 +507,6 @@ def check_proxy_support(proxy: str | None) -> None:
     if proxy is not None:
         validate_proxy(proxy)
         return
-    import httpx
-
     for value in filter(None, _env_proxy_mounts().values()):
         # httpx parses these itself, so they aren't encoded for it (see
         # encode_proxy_userinfo); stricter than httpx, which would misroute them
@@ -437,8 +516,8 @@ def check_proxy_support(proxy: str | None) -> None:
                 f"(%2F, %3F, %23), got {redact_url(value)!r}"
             )
         try:
-            scheme = httpx.URL(value).scheme
-        except httpx.InvalidURL as exc:
+            scheme = _split_url(value)[0]
+        except ValueError as exc:
             raise ValueError(f"{_ENV_PROXY_PREFIX}{exc}") from None
         if scheme not in PROXY_SCHEMES:
             raise ValueError(f"{_ENV_PROXY_PREFIX}unknown scheme in {redact_url(value)!r}")
@@ -447,7 +526,7 @@ def check_proxy_support(proxy: str | None) -> None:
     for pattern in _env_proxy_mounts():
         try:
             _URLPattern.parse(pattern)
-        except (httpx.InvalidURL, UnicodeError, ValueError) as exc:
+        except ValueError as exc:
             host = pattern.removeprefix("all://").removeprefix("*")
             raise ValueError(f"NO_PROXY in the environment: bad entry {host!r} ({exc})") from None
 
@@ -783,15 +862,12 @@ class CurlCffiFetcher:
         return session
 
     async def fetch(self, request: Request) -> Response:
-        import httpx
-
         assert self._entered, "use CurlCffiFetcher as an async context manager"
         profile = request.identity.impersonate or self._impersonate
         try:
-            # httpx's rule, so both fetchers refuse the same URLs; curl_cffi would
-            # percent-encode control characters and send them
-            scheme = httpx.URL(request.url).scheme
-        except (httpx.InvalidURL, UnicodeError, ValueError) as exc:
+            # curl_cffi would percent-encode control characters and send them
+            scheme = _split_url(request.url)[0]
+        except ValueError as exc:
             raise FetchInvalidURL(f"{request.url!r}: {exc}") from exc
         if scheme not in ("http", "https"):
             # libcurl would read file:// and open dict://, ftp:// and the rest;

@@ -34,6 +34,7 @@ from shopify_spy._fetch import (
     Response,
     Seq,
     _is_cert_error,
+    _split_url,
     ca_locations,
     check_proxy_support,
     decompress,
@@ -356,33 +357,136 @@ def test_uses_proxy_from_environment(clean_proxy_env, env, url, expected):
     assert uses_proxy(url, None) is expected
 
 
+# Recorded from httpx 0.28.1 before it was removed; regenerating needs it reinstalled.
+URL_PARTS_CASES = [
+    ("https://shop.test/bad\x7fpath", None),
+    ("https://shop.test/\x00", None),
+    ("https://shop.test/?q=\x01", None),
+    ("https://shop.test/#\x7f", None),
+    ("https://exa\x7fmple.com/", None),
+    ("http://\xad.com/", None),
+    ("https://shop.test/a b", ("https", "shop.test", None)),
+    ("https://Shop.Test:443/x", ("https", "shop.test", None)),
+    ("HTTPS://Shop.Test:443/x", ("https", "shop.test", 443)),
+    ("HTTP://a:80/", ("http", "a", 80)),
+    ("hTTp://a:80/", ("http", "a", 80)),
+    ("http://a:80/", ("http", "a", None)),
+    ("http://a:+80/", ("http", "a", None)),
+    ("http://h: 8080", ("http", "h", 8080)),
+    ("http://h:8080 ", ("http", "h", 8080)),
+    ("http://a:-1/", ("http", "a", -1)),
+    ("http://a:1_000/", ("http", "a", 1000)),
+    ("http://a:\u0663/", ("http", "a", 3)),
+    ("http://a: /", None),
+    (" http://a/", ("", "", None)),
+    ("\xa0http://a/", ("", "", None)),
+    ("ht tp://a/", ("", "", None)),
+    ("http://a:8080/", ("http", "a", 8080)),
+    ("http://a:99999/", ("http", "a", 99999)),
+    ("http://a:x/", None),
+    ("http://h:notaport", None),
+    ("http://[::1]:80/", ("http", "::1", None)),
+    ("http://[::1/", None),
+    ("all://[::1", None),
+    ("http://[zz]/", None),
+    ("http://999.1.1.1/", None),
+    ("http://münchen.de/", ("http", "xn--mnchen-3ya.de", None)),
+    ("http://xn--mnchen-3ya.de/", ("http", "xn--mnchen-3ya.de", None)),
+    ("http://MÜNCHEN.de/", ("http", "xn--mnchen-3ya.de", None)),
+    ("all://*münchen.de", None),
+    ("all://*.münchen.de", None),
+    ("http://a_b.com/", ("http", "a_b.com", None)),
+    ("http://-a.com/", ("http", "-a.com", None)),
+    ("http://a..b/", ("http", "a..b", None)),
+    ("http://127.1/", ("http", "127.1", None)),
+    ("http://u:p@h/", ("http", "h", None)),
+    ("http://u@p@h:81/", ("http", "h", 81)),
+    ("file:///etc/x", ("file", "", None)),
+    ("dict://h:1/", ("dict", "h", 1)),
+    ("h:8080", ("h", "", None)),
+    ("http://", ("http", "", None)),
+    ("http://:8080", ("http", "", 8080)),
+    ("http://a.com:/", ("http", "a.com", None)),
+    ("all://*example.com", ("all", "*example.com", None)),
+    ("all://*.a.com", ("all", "*.a.com", None)),
+    ("all://10.0.0.0/8", ("all", "10.0.0.0", None)),
+    ("::x", None),
+    ("//h:81/x", ("", "h", 81)),
+    ("a" * 65537, None),
+    ("http://a b.com/", ("http", "a%20b.com", None)),
+    ("http://a^b/", ("http", "a%5Eb", None)),
+    ("http://[::FFFF:1]/", ("http", "::FFFF:1", None)),
+]
+
+URL_PARTS_IDS = [ascii(url)[:40] for url, _ in URL_PARTS_CASES]
+
 GW = "http://gw:8080"
 ENV_PROXY_CASES = [
-    ({}, "https://example.com"),
-    ({"HTTPS_PROXY": GW, "NO_PROXY": ".example.com"}, "https://example.com"),
-    ({"HTTPS_PROXY": GW, "NO_PROXY": ".example.com"}, "https://www.example.com"),
-    ({"HTTPS_PROXY": GW, "NO_PROXY": "example.com"}, "https://www.example.com"),
-    ({"HTTPS_PROXY": GW, "NO_PROXY": "example.com"}, "https://wwwexample.com"),
-    ({"HTTPS_PROXY": GW, "NO_PROXY": "EXAMPLE.com"}, "https://example.com"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "127.0.0.1"}, "http://127.0.0.1:8000/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "127.0.0.1"}, "http://127.0.0.2/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "10.0.0.0/8"}, "http://10.0.0.0/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "::1"}, "http://[::1]:8000/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "localhost"}, "http://localhost:8000/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "localhost"}, "http://www.localhost/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "example.com:8080"}, "http://example.com:8080/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "example.com:8080"}, "http://example.com/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "http://example.com"}, "http://example.com/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "http://example.com"}, "https://example.com/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": "other.com, *"}, "http://example.com/"),
-    ({"HTTP_PROXY": GW, "NO_PROXY": " , example.com"}, "http://example.com/"),
-    ({"HTTPS_PROXY": GW}, "http://example.com/"),
-    ({"HTTPS_PROXY": GW}, "https://example.com/"),
-    ({"HTTP_PROXY": "gw:3128"}, "http://example.com/"),
-    ({"ALL_PROXY": "socks5://gw:1080"}, "http://example.com/"),
-    ({"ALL_PROXY": "socks5://gw:1080", "HTTPS_PROXY": GW}, "https://example.com/"),
-    ({"ALL_PROXY": "socks5://gw:1080", "HTTPS_PROXY": GW}, "http://example.com/"),
+    ({}, "https://example.com", None),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": ".example.com"}, "https://example.com", GW),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": ".example.com"}, "https://www.example.com", None),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": "example.com"}, "https://www.example.com", None),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": "example.com"}, "https://wwwexample.com", GW),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": "EXAMPLE.com"}, "https://example.com", None),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "127.0.0.1"}, "http://127.0.0.1:8000/", None),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "127.0.0.1"}, "http://127.0.0.2/", GW),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "10.0.0.0/8"}, "http://10.0.0.0/", None),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "::1"}, "http://[::1]:8000/", None),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "localhost"}, "http://localhost:8000/", None),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "localhost"}, "http://www.localhost/", GW),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "example.com:8080"}, "http://example.com:8080/", None),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "example.com:8080"}, "http://example.com/", GW),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "http://example.com"}, "http://example.com/", None),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "http://example.com"}, "https://example.com/", None),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "other.com, *"}, "http://example.com/", None),
+    ({"HTTP_PROXY": GW, "NO_PROXY": " , example.com"}, "http://example.com/", None),
+    ({"HTTPS_PROXY": GW}, "http://example.com/", None),
+    ({"HTTPS_PROXY": GW}, "https://example.com/", GW),
+    ({"HTTP_PROXY": "gw:3128"}, "http://example.com/", "http://gw:3128"),
+    ({"ALL_PROXY": "socks5://gw:1080"}, "http://example.com/", "socks5://gw:1080"),
+    ({"ALL_PROXY": "socks5://gw:1080", "HTTPS_PROXY": GW}, "https://example.com/", GW),
+    (
+        {"ALL_PROXY": "socks5://gw:1080", "HTTPS_PROXY": GW},
+        "http://example.com/",
+        "socks5://gw:1080",
+    ),
 ]
+
+ENV_CASES = [
+    ({"HTTPS_PROXY": "socks5://h:1080"}, False),
+    ({"ALL_PROXY": "socks5://h:1080", "NO_PROXY": "*"}, False),
+    ({"HTTPS_PROXY": "socks5://h:1080", "NO_PROXY": "*"}, False),
+    ({"HTTPS_PROXY": "socks5://h:1080", "NO_PROXY": "example.com, *"}, False),
+    ({"HTTP_PROXY": "http://"}, False),
+    ({"HTTP_PROXY": "http://:8080"}, False),
+    ({"HTTPS_PROXY": "h:8080"}, False),
+    ({"HTTPS_PROXY": "http://h:notaport"}, True),
+    ({"HTTPS_PROXY": "socks4://h:1"}, True),
+    ({"HTTPS_PROXY": "http://h:99999"}, False),
+    ({"ALL_PROXY": "socks5h://h:1080"}, False),
+    ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "[::1"}, True),
+    ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "::1, 10.0.0.0/8, .example.com"}, False),
+    ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "münchen.de"}, True),
+]
+
+
+@pytest.mark.parametrize(("url", "expected"), URL_PARTS_CASES, ids=URL_PARTS_IDS)
+def test_split_url_matches_recorded(url, expected):
+    if expected is None:
+        with pytest.raises(ValueError):
+            _split_url(url)
+    else:
+        assert _split_url(url) == expected
+
+
+@pytest.mark.parametrize(("url", "expected"), URL_PARTS_CASES, ids=URL_PARTS_IDS)
+def test_url_parts_match_httpx(url, expected):
+    if expected is None:
+        with pytest.raises(httpx.InvalidURL):
+            httpx.URL(url)
+    else:
+        u = httpx.URL(url)
+        assert (u.scheme, u.raw_host.decode("ascii"), u.port) == expected
 
 
 def _httpx_env_proxy(url: str) -> str | None:
@@ -394,12 +498,20 @@ def _httpx_env_proxy(url: str) -> str | None:
     return next((proxy for pattern, proxy in mounts if pattern.matches(target)), None)
 
 
-@pytest.mark.parametrize(
-    ("env", "url"),
-    ENV_PROXY_CASES,
-    ids=[",".join([*(f"{k}={v}" for k, v in env.items()), url]) for env, url in ENV_PROXY_CASES],
-)
-def test_env_proxy_for_matches_httpx(clean_proxy_env, env, url):
+ENV_PROXY_IDS = [
+    ",".join([*(f"{k}={v}" for k, v in env.items()), url]) for env, url, _ in ENV_PROXY_CASES
+]
+
+
+@pytest.mark.parametrize(("env", "url", "expected"), ENV_PROXY_CASES, ids=ENV_PROXY_IDS)
+def test_env_proxy_for_matches_recorded(clean_proxy_env, env, url, expected):
+    for name, value in env.items():
+        clean_proxy_env.setenv(name, value)
+    assert env_proxy_for(url) == expected
+
+
+@pytest.mark.parametrize(("env", "url", "expected"), ENV_PROXY_CASES, ids=ENV_PROXY_IDS)
+def test_env_proxy_for_matches_httpx(clean_proxy_env, env, url, expected):
     for name, value in env.items():
         clean_proxy_env.setenv(name, value)
     assert env_proxy_for(url) == _httpx_env_proxy(url)
@@ -624,27 +736,22 @@ def test_explicit_proxy_skips_the_environment(clean_proxy_env):
     check_proxy_support("http://h:1")
 
 
-ENV_CASES = [
-    {"HTTPS_PROXY": "socks5://h:1080"},
-    {"ALL_PROXY": "socks5://h:1080", "NO_PROXY": "*"},
-    {"HTTPS_PROXY": "socks5://h:1080", "NO_PROXY": "*"},
-    {"HTTPS_PROXY": "socks5://h:1080", "NO_PROXY": "example.com, *"},
-    {"HTTP_PROXY": "http://"},
-    {"HTTP_PROXY": "http://:8080"},
-    {"HTTPS_PROXY": "h:8080"},
-    {"HTTPS_PROXY": "http://h:notaport"},
-    {"HTTPS_PROXY": "socks4://h:1"},
-    {"HTTPS_PROXY": "http://h:99999"},
-    {"ALL_PROXY": "socks5h://h:1080"},
-    {"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "[::1"},
-    {"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "::1, 10.0.0.0/8, .example.com"},
-]
+ENV_IDS = [",".join(f"{k}={v}" for k, v in env.items()) for env, _ in ENV_CASES]
 
 
-@pytest.mark.parametrize(
-    "env", ENV_CASES, ids=lambda env: ",".join(f"{k}={v}" for k, v in env.items())
-)
-async def test_environment_check_matches_httpx(clean_proxy_env, env):
+@pytest.mark.parametrize(("env", "raises"), ENV_CASES, ids=ENV_IDS)
+def test_environment_check_matches_recorded(clean_proxy_env, env, raises):
+    for name, value in env.items():
+        clean_proxy_env.setenv(name, value)
+    if raises:
+        with pytest.raises(ValueError):
+            check_proxy_support(None)
+    else:
+        check_proxy_support(None)
+
+
+@pytest.mark.parametrize(("env", "raises"), ENV_CASES, ids=ENV_IDS)
+async def test_environment_check_matches_httpx(clean_proxy_env, env, raises):
     """check_proxy_support mirrors httpx's env handling; this pins it to the installed httpx."""
     for name, value in env.items():
         clean_proxy_env.setenv(name, value)
