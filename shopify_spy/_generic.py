@@ -89,16 +89,9 @@ async def read_pages(
             raise JsonLdError(f"no sitemap found at {', '.join(listing.tried)}")
         return False  # diagnose() reports the sitemaps' 404, 403 or robots.txt
     if pages.counts.checked == 0:
-        if listing.unread:
-            # diagnose() would call it empty: the sitemap index's 2xx is a success
+        if (reason := listing.no_page_reason(product_shape)) is not None:
             await pages.probe_others()
-            raise JsonLdError(f"no page listed; unreadable sitemaps: {', '.join(listing.unread)}")
-        if listing.filtered:
-            await pages.probe_others()
-            raise JsonLdError(
-                f"no product page ({product_shape}) among the {listing.filtered} pages "
-                f"listed ({', '.join(listing.roots)})"
-            )
+            raise JsonLdError(reason)
         return listing.complete  # no on-site page listed: empty
     await pages.probe_others()
     raise JsonLdError(f"{pages.reason()}; {pages.stopped_by()}")
@@ -151,6 +144,23 @@ class _Listing:
         self.complete = False
         self._dropped = 0
         self.unread: list[str] = []  # chosen sitemaps that couldn't be read
+
+    def no_page_reason(self, product_shape: str | None) -> str | None:
+        """Why the sitemaps that answered gave no page to read, once drained: some
+        couldn't be read, or ``keep`` turned every page down; None if neither (the
+        store is empty).
+
+        Callers raise it rather than return False, which diagnose() would report
+        as empty: the sitemap's 2xx is a success.
+        """
+        if self.unread:
+            return f"no page listed; unreadable sitemaps: {', '.join(self.unread)}"
+        if self.filtered:
+            return (
+                f"no product page ({product_shape}) among the {self.filtered} pages "
+                f"listed ({', '.join(self.roots)})"
+            )
+        return None
 
     def _on_site(self, url: str) -> bool:
         if _site(hostname(url)) in self.sites:
