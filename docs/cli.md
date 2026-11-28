@@ -138,7 +138,7 @@ throttle:
   target_concurrency: 1.0  # Target concurrent requests (higher = faster)
 ```
 
-`network.timeout`, `network.retries`, `output.images_subdir` and the `throttle` settings other than `enabled`, `min_delay` and `image_delay` (such as `jitter`) have no command-line option, so the config file is the only way to change them from the CLI. The library reads no config file; it takes the same settings as [options](library.md#options).
+`network.timeout`, `network.retries`, `output.images_subdir` and the `throttle` settings other than `enabled`, `min_delay` and `image_delay` (such as `jitter`) have no command-line option, so the config file is the only way to change them from the CLI. A key the file's section doesn't have, such as a misspelled `limt`, is an error that names it and the key it most resembles, and the CLI exits with status 1, as it does for a value of the wrong type. The library reads no config file; it takes the same settings as [options](library.md#options).
 
 ## Proxies
 

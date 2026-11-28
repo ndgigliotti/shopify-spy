@@ -1972,3 +1972,14 @@ def test_finish_reason_item_limit_needs_a_store_at_its_limit():
     # two stores with 3 items each and --limit 5 reported "item_limit"
     stores = [_store(3, "finished"), _store(3, "finished")]
     assert run_finish_reason(stores) == "finished"
+
+
+def test_unknown_config_key_exits_1_naming_it(cli, tmp_path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("scrape:\n  limt: 1\n")
+    run = cli({}, "--config", str(config_file), "https://shop.example.com")
+    assert run.exit_code == 1
+    err = strip_ansi(run.stderr)
+    assert "scrape.limt" in err and "did you mean 'limit'?" in err
+    assert "Traceback" not in err
+    assert not run.fetchers

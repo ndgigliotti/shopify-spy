@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 import platformdirs
 import typer
+from pydantic import ValidationError
 from rich.console import Console
 from rich.markup import escape
 from typer.core import MarkupMode, TyperCommand, TyperGroup
@@ -501,8 +502,11 @@ def scrape(
 ) -> None:
     """Scrape products and collections from Shopify, WooCommerce, Magento, BigCommerce
     and other stores."""
-    # Load config file (or defaults)
-    config = load_config(config_path)
+    try:
+        config = load_config(config_path)
+    except ValidationError as exc:
+        err_console.print(f"[red]Error: Invalid config file: {escape(str(exc))}[/red]")
+        raise typer.Exit(1) from None
 
     # Checked before the overrides so a bad --proxy is a clean error, not a
     # ValidationError traceback from Config()
