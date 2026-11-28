@@ -391,7 +391,9 @@ def test_woocommerce_failed_variation_listing(tmp_path, stores, scenario):
     """A refused or hanging variation listing leaves the store ok, with the listing's
     entries; a hang gives up before --bail."""
     url = stores(scenario)
-    statuses = _run(tmp_path, [url], "--platform", "woocommerce")
+    # Several requests to one host before the first item: at the default 1 s minimum
+    # they come close to the short e2e --bail on a slow runner
+    statuses = _run(tmp_path, [url], "--platform", "woocommerce", "--min-delay", "0")
     assert statuses[url] == "ok"
     [output] = tmp_path.rglob("*.jsonl")
     [item] = [json.loads(line) for line in output.read_text().splitlines()]
@@ -401,7 +403,9 @@ def test_woocommerce_failed_variation_listing(tmp_path, stores, scenario):
 def test_woocommerce_variation_rows_in_csv(tmp_path, stores):
     """The CLI's CSV gives each variation row its own price, SKU and stock."""
     url = stores("woo_variations_ok")
-    statuses = _run(tmp_path, [url], "--platform", "woocommerce", "--format", "csv")
+    statuses = _run(
+        tmp_path, [url], "--platform", "woocommerce", "--format", "csv", "--min-delay", "0"
+    )
     assert statuses[url] == "ok"
     [output] = tmp_path.rglob("*.csv")
     rows = list(csv.DictReader(output.open(newline="", encoding="utf-8")))
