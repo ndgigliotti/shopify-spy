@@ -27,7 +27,7 @@ from shopify_spy._utils import is_valid_url
 from shopify_spy.cli import app, apply_cli_overrides, get_urls
 
 from .conftest import runner, strip_ansi
-from .flow_support import magento_url
+from .flow_support import bc_token, bigcommerce_api, magento_url
 from .test_xlsx import read_rows
 
 DISALLOW_ALL = "User-agent: *\nDisallow: /\n"
@@ -227,6 +227,7 @@ def test_cli_scrape_help_platform_values():
     assert "shopify" in output
     assert "woocommerce" in output
     assert "magento" in output
+    assert "bigcommerce" in output
 
 
 def test_cli_scrape_help_new_flags():
@@ -300,6 +301,24 @@ def test_cli_init_lists_magento(tmp_path):
     config_file = tmp_path / "test-config.yaml"
     runner.invoke(app, ["init", str(config_file)])
     assert "# Platform: shopify, woocommerce, magento" in config_file.read_text()
+
+
+@pytest.mark.parametrize(
+    ("flag", "warning"),
+    [
+        ("--collections", "--collections has no effect with BigCommerce"),
+        ("--no-products", "--no-products has no effect with BigCommerce (BigCommerce always"),
+    ],
+)
+def test_cli_scrape_warns_shopify_only_flags_bigcommerce(flag, warning):
+    result = runner.invoke(app, ["scrape", "--platform", "bigcommerce", flag])
+    assert warning in strip_ansi(result.stderr)
+
+
+def test_cli_init_lists_bigcommerce(tmp_path):
+    config_file = tmp_path / "test-config.yaml"
+    runner.invoke(app, ["init", str(config_file)])
+    assert "# Platform: shopify, woocommerce, magento, bigcommerce" in config_file.read_text()
 
 
 def test_cli_scrape_no_warn_shopify_collections():
@@ -665,6 +684,31 @@ def test_limit_passed_to_magento(cli):
     assert run.exit_code == 0
     assert len(run.items()) == 3
     assert run.data_files()[0].name.startswith("magento_spider_")
+
+
+def test_limit_passed_to_bigcommerce(cli):
+    token = bc_token(cors=["https://store.com"])
+    edges = [{"node": {"entityId": i, "name": f"P{i}", "path": f"/p{i}/"}} for i in range(10)]
+    products = {"pageInfo": {"hasNextPage": False}, "edges": edges}
+    run = cli(
+        {
+            "https://store.com/": (200, f"<script>var graphQLToken = '{token}';</script>"),
+            ("POST", bigcommerce_api("https://store.com")): {
+                "data": {"site": {"products": products}}
+            },
+        },
+        "--platform",
+        "bigcommerce",
+        "--limit",
+        "3",
+        "https://store.com",
+    )
+
+    assert run.exit_code == 0
+    assert len(run.items()) == 3
+    assert run.data_files()[0].name.startswith("bigcommerce_spider_")
+    (log_file,) = run.log_dir.iterdir()
+    assert log_file.name.startswith("bigcommerce_spider_")
 
 
 def test_limit_passed_to_shopify(cli):

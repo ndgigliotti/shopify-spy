@@ -309,8 +309,8 @@ def _smaller_page_size(page: int, size: int, problem: str | None) -> int | None:
 
 
 async def _probe_others(ctx: StoreContext) -> None:
-    """Suggest another platform when a Magento run's store answers like Shopify or
-    WooCommerce (``/graphql`` is also WPGraphQL's default endpoint)."""
+    """Suggest another platform when a Magento or BigCommerce run's store answers like
+    Shopify or WooCommerce (``/graphql`` is also WPGraphQL's default endpoint)."""
     await ctx.probe_platform("/products.json", _looks_like_shopify, "shopify")
     if ctx.suggested_platform is None:
         await ctx.probe_platform("/wp-json/", _looks_like_woocommerce, "woocommerce")
