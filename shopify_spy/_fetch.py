@@ -792,20 +792,22 @@ class CurlCffiFetcher:
 
     def __init__(
         self,
-        impersonate: str = DEFAULT_IMPERSONATE,
+        impersonate: str | None = DEFAULT_IMPERSONATE,
         *,
         verify: bool = True,
         trust_env: bool = True,
         proxy: str | None = None,
     ) -> None:
         self._impersonate = impersonate
+        if impersonate is None:
+            self.capabilities = FetcherCapabilities()
         self._verify = verify
         self._trust_env = trust_env
         self._proxy = None if proxy is None else encode_proxy_userinfo(proxy)
         # One session per (profile, raw): a session's connections keep the TLS and
         # HTTP/2 settings of the profile that opened them, so profiles never share
         # one. Raw sessions read bodies libcurl can't decode; all open on first use
-        self._sessions: dict[tuple[str, bool], Any] = {}
+        self._sessions: dict[tuple[str | None, bool], Any] = {}
         self._curls: list[Any] = []
         self._ca_options: dict[Any, Any] = {}
         self._entered = False
@@ -829,8 +831,8 @@ class CurlCffiFetcher:
         self._curls = []
         self._entered = False
 
-    def _session(self, profile: str, raw: bool = False) -> Any:
-        from curl_cffi import AsyncCurl, CurlOpt
+    def _session(self, profile: str | None, raw: bool = False) -> Any:
+        from curl_cffi import AsyncCurl, CurlHttpVersion, CurlOpt
         from curl_cffi.requests import AsyncSession
         from curl_cffi.utils import CurlCffiWarning
 
@@ -844,10 +846,21 @@ class CurlCffiFetcher:
             warnings.simplefilter("ignore", CurlCffiWarning)
             acurl = AsyncCurl()
         self._curls.append(acurl)
+        plain: dict[str, Any] = {}
+        version: dict[Any, Any] = {}
+        if profile is None:
+            # A client default under the identity's headers. HTTP/1.1, as 0.5 and
+            # earlier used: over HTTP/2, even with curl's own settings
+            # (akamai="3:100;4:65536;2:0|1048510465|0|m,s,a,p") rather than the
+            # Chrome ones curl_cffi sends without a profile, Shopify stores answered
+            # 429 to a custom user agent that got 200 over HTTP/1.1 (2026-11-28)
+            plain = {"headers": {"Accept": "*/*"}}
+            version = {CurlOpt.HTTP_VERSION: CurlHttpVersion.V1_1}
         session = self._sessions[profile, raw] = AsyncSession(
             async_curl=acurl,
             max_clients=MAX_CURL_CLIENTS,
             impersonate=profile,
+            **plain,
             verify=self._verify,
             discard_cookies=True,  # the session is shared by every store in a run
             allow_redirects=False,
@@ -856,6 +869,7 @@ class CurlCffiFetcher:
             curl_options={
                 CurlOpt.NOPROXY: "",
                 **({CurlOpt.HTTP_CONTENT_DECODING: 0} if raw else {}),
+                **version,
                 **self._ca_options,
             },
         )
@@ -892,7 +906,12 @@ class CurlCffiFetcher:
             raise FetchTimeout(f"no complete response within {request.timeout}s") from exc
 
     async def _attempt(
-        self, profile: str, raw: bool, request: Request, route: dict[str, Any], proxy: str | None
+        self,
+        profile: str | None,
+        raw: bool,
+        request: Request,
+        route: dict[str, Any],
+        proxy: str | None,
     ) -> Response:
         from curl_cffi.curl import CURL_WRITEFUNC_ERROR
         from curl_cffi.requests.exceptions import RequestException
@@ -913,12 +932,17 @@ class CurlCffiFetcher:
             chunks.append(chunk)
             return len(chunk)
 
+        sent = dict(request.headers)
+        if profile is None:  # no profile brings a user agent or headers
+            sent = {**request.identity.headers, **sent}
+            if request.identity.user_agent:
+                sent["User-Agent"] = request.identity.user_agent
         start = loop.time()  # the loop clock excludes time the sync API is paused
         try:
             resp = await session.request(
                 request.method,
                 request.url,
-                headers=dict(request.headers) or None,
+                headers=sent or None,
                 data=request.body,
                 content_callback=on_chunk,
                 allow_redirects=False,
