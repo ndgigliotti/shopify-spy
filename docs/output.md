@@ -69,7 +69,7 @@ When a store's Store API is unavailable on its first page, Shopify Spy reads its
 - **Product groups:** a `ProductGroup` (Yoast's markup for a variable product) without offers of its own takes its price range from its variants' offers, and is in stock when any variant is.
 - **Cleanup:** relative image URLs are resolved against the page's URL, names and descriptions are unescaped until they stop changing (pages escape them, sometimes twice), names lose the site name an SEO plugin may append (`Hat - My Shop`), and a SKU that's really the product ID (WooCommerce's placeholder for a missing SKU) is set to `null`.
 - **Variations:** a variable product also gets `attributes` and `variations` from the page's variation form, each variation with its own `prices`, `sku` and `is_in_stock`, so the unified schema has a row per variation. WooCommerce embeds that form's data only for products with up to 30 variations (by default), so larger ones keep just the price range.
-- **Pages that don't work:** pages without schema.org `Product` data are skipped, as are deleted (404 or 410) pages. Other pages that fail to load mark the store `partial`.
+- **Pages that don't work:** pages without schema.org `Product` data for the page are skipped (the page's product is chosen as for [JSON-LD items](#json-ld-items), so a page of several products none of which names it isn't read), as are deleted (404 or 410) pages. Other pages that fail to load mark the store `partial`.
 - **XML:** keys that aren't valid element names (such as JSON-LD's `@type`) have their invalid characters replaced with `_`.
 
 ## Magento items

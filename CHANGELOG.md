@@ -56,7 +56,9 @@
   under a page's `mainEntity`. Images given as `{"@id": ...}` references or relative
   URLs are resolved, and names and descriptions escaped twice (`&amp;amp;`) are
   unescaped. Prices with a currency symbol or separators (`$19.99`, `1.234,56`) are
-  read.
+  read. A page's product is chosen as `jsonld` chooses it, so a page of several
+  products, none of which names the page, is now skipped rather than read as the
+  first.
 - Throttling is more conservative by default. A robots.txt `Crawl-delay` (for the
   `shopify-spy` group, else `*`) spaces that host's requests, capped at the
   throttle's `max_delay` and applied even with `--no-throttle`. Throttled page and

@@ -330,7 +330,9 @@ async def _product_pages(ctx: StoreContext, emit: Emit) -> bool:
                 failed = True
                 return
             text = response.text  # decoded on each access
-            product, post_id = jsonld.parse_product_page(text, response.url, groups=True)
+            product, post_id = jsonld.parse_product_page(
+                text, response.url, groups=True, fallback=False
+            )
             if product is None:
                 logger.info("No schema.org Product on %s", response.url)
                 return
