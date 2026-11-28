@@ -310,6 +310,16 @@ duckdb -c "select platform, store, count(*) as variants, min(price), max(price)
            group by all"
 ```
 
+To browse the output in a browser, DuckDB has a notebook UI (`duckdb -ui`, DuckDB 1.2.1 or later). Define a view over the files in a database file, then open the UI on it from the same directory:
+
+```bash
+duckdb products.duckdb -c "create or replace view variants as
+  select * from read_csv('output/data/*.csv', union_by_name=true)"
+duckdb products.duckdb -ui
+```
+
+The view reads the files each time a query runs, so re-running a cell picks up new runs, and items from a run still in progress: JSONL and CSV files are written item by item, while JSON, XML and Excel files are complete only when the run ends. The UI doesn't refresh by itself. Queries run on your machine, but the UI's page is downloaded from DuckDB's servers, so it needs an internet connection; signing in to MotherDuck is optional. If `duckdb -ui` says the `ui` extension isn't loaded, as with DuckDB builds that turn off automatic extension loading (nixpkgs'), run `duckdb products.duckdb -cmd "INSTALL ui; LOAD ui; CALL start_ui();"` instead.
+
 **With Python:**
 
 ```python
