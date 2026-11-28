@@ -1317,6 +1317,18 @@ async def test_post_503_is_retried():
     assert fetcher.count(f"{STORE}/graphql", "POST") == 2
 
 
+@pytest.mark.parametrize("status", [403, 429])
+async def test_post_refusal_switches_the_profile(status):
+    session, fetcher = make_session(
+        {("POST", f"{STORE}/graphql"): Seq([(status, ""), {"data": {}}])},
+        robots=False,
+        identity=IdentityPool(profiles=PROFILES),
+    )
+    assert (await post(session, f"{STORE}/graphql")).status == 200
+    assert profiles_sent(fetcher, "/graphql") == ["chrome", "safari"]
+    assert session.stats.identity_changes == 1
+
+
 async def test_kind_without_success_counts_responses_not_successes():
     session, _ = make_session({f"{STORE}/": (200, "<html>")}, robots=False)
     kind = RequestKind("homepage", dedupe=False, success=False)
