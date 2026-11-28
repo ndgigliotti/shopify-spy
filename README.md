@@ -118,10 +118,13 @@ An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an i
 | Squarespace | product pages from the sitemap, schema.org `Product` JSON-LD or microdata; with `--ignore-robots`, collection pages' `?format=json` | Squarespace's robots.txt disallows `?format=json`, so product pages are read by default, one request per product |
 | Generic | product pages from the sitemaps, schema.org `Product` JSON-LD or microdata | Best-effort fallback; one request per product |
 
+[Platforms](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.1/docs/platforms.md) compares what each one returns and where it stops.
+
 ## Documentation
 
 - [Installation](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.1/docs/install.md): uv, pipx, library installs, the `excel` extra, Nix
 - [Command line](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.1/docs/cli.md): `scrape` and `init` options, the config file, proxies
+- [Platforms](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.1/docs/platforms.md): how each platform is read, what it returns, its limits and when a store is partial
 - [Output](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.1/docs/output.md): files, item shapes, the unified schema, Excel, images, working with the output
 - [Use as a library](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.1/docs/library.md): the Python API, failures, options, schemas, async
 - [Troubleshooting](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.1/docs/troubleshooting.md): store statuses, exit codes, the status file, logs, rate limiting, large catalogs

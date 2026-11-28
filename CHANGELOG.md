@@ -4,6 +4,8 @@
 
 ### Added
 
+- A [Platforms](docs/platforms.md) page: how each platform is read, what it
+  returns, its limits and when a store is partial, with a comparison table.
 - `--rotate/--no-rotate` (`network.rotate`, `rotate=`) turns the identity switch
   after a refusal on or off (default on), and the status file's
   `identity_changes` and `StoreResult.identity_changes` count the switches per
