@@ -772,12 +772,21 @@ def test_impersonated_refusal_retried_with_the_next_profile(status):
     assert profiles == ["chrome", "safari"]
 
 
-def test_impersonated_forbidden_store_tries_every_profile():
+def test_impersonated_forbidden_store_switches_profile_once():
     fetcher = _CurlLike({f"{STORE}/robots.txt": (404, "")}, default_status=403)
     store = _status(fetcher, retries=3)
     assert store.status == "forbidden"
+    assert store.identity_changes == 1
     profiles = [r.identity.impersonate for r in fetcher.requests if r.url == bulk_url(1)]
-    assert profiles == ["chrome", "safari", "firefox", "chrome"]
+    assert profiles == ["chrome", "safari", "safari", "safari"]
+
+
+def test_identity_changes_reported():
+    fetcher = _CurlLike(
+        {f"{STORE}/robots.txt": (404, ""), bulk_url(1): Seq([(429, ""), products(2)])}
+    )
+    _, result, _ = scrape(fetcher)
+    assert result.stores[0].identity_changes == 1
 
 
 def test_each_store_starts_with_the_first_profile():

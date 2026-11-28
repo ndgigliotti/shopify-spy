@@ -440,7 +440,9 @@ def write_status(
     ``output_error`` says why the data file couldn't be written (None when it was), and
     ``items_written`` how many items the data file holds; it falls short of
     ``items_scraped`` when a write failed. ``products_from`` names the host a store's
-    products came from when its own /products.json was a 404 (None otherwise).
+    products came from when its own /products.json was a 404 (None otherwise), and
+    ``identity_changes`` how often the store switched browser profile (or user agent)
+    after a refusal.
     """
     entries = [
         {
@@ -449,6 +451,7 @@ def write_status(
             "status": s.status.label,
             "code": s.status.value,
             "products_from": s.products_from,
+            "identity_changes": s.identity_changes,
         }
         for s in stores
     ]
@@ -459,6 +462,7 @@ def write_status(
             "status": "invalid URL",
             "code": "invalid_url",
             "products_from": None,
+            "identity_changes": 0,
         }
         for u in skipped_urls or []
     ]

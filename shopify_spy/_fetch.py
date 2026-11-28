@@ -53,6 +53,11 @@ class Identity:
     # A curl_cffi browser profile, for transports that impersonate (CurlCffiFetcher)
     impersonate: str | None = None
 
+    @property
+    def name(self) -> str:
+        """The profile, else the user agent: what a refusal is remembered by."""
+        return self.impersonate or self.user_agent or ""
+
 
 @dataclass(frozen=True)
 class Request:

@@ -710,6 +710,7 @@ def test_status_file_lists_skipped_urls(cli):
         "status": "invalid URL",
         "code": "invalid_url",
         "products_from": None,
+        "identity_changes": 0,
     }
 
 
@@ -903,6 +904,7 @@ def test_multi_url_store_that_failed(cli):
         "status": "failed",
         "code": "error",
         "products_from": None,
+        "identity_changes": 0,
     }
 
 
@@ -937,6 +939,7 @@ def test_store_that_failed_after_scraping_items(cli):
         "status": "failed",
         "code": "error",
         "products_from": None,
+        "identity_changes": 0,
     }
     assert data["finish_reason"] == "crawler_failed"
 
@@ -1015,6 +1018,7 @@ def test_diagnose_items(cli):
         "status": "ok",
         "code": "ok",
         "products_from": None,
+        "identity_changes": 0,
     }
 
 
@@ -1408,6 +1412,7 @@ def test_status_file_written_on_success(cli):
             "status": "ok",
             "code": "ok",
             "products_from": None,
+            "identity_changes": 0,
         }
     ]
 

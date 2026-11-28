@@ -579,6 +579,55 @@ def test_identity_single_profile_cannot_rotate():
     assert pool.current.impersonate == "chrome"
 
 
+def test_identity_refused_after_a_swap_stops_swapping():
+    pool = IdentityPool(profiles=("chrome", "safari", "firefox"))
+    first = pool.current
+    pool.refused(first)  # the starting identity: not a trial
+    assert pool.rotate()
+    pool.refused(pool.current)
+    assert pool.stopped and not pool.rotates
+    assert not pool.rotate()
+    assert pool.current.impersonate == "safari"
+
+
+def test_identity_answered_after_a_swap_keeps_swapping():
+    pool = IdentityPool(profiles=("chrome", "safari", "firefox"))
+    pool.rotate()
+    pool.answered(pool.current)
+    pool.refused(pool.current)
+    assert pool.rotates
+
+
+def test_identity_old_identity_refused_after_a_swap_changes_nothing():
+    pool = IdentityPool(profiles=("chrome", "safari", "firefox"))
+    first = pool.current
+    pool.rotate()
+    pool.refused(first)  # a request still in flight with the old one
+    assert pool.rotates
+
+
+def test_identity_rotate_skips_excluded_profiles():
+    pool = IdentityPool(profiles=("chrome", "safari", "firefox"))
+    assert pool.rotate(exclude={"safari"})
+    assert pool.current.impersonate == "firefox"
+    pool.answered(pool.current)
+    assert not pool.rotate(exclude={"chrome", "safari"})
+    assert pool.current.impersonate == "firefox"
+
+
+def test_identity_rotate_skips_excluded_agents():
+    pool = IdentityPool(agents=["a", "b", "c"])
+    pool.current = Identity(user_agent="a")
+    assert pool.rotate(exclude={"b"})
+    assert pool.current.user_agent == "c"
+
+
+def test_identity_rotation_off():
+    pool = IdentityPool(profiles=("chrome", "safari"), rotation=False)
+    assert not pool.rotates
+    assert not pool.rotate()
+
+
 def test_identity_fixed_user_agent_with_profiles_is_refused():
     with pytest.raises(ValueError, match="user_agent"):
         IdentityPool(user_agent="fixed/1.0", profiles=("chrome", "safari"))

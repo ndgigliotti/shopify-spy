@@ -42,6 +42,8 @@ class _Store(http.server.BaseHTTPRequestHandler):
             return self._send(200)
         if self.scenario == "store_403":
             return self._send(403, b"<html>Forbidden</html>")
+        if self.scenario == "refuse_chrome" and "Chrome/" in self.agents[-1]:
+            return self._send(403, b"<html>Forbidden</html>")
         if path == "/products.json":
             query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             page = PRODUCTS if query.get("page") == ["1"] else []
@@ -110,3 +112,21 @@ def test_same_diagnosis_on_both_transports(store, tmp_path_factory, scenario, ex
     # Neither the summary hints nor the status file point at the option
     assert "impersonate" not in output.lower()
     assert "impersonate" not in json.dumps(entry).lower()
+
+
+def test_store_that_refuses_one_profile_is_served_by_the_next(store, tmp_path_factory):
+    url, agents = store("refuse_chrome")
+    _, entry, items = _scrape(tmp_path_factory.mktemp("browser"), url)
+    assert (entry["status"], entry["identity_changes"]) == ("ok", 1)
+    assert len(items) == len(PRODUCTS)
+    assert "Chrome/" in agents[0] and "Version/" in agents[1]
+
+
+@pytest.mark.parametrize("args", [[], ["--no-impersonate"]], ids=["curl_cffi", "httpx"])
+def test_store_that_refuses_every_identity_switches_once(store, tmp_path_factory, args):
+    url, agents = store("store_403")
+    _, entry, _ = _scrape(tmp_path_factory.mktemp("browser"), url, *args)
+    assert (entry["status"], entry["identity_changes"]) == ("403 Forbidden", 1)
+    # Every later request keeps the second identity, robots.txt's included
+    assert len(set(agents)) == 2
+    assert all(agent == agents[1] for agent in agents[1:])

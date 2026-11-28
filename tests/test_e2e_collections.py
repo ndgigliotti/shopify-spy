@@ -145,6 +145,7 @@ def test_capped_store_is_scraped_through_collections_then_the_sitemap(tmp_path, 
             "status": status["urls"][0]["status"],
             "code": "ok",
             "products_from": None,
+            "identity_changes": 0,
         }
     ]
     items = [

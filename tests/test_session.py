@@ -14,9 +14,10 @@ from shopify_spy._fetch import (
     FetchConnectionError,
     FetchTimeout,
     FetchTLSError,
+    Identity,
     Seq,
 )
-from shopify_spy._policy import IdentityPool, RetryPolicy, ThrottleSettings, now
+from shopify_spy._policy import DEFAULT_HEADERS, IdentityPool, RetryPolicy, ThrottleSettings, now
 from shopify_spy._results import StoreStatus, diagnose
 from shopify_spy._runner import _direct_resolver
 from shopify_spy._session import (
@@ -608,26 +609,147 @@ def profiles_sent(fetcher, needle=""):
 
 @pytest.mark.parametrize("status", [403, 429])
 @pytest.mark.parametrize("kind", [STORE_KIND, PROBE])
-async def test_refusal_switches_to_the_next_profile(status, kind):
+async def test_refusal_switches_to_the_next_profile(status, kind, caplog):
+    caplog.set_level("INFO", logger="shopify_spy")
     session, fetcher = make_session(
-        {f"{STORE}/p": Seq([(status, ""), (status, ""), (200, "ok")])},
+        {f"{STORE}/p": Seq([(status, ""), (200, "ok")])},
         robots=False,
         identity=IdentityPool(profiles=PROFILES),
     )
     assert (await get(session, f"{STORE}/p", kind=kind)).status == 200
-    assert profiles_sent(fetcher) == ["chrome", "safari", "firefox"]
+    assert profiles_sent(fetcher) == ["chrome", "safari"]
     assert {r.identity.user_agent for r in fetcher.requests} == {None}
+    assert session.stats.identity_changes == 1
+    assert "Switching browser profile for shop.test: chrome -> safari" in caplog.text
 
 
-async def test_profiles_wrap_around_after_the_last():
+@pytest.mark.parametrize("status", [403, 429])
+async def test_refused_again_after_a_switch_stops_switching(status):
     session, fetcher = make_session(
-        {f"{STORE}/p": Seq([(403, ""), (403, ""), (403, ""), (200, "ok")])},
+        {f"{STORE}/p": (status, ""), f"{STORE}/q": (status, "")},
         robots=False,
         retry=RetryPolicy(retries=3, backoff=False),
         identity=IdentityPool(profiles=PROFILES),
     )
+    assert (await get(session, f"{STORE}/p")).status == status
+    assert (await get(session, f"{STORE}/q")).status == status
+    # The switch spends a retry of the budget; it never adds one
+    assert profiles_sent(fetcher) == ["chrome"] + ["safari"] * 7
+    assert session.stats.identity_changes == 1
+    assert session.identity.stopped
+
+
+async def test_a_switched_profile_answered_normally_may_switch_again():
+    session, fetcher = make_session(
+        {f"{STORE}/p": Seq([(403, ""), (200, "ok")]), f"{STORE}/q": Seq([(403, ""), (200, "")])},
+        robots=False,
+        identity=IdentityPool(profiles=PROFILES),
+    )
+    await get(session, f"{STORE}/p")
+    await get(session, f"{STORE}/q")
+    assert profiles_sent(fetcher) == ["chrome", "safari", "safari", "firefox"]
+    assert session.stats.identity_changes == 2
+
+
+async def test_switch_skips_profiles_the_host_refused_this_run():
+    registry = HostRegistry(
+        concurrent_requests=16, throttle=ThrottleSettings(enabled=False), respect_robots_txt=False
+    )
+    other, fetcher = make_session(
+        {f"{STORE}/x": Seq([(403, ""), (200, "")])},
+        registry=registry,
+        identity=IdentityPool(profiles=("safari", "chrome", "firefox")),
+    )
+    await get(other, f"{STORE}/x")  # this host refuses safari
+    session, fetcher = make_session(
+        {f"{STORE}/p": Seq([(403, ""), (200, "ok")])},
+        registry=registry,
+        identity=IdentityPool(profiles=PROFILES),
+    )
+    await get(session, f"{STORE}/p")
+    assert profiles_sent(fetcher) == ["chrome", "firefox"]
+    assert registry.refused_identities(STORE) == {"safari", "chrome"}
+
+
+async def test_no_switch_when_the_host_refused_every_other_profile():
+    session, fetcher = make_session(
+        {f"{STORE}/p": Seq([(403, ""), (200, "ok")])},
+        robots=False,
+        identity=IdentityPool(profiles=PROFILES),
+    )
+    session.registry.refused_identities(STORE).update({"safari", "firefox"})
+    await get(session, f"{STORE}/p")
+    assert profiles_sent(fetcher) == ["chrome", "chrome"]
+    assert session.stats.identity_changes == 0
+
+
+async def test_refused_user_agents_are_remembered_per_host_too():
+    pool = IdentityPool(agents=["ua-1", "ua-2", "ua-3"])
+    pool.current = Identity(user_agent="ua-1", headers=dict(DEFAULT_HEADERS))
+    session, fetcher = make_session(
+        {f"{STORE}/p": Seq([(429, ""), (200, "ok")])}, robots=False, identity=pool
+    )
+    session.registry.refused_identities(STORE).add("ua-2")
+    await get(session, f"{STORE}/p")
+    assert [r.identity.user_agent for r in fetcher.requests] == ["ua-1", "ua-3"]
+
+
+async def test_switched_retry_waits_its_backoff():
+    sent = []
+
+    def route(request):
+        sent.append(now())
+        return (403, "") if len(sent) == 1 else (200, "ok")
+
+    session, fetcher = make_session(
+        {f"{STORE}/p": route},
+        robots=False,
+        retry=RetryPolicy(retries=2, base_delay=0.2),
+        identity=IdentityPool(profiles=PROFILES),
+    )
+    await get(session, f"{STORE}/p")
+    assert profiles_sent(fetcher) == ["chrome", "safari"]
+    assert sent[1] - sent[0] >= 0.1  # base_delay times a jitter of at least 0.5
+
+
+async def test_no_rotate_keeps_one_profile():
+    session, fetcher = make_session(
+        {f"{STORE}/p": Seq([(403, ""), (429, ""), (200, "ok")])},
+        robots=False,
+        identity=IdentityPool(profiles=PROFILES, rotation=False),
+    )
     assert (await get(session, f"{STORE}/p")).status == 200
-    assert profiles_sent(fetcher) == ["chrome", "safari", "firefox", "chrome"]
+    assert profiles_sent(fetcher) == ["chrome"] * 3
+    assert session.stats.identity_changes == 0
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        (403, "", {"cf-mitigated": "challenge"}),
+        (503, "<html><head><title>Just a moment...</title></head></html>"),
+        (429, "", {"CF-Mitigated": "Challenge"}),
+    ],
+)
+async def test_challenge_page_is_final_and_keeps_the_profile(response):
+    session, fetcher = make_session(
+        {f"{STORE}/p": Seq([response, (200, "ok")])},
+        robots=False,
+        identity=IdentityPool(profiles=PROFILES),
+    )
+    assert (await get(session, f"{STORE}/p")).status == response[0]
+    assert profiles_sent(fetcher) == ["chrome"]
+    assert session.registry.refused_identities(STORE) == set()
+
+
+async def test_401_is_final_and_keeps_the_profile():
+    session, fetcher = make_session(
+        {f"{STORE}/p": Seq([(401, ""), (200, "ok")])},
+        robots=False,
+        identity=IdentityPool(profiles=PROFILES),
+    )
+    assert (await get(session, f"{STORE}/p")).status == 401
+    assert profiles_sent(fetcher) == ["chrome"]
 
 
 async def test_503_keeps_the_profile():

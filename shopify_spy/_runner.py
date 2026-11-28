@@ -131,6 +131,7 @@ class StoreState:
             robots_disallowed=stats.robots_disallowed,
             rate_limited_requests=stats.rate_limits,
             images_failed=stats.images_failed,
+            identity_changes=stats.identity_changes,
             errors=list(self.errors),
             duration=duration,
             via_proxy=via_proxy,

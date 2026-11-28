@@ -32,6 +32,7 @@ from shopify_spy._fetch import (
     FetchInvalidURL,
     FetchTLSError,
     FetchTooLarge,
+    Identity,
     Request,
     Response,
 )
@@ -43,6 +44,7 @@ from shopify_spy._policy import (
     RetryPolicy,
     RobotsRules,
     ThrottleSettings,
+    is_challenge,
     now,
     parse_retry_after,
 )
@@ -156,9 +158,16 @@ class HostRegistry:
         self._slots: dict[str, HostSlot] = {}
         self._robots: SingleFlight[RobotsRules] = SingleFlight()
         self._crawl_delays: dict[str, float] = {}  # applied Crawl-delay by origin
+        # Identity names (profiles or user agents) each slot key refused this run, so
+        # no store swaps to one of them there (#67)
+        self._refused: dict[str, set[str]] = {}
         # None: hostnames aren't looked up (a proxy or custom transport resolves them)
         self.resolver = resolver
         self._resolved: SingleFlight[list[IPAddress]] = SingleFlight()
+
+    def refused_identities(self, url: str, key: str | None = None) -> set[str]:
+        """The identity names the URL's origin (or shared slot ``key``) refused."""
+        return self._refused.setdefault(origin(url) if key is None else key, set())
 
     def slot(self, url: str, key: str | None = None) -> HostSlot:
         """The URL's origin slot, or the shared slot ``key``, which sends one request
@@ -271,6 +280,7 @@ class StoreStats:
     transport_errors: Counter[str] = field(default_factory=Counter)
     tls_errors: int = 0
     images_failed: int = 0
+    identity_changes: int = 0  # browser profile or user agent swaps, any kind
 
 
 Emit = Callable[[dict[str, Any]], Awaitable[None]]
@@ -526,6 +536,32 @@ class StoreSession:
         await self._check_destination(url)
         return await self._allowed(url, kind)
 
+    def _note_identity(
+        self, url: str, kind: RequestKind, sent: Identity, status: int, challenge: bool
+    ) -> bool:
+        """Record what a response says about the identity it was sent with; return
+        whether to swap the store's identity before the retry."""
+        if status < 400 or status == 404:
+            self.identity.answered(sent)
+            return False
+        if not kind.rotate or challenge or status not in self.retry.rotate_on:
+            return False
+        self.registry.refused_identities(url, kind.slot).add(sent.name)
+        self.identity.refused(sent)
+        # A concurrent refusal of the same identity may have swapped it already
+        return self.identity.rotates and self.identity.current == sent
+
+    def _swap_identity(self, url: str, kind: RequestKind) -> None:
+        """Swap the store's identity for one the host hasn't refused this run. The
+        retry still waits its backoff and counts against the retries."""
+        before = self.identity.current
+        if not self.identity.rotate(self.registry.refused_identities(url, kind.slot)):
+            return
+        self.stats.identity_changes += 1
+        after = self.identity.current
+        what = "browser profile" if after.impersonate else "user agent"
+        logger.info("Switching %s for %s: %s -> %s", what, hostname(url), before.name, after.name)
+
     async def _fetch_with_retries(self, url: str, kind: RequestKind) -> Response | None:
         if not await self._cleared(url, kind):
             return None
@@ -572,30 +608,20 @@ class StoreSession:
                     )
                     retry_after = parse_retry_after(response.headers.get("retry-after"))
                     rate_limited = response.status in RATE_LIMIT_STATUSES
-                    # Whatever the transport rotates on, a 403 to such a kind is final
-                    refused = not kind.rotate and response.status == 403
+                    challenge = is_challenge(response)
+                    # Whatever the transport rotates on, a 403 to such a kind is final,
+                    # and no retry gets past a challenge page
+                    refused = challenge or (not kind.rotate and response.status == 403)
                     will_retry = not refused and self.retry.should_retry_status(
                         response.status, attempt
                     )
+                    swap = self._note_identity(url, kind, sent, response.status, challenge)
                     if self._ends_request(
                         url, slot, kind.image, attempt, retry_after, rate_limited, will_retry
                     ):
                         return response
-                    # A concurrent refusal of the same identity may have swapped it already
-                    if (
-                        kind.rotate
-                        and response.status in self.retry.rotate_on
-                        and self.identity.rotates
-                        and self.identity.current == sent
-                    ):
-                        self.identity.rotate()
-                        current = self.identity.current
-                        logger.debug(
-                            "Swapped %s after %d: %s",
-                            "browser profile" if current.impersonate else "user agent",
-                            response.status,
-                            current.impersonate or current.user_agent,
-                        )
+                    if swap:
+                        self._swap_identity(url, kind)
                     reason = str(response.status)
                 else:
                     assert error is not None

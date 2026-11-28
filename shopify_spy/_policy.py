@@ -8,12 +8,13 @@ import json
 import math
 import random
 import time
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from importlib import resources
 
 from protego import Protego
 
-from shopify_spy._fetch import FetcherCapabilities, Identity
+from shopify_spy._fetch import FetcherCapabilities, Identity, Response
 
 # Headers Scrapy sends by default; kept so servers see the same requests as before
 DEFAULT_HEADERS = {
@@ -29,6 +30,17 @@ RETRY_MAX_DELAY = 60.0  # longest wait before a retry; a longer Retry-After paus
 ROTATE_ON_STATUSES = frozenset({403, 429})
 # "Slow down" responses: they pause the host and raise its delay floor (HostSlot.pause)
 RATE_LIMIT_STATUSES = frozenset({429, 503})
+# Cloudflare marks its challenge responses with this header; older challenge pages
+# only have the interstitial's title
+_CHALLENGE_TITLE = b"<title>Just a moment...</title>"
+
+
+def is_challenge(response: Response) -> bool:
+    """Whether a response is a bot challenge page, which only a real browser that runs
+    its script can pass: no retry or identity change gets past it."""
+    if response.headers.get("cf-mitigated", "").strip().lower() == "challenge":
+        return True
+    return response.status in (403, 429, 503) and _CHALLENGE_TITLE in response.body[:65536]
 
 
 def now() -> float:
@@ -248,15 +260,23 @@ class IdentityPool:
     With ``profiles`` (an impersonating transport), the identity is the first
     profile, and each swap moves to the next, wrapping around; the profile brings
     its own user agent. Otherwise it is a random UA from ``agents``, swapped for
-    another at random. A fixed ``user_agent`` disables rotation and can't be
-    combined with ``profiles``.
+    another at random. A fixed ``user_agent`` or ``rotation=False`` keeps one
+    identity; a fixed ``user_agent`` can't be combined with ``profiles``.
+
+    A swap tests whether a refusal is specific to the identity (#62: Shopify
+    refusing one user agent). If the new identity is refused before it is answered
+    normally, the block isn't, and the store stops swapping.
     """
 
     user_agent: str | None = None
     agents: list[str] = field(default_factory=lambda: list(USER_AGENTS))
     profiles: tuple[str, ...] = ()
+    rotation: bool = True
     current: Identity = field(init=False)
+    stopped: bool = field(default=False, init=False)  # a swapped-to identity was refused
     _index: int = field(default=0, init=False, repr=False)
+    # The identity swapped to, until it is answered normally
+    _on_trial: Identity | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.profiles and self.user_agent is not None:
@@ -269,22 +289,46 @@ class IdentityPool:
 
     @property
     def rotates(self) -> bool:
+        if not self.rotation or self.stopped:
+            return False
         if self.profiles:
             return len(self.profiles) > 1
         return self.user_agent is None and len(self.agents) > 1
 
-    def rotate(self) -> None:
+    def answered(self, sent: Identity) -> None:
+        """``sent`` got a normal answer: a refusal it had escaped was about identity."""
+        if sent == self._on_trial:
+            self._on_trial = None
+
+    def refused(self, sent: Identity) -> None:
+        """``sent`` got a 403 or 429; refusing a swapped-to identity stops the swaps."""
+        if sent == self._on_trial:
+            self.stopped = True
+
+    def rotate(self, exclude: Collection[str] = ()) -> bool:
+        """Swap to an identity whose name isn't in ``exclude``; False if none is left."""
         if not self.rotates:
-            return
+            return False
         if self.profiles:
-            self._index = (self._index + 1) % len(self.profiles)
-            self.current = Identity(user_agent=None, impersonate=self.profiles[self._index])
-            return
-        previous = self.current.user_agent
-        ua = previous
-        while ua == previous:
-            ua = random.choice(self.agents)
-        self.current = Identity(user_agent=ua, headers=dict(DEFAULT_HEADERS))
+            n = len(self.profiles)
+            for step in range(1, n):
+                index = (self._index + step) % n
+                if self.profiles[index] not in exclude:
+                    self._index = index
+                    self.current = Identity(user_agent=None, impersonate=self.profiles[index])
+                    break
+            else:
+                return False
+        else:
+            previous = self.current.user_agent
+            choices = [a for a in self.agents if a != previous and a not in exclude]
+            if not choices:
+                return False
+            self.current = Identity(
+                user_agent=random.choice(choices), headers=dict(DEFAULT_HEADERS)
+            )
+        self._on_trial = self.current
+        return True
 
 
 class RobotsRules:
