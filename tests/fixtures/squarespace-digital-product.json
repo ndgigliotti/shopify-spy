@@ -1,0 +1,61 @@
+{
+  "id": "62a8fce12bf64c78d1fde5ac",
+  "title": "Greeting Card Pile Mockup (A2 Size)",
+  "urlId": "greeting-card-pile-mockup-a2-size",
+  "fullUrl": "/mockups/p/greeting-card-pile-mockup-a2-size",
+  "recordType": 11,
+  "addedOn": 1655241953128,
+  "updatedOn": 1787807749913,
+  "publishOn": 1655298731202,
+  "assetUrl": "https://images.squarespace-cdn.com/content/v1/610cca8e0c0f501c4e3dfcf4/1655242060963-RZ6X2TGPYK7PQFU1TSA5/Thank+You+So+Much-Edit.png",
+  "excerpt": "<p>Design, showcase, and sell with ease using our A2 Greeting Card Pile Mockup.</p>",
+  "body": null,
+  "productType": 2,
+  "priceMoney": {
+    "currency": "USD",
+    "value": "10.00"
+  },
+  "salePriceMoney": {
+    "currency": "USD",
+    "value": "0.00"
+  },
+  "onSale": false,
+  "variants": [],
+  "items": [
+    {
+      "assetUrl": "https://images.squarespace-cdn.com/content/v1/610cca8e0c0f501c4e3dfcf4/1655242060963-RZ6X2TGPYK7PQFU1TSA5/Thank+You+So+Much-Edit.png"
+    },
+    {
+      "assetUrl": "https://images.squarespace-cdn.com/content/v1/610cca8e0c0f501c4e3dfcf4/1655242018181-4BHTR1VE4X49JX21XURP/paper-and-stuff-a2-greeting-cards-copy-.jpeg"
+    }
+  ],
+  "structuredContent": {
+    "_type": "StoreItem",
+    "priceCents": 1000,
+    "salePriceCents": 0,
+    "priceMoney": {
+      "currency": "USD",
+      "value": "10.00"
+    },
+    "salePriceMoney": {
+      "currency": "USD",
+      "value": "0.00"
+    },
+    "onSale": false,
+    "productType": 2,
+    "customAddButtonText": "Add To Cart",
+    "useCustomAddButtonText": false,
+    "variants": [],
+    "variantOptionOrdering": [],
+    "isSubscribable": false,
+    "relatedCategoryIds": [
+      "62a8fd841b613f1cd1d606a7"
+    ],
+    "relatedProductsStrategy": "categories",
+    "fulfilledExternally": false,
+    "productAddOnsConfiguration": {
+      "productAddOns": []
+    },
+    "mightHavePaymentPlan": false
+  }
+}
