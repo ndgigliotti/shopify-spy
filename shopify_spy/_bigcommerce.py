@@ -447,7 +447,8 @@ class _Pager:
             more = _dig(data, "data", "site", "product", "variants")
             page = more.get("edges") if isinstance(more, dict) else None
             if not response.ok or not isinstance(page, list):
-                problem = _first_error(data) or f"HTTP {response.status}"
+                status = f"HTTP {response.status}" if not response.ok else None
+                problem = _first_error(data) or status or "no variants in the answer"
                 if _COMPLEXITY_ERROR.search(problem) and self.variant_first > 1:
                     self.variant_first //= 2
                     logger.info(

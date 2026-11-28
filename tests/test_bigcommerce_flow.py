@@ -678,8 +678,9 @@ def test_variants_query_too_complex_halves_its_page_size():
         (errors("Boom"), "Boom"),
         ((503, ""), "HTTP 503"),
         (variants_answer(250, 1, "v1"), "no new endCursor"),
+        ({"data": {"site": {"product": None}}}, "no variants in the answer"),
     ],
-    ids=["graphql_error", "503", "repeated_cursor"],
+    ids=["graphql_error", "503", "repeated_cursor", "null_product"],
 )
 def test_variants_failure_keeps_what_was_read(spec, reason, caplog):
     with caplog.at_level(logging.WARNING, logger="shopify_spy"):
