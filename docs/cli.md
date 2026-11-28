@@ -72,7 +72,7 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 - `--user-agent, -A TEXT`: send plain requests (through httpx, not as a browser) with exactly this User-Agent, never switched. Can't be combined with `--impersonate`. A blank value counts as unset.
 - `--proxy URL`: send every request through this proxy; see [Proxies](#proxies).
 - `--insecure`: don't verify TLS certificates. Otherwise they're checked against certifi's CA bundle, or against a CA of your own, such as a company proxy's: the file named by `SSL_CERT_FILE`, else `REQUESTS_CA_BUNDLE`, else `CURL_CA_BUNDLE`, and the directory named by `SSL_CERT_DIR` (hashed, as `openssl rehash` lays it out). Either one, or both together, replaces certifi's bundle rather than adding to it, so a file that should also trust public sites has to include their CAs. A file that can't be read, or a directory with no hashed certificate, stops the run before it starts, naming the variable. Both transports read these variables the same way during the run, for the store and for an `https://` proxy alike, so setting them after importing the library works.
-- `--ignore-robots, -i`: ignore robots.txt restrictions.
+- `--ignore-robots, -i`: ignore robots.txt restrictions. Otherwise robots.txt is matched against the `shopify-spy` token's group (else `*`), whatever User-Agent is sent; with a custom `--user-agent`, that User-Agent's group applies too, and the more restrictive of the two wins: a URL disallowed by either is skipped, and the longer `Crawl-delay` is used. See [For site owners](site-owners.md).
 
 ### Run control
 

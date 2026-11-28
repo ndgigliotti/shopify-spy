@@ -44,6 +44,9 @@
   default on a throttled store). Its hint names Shopify, WooCommerce or Magento when
   the store answers like one
   ([#93](https://github.com/ndgigliotti/shopify-spy/issues/93)).
+- A [For site owners](docs/site-owners.md) page: how a store can block Shopify Spy
+  or slow it down with robots.txt, what it does by default and the limits of that
+  ([#112](https://github.com/ndgigliotti/shopify-spy/issues/112)).
 - A `squarespace` platform (`--platform squarespace`, `platform="squarespace"`)
   for Squarespace Commerce stores. Squarespace's robots.txt disallows its
   `?format=json` URLs, so by default it reads the product pages the store's sitemap
@@ -61,6 +64,12 @@
 
 ### Changed
 
+- robots.txt is matched against the `shopify-spy` token's group (else `*`)
+  whatever user agent is sent, so a site's `User-agent: shopify-spy` rules now
+  apply with a custom `--user-agent` too. With one, that user agent's group also
+  applies, and the more restrictive wins: a URL disallowed by either is skipped,
+  and the longer `Crawl-delay` is used
+  ([#80](https://github.com/ndgigliotti/shopify-spy/issues/80)).
 - Requests go through curl_cffi with a current browser's TLS and HTTP/2 settings
   and headers by default, starting as `chrome`
   ([#95](https://github.com/ndgigliotti/shopify-spy/issues/95)). curl_cffi

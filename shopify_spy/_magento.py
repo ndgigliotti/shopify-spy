@@ -134,8 +134,8 @@ async def _note_query_disallowed(ctx: StoreContext, url: str) -> None:
     as ``Disallow: /*?`` does, for the store's hint."""
     session = ctx.session
     rules = await session.registry.robots(url, session)
-    agent = session.robots_agent
-    if not rules.allowed(url, agent) and rules.allowed(_endpoint(url), agent):
+    agents = session.robots_agents
+    if not rules.allowed(url, *agents) and rules.allowed(_endpoint(url), *agents):
         ctx.query_disallowed = True
 
 

@@ -27,6 +27,10 @@ BAIL = 4
 # a test about pacing passes throttle_floors=True to keep the real defaults
 NO_THROTTLE_FLOORS = ("--min-delay", "0", "--image-delay", "0")
 DISALLOW_ALL = b"User-agent: *\nDisallow: /\n"
+# The robots.txt examples in docs/site-owners.md (test_docs checks they're there)
+SITE_OWNER_BLOCK_ALL = "User-agent: shopify-spy\nDisallow: /\n"
+SITE_OWNER_BLOCK_PATH = "User-agent: shopify-spy\nDisallow: /products.json\n"
+SITE_OWNER_CRAWL_DELAY = "User-agent: shopify-spy\nCrawl-delay: {}\n"
 
 
 @pytest.fixture(params=["curl_cffi", "httpx"])
@@ -231,6 +235,27 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return self._send(200, json.dumps({"products": page}).encode())
         return self._send(404)
 
+    def _site_owner(self, path, count):
+        # A store whose robots.txt is one of docs/site-owners.md's examples, with its
+        # products at /products.json and, through the sitemap, /products/<handle>.json
+        if path == "/robots.txt":
+            return self._send(200, SITE_OWNER_ROBOTS[self.scenario].encode())
+        if path == "/products.json":
+            query = urllib.parse.urlsplit(self.path).query.split("&")
+            # A full page 1, so the adapter asks for page 2
+            page = [{"id": i, "handle": f"p{i}", "title": f"P{i}"} for i in range(250)]
+            return self._send(
+                200, json.dumps({"products": page if "page=1" in query else []}).encode()
+            )
+        if path == "/sitemap.xml":
+            ns = "http://www.sitemaps.org/schemas/sitemap/0.9"
+            loc = f"http://{self.headers['Host']}/products/p1"
+            body = f'<?xml version="1.0"?><urlset xmlns="{ns}"><url><loc>{loc}</loc></url></urlset>'
+            return self._send(200, body.encode(), {"Content-Type": "application/xml"})
+        if path == "/products/p1.json":
+            return self._send(200, json.dumps({"product": {"id": 1, "handle": "p1"}}).encode())
+        return self._send(404)
+
     def _forbidden_then_rate_limited(self, path, count):
         if path == "/robots.txt":
             return self._send(404)
@@ -258,7 +283,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         return self._send(404)
 
 
+SITE_OWNER_ROBOTS = {
+    "owner_block_all": SITE_OWNER_BLOCK_ALL,
+    "owner_block_path": SITE_OWNER_BLOCK_PATH,
+    "owner_crawl_delay": SITE_OWNER_CRAWL_DELAY.format(1.5),
+}
+
 SCENARIOS = {
+    **dict.fromkeys(SITE_OWNER_ROBOTS, _Handler._site_owner),
     "robots_disallow": _Handler._robots_disallow,
     "robots_redirect_disallow": _Handler._robots_redirect_disallow,
     "host_redirect_disallow": _Handler._host_redirect_disallow,
@@ -389,6 +421,41 @@ def test_min_delay_spaces_requests(tmp_path, stores, transport):
     arrivals = [t for _, t in stores.servers["spaced"].RequestHandlerClass.arrivals]
     assert len(arrivals) == 3  # robots.txt and two pages
     assert all(b - a >= 1.4 for a, b in zip(arrivals, arrivals[1:]))
+
+
+# docs/site-owners.md's examples, with the rotating browser profiles and with a custom
+# --user-agent: the shopify-spy group applies whatever user agent is sent
+
+
+def test_site_owner_block_all(tmp_path, stores, transport):
+    url = stores("owner_block_all")
+    assert _run(tmp_path, [url], *transport)[url] == "blocked by robots.txt"
+    hits = stores.servers["owner_block_all"].RequestHandlerClass.hits
+    assert set(hits) == {"/robots.txt"}
+    # Crossing the opt-out takes --ignore-robots. A fresh output directory, since _run
+    # reads whichever status file it globs first
+    ignored = tmp_path / "ignored"
+    ignored.mkdir()
+    assert _run(ignored, [url], "--ignore-robots", *transport)[url] == "ok"
+
+
+def test_site_owner_block_path(tmp_path, stores, transport):
+    url = stores("owner_block_path")
+    assert _run(tmp_path, [url], *transport)[url] == "ok"
+    hits = stores.servers["owner_block_path"].RequestHandlerClass.hits
+    assert "/products.json" not in hits
+    # The rest of the store is still read: the sitemap, one product per request
+    assert hits["/sitemap.xml"] == 1
+    assert hits["/products/p1.json"] == 1
+
+
+def test_site_owner_crawl_delay(tmp_path, stores, transport):
+    url = stores("owner_crawl_delay")
+    assert _run(tmp_path, [url], "--no-throttle", *transport)[url] == "ok"
+    arrivals = stores.servers["owner_crawl_delay"].RequestHandlerClass.arrivals
+    pages = [t for path, t in arrivals if path.startswith("/products.json")]
+    assert len(pages) == 2
+    assert pages[1] - pages[0] >= 1.4
 
 
 def test_woocommerce_single_request_robots_redirect(tmp_path, stores):

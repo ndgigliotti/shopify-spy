@@ -20,7 +20,8 @@ DEFAULT_HEADERS = {
     "Accept-Language": "en",
 }
 
-# Product token used to match robots.txt groups (falls back to "*")
+# Product token whose robots.txt group always applies, whatever user agent is sent
+# (falls back to "*"); a custom user agent's group applies too (#80)
 ROBOTS_TOKEN = "shopify-spy"
 
 RETRY_STATUSES = frozenset({500, 502, 503, 504, 522, 524, 408, 429, 403})
@@ -307,10 +308,11 @@ class RobotsRules:
     def __init__(self, text: str | None) -> None:
         self._parser = Protego.parse(text) if text else None
 
-    def allowed(self, url: str, agent: str) -> bool:
+    def allowed(self, url: str, *agents: str) -> bool:
+        """Whether every agent's group (each falling back to ``*``) allows the URL."""
         if self._parser is None:
             return True
-        return self._parser.can_fetch(url, agent)
+        return all(self._parser.can_fetch(url, agent) for agent in agents)
 
     @property
     def sitemaps(self) -> list[str]:
@@ -319,12 +321,11 @@ class RobotsRules:
             return []
         return list(self._parser.sitemaps)
 
-    def crawl_delay(self) -> float | None:
-        """Seconds the robots.txt group for ROBOTS_TOKEN (or ``*``) asks between
-        requests; None without a usable positive value."""
+    def crawl_delay(self, *agents: str) -> float | None:
+        """The longest gap between requests that the agents' groups (each falling back
+        to ``*``) ask for; None without a usable positive value."""
         if self._parser is None:
             return None
-        delay = self._parser.crawl_delay(ROBOTS_TOKEN)
-        if delay is None or not math.isfinite(delay) or delay <= 0:
-            return None
-        return float(delay)
+        delays = [self._parser.crawl_delay(agent) for agent in agents]
+        usable = [d for d in delays if d is not None and math.isfinite(d) and d > 0]
+        return float(max(usable)) if usable else None

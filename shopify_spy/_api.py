@@ -535,6 +535,10 @@ _SCRAPE_DOC = """
         respect_robots_txt: Obey robots.txt (default {respect_robots_txt}), including
             its Crawl-delay as a minimum gap between requests to that host, capped
             at ``throttle_max_delay`` and applied even with ``throttle=False``.
+            Rules are matched against the "shopify-spy" token's group (else ``*``)
+            whatever user agent is sent; with a ``user_agent``, that agent's group
+            applies too, and the more restrictive wins (disallowed by either, the
+            longer Crawl-delay).
         verify_tls: Verify TLS certificates (default {verify_tls}), against certifi's
             bundle, or instead the CA file in SSL_CERT_FILE, else REQUESTS_CA_BUNDLE,
             else CURL_CA_BUNDLE, and the directory in SSL_CERT_DIR, read at run time;
