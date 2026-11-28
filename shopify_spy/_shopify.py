@@ -605,26 +605,27 @@ async def _fetch_documents(
 
     async def fetch(url: str) -> None:
         nonlocal failed
+        # The slot is held until the item is handed off, so a paused consumer
+        # stops the fetching too
         try:
             response = await ctx.session.get(url)
+            if response is None:  # robots.txt, or a redirect target already fetched
+                return
+            data, missed = _listed_document(response, url)
+            if data is None:
+                if missed:
+                    failed += 1
+                return
+            data["url"] = response.url
+            data["store"] = urllib.parse.urlsplit(response.url).netloc
+            data["platform"] = "shopify"
+            data["image_urls"] = image_urls(data, ctx.images)
+            await emit(data)
         except RequestFailed as exc:
             logger.info("Request failed: %s", exc)
             failed += 1
-            return
         finally:
             limiter.release()
-        if response is None:  # robots.txt, or a redirect target already fetched
-            return
-        data, missed = _listed_document(response, url)
-        if data is None:
-            if missed:
-                failed += 1
-            return
-        data["url"] = response.url
-        data["store"] = urllib.parse.urlsplit(response.url).netloc
-        data["platform"] = "shopify"
-        data["image_urls"] = image_urls(data, ctx.images)
-        await emit(data)
 
     async with asyncio.TaskGroup() as tg:
         async for loc in locs:

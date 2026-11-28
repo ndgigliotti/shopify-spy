@@ -189,19 +189,28 @@ class Runner:
             self.shutdown.set()
 
     async def close(self) -> None:
-        """Cancel the run now; unfinished stores end as "closed"."""
-        if self._driver is None or self._driver.done():
+        """Cancel the run now; unfinished stores end as "closed".
+
+        Items still queued are dropped, even when the run had finished: nothing is
+        delivered after a close, and later reads just end. A queued runner bug is
+        kept, so an open iterator still raises it.
+        """
+        if self._driver is None:
             return
-        self._driver.cancel()
         try:
+            self._driver.cancel()  # a no-op once the driver is done
             await self._driver
         except asyncio.CancelledError:
             if asyncio.current_task() and asyncio.current_task().cancelling():
                 raise
         finally:
-            # Nothing is delivered after a close; later reads just end
+            failure = None
             while not self.queue.empty():
-                self.queue.get_nowait()
+                item = self.queue.get_nowait()
+                if isinstance(item, _Failure):
+                    failure = item
+            if failure is not None:
+                self.queue.put_nowait(failure)
             self.queue.put_nowait(DONE)
 
     def _stopped(self) -> str:

@@ -143,6 +143,17 @@
 
 ### Fixed
 
+- A consumer that stopped pulling items from a Shopify store read from its sitemap
+  no longer let every listed product be requested in the background: the product
+  fetches now wait for the item queue, as the WooCommerce and generic page readers
+  already did ([#126](https://github.com/ndgigliotti/shopify-spy/issues/126)).
+- `aclose()` on an async run whose stores had all finished left the items already
+  queued to be read; an iterator still open now ends after a close, as it did when
+  stores were still running ([#126](https://github.com/ndgigliotti/shopify-spy/issues/126)).
+- `await run.first()` on an async run another loop was already iterating raised
+  the single-iteration `RuntimeError` but also closed the run, so the first loop got
+  no more items; the run now keeps going
+  ([#126](https://github.com/ndgigliotti/shopify-spy/issues/126)).
 - A Shopify store read from its sitemap, where every listed product failed, was
   reported `empty` (a store with no products); it now ends `failed`, with how many
   listed products couldn't be read in `StoreResult.errors`.
