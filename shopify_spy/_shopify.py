@@ -608,12 +608,7 @@ async def _fetch_documents(
         # The slot is held until the item is handed off, so a paused consumer
         # stops the fetching too
         try:
-            try:
-                response = await ctx.session.get(url)
-            except RequestFailed as exc:
-                logger.info("Request failed: %s", exc)
-                failed += 1
-                return
+            response = await ctx.session.get(url)
             if response is None:  # robots.txt, or a redirect target already fetched
                 return
             data, missed = _listed_document(response, url)
@@ -626,6 +621,9 @@ async def _fetch_documents(
             data["platform"] = "shopify"
             data["image_urls"] = image_urls(data, ctx.images)
             await emit(data)
+        except RequestFailed as exc:
+            logger.info("Request failed: %s", exc)
+            failed += 1
         finally:
             limiter.release()
 
