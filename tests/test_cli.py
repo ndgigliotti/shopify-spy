@@ -774,6 +774,7 @@ def test_status_file_lists_skipped_urls(cli):
         "code": "invalid_url",
         "products_from": None,
         "identity_changes": 0,
+        "hint": None,
     }
 
 
@@ -1005,6 +1006,7 @@ def test_multi_url_store_that_failed(cli):
         "code": "error",
         "products_from": None,
         "identity_changes": 0,
+        "hint": None,
     }
 
 
@@ -1040,6 +1042,7 @@ def test_store_that_failed_after_scraping_items(cli):
         "code": "error",
         "products_from": None,
         "identity_changes": 0,
+        "hint": None,
     }
     assert data["finish_reason"] == "crawler_failed"
 
@@ -1119,6 +1122,7 @@ def test_diagnose_items(cli):
         "code": "ok",
         "products_from": None,
         "identity_changes": 0,
+        "hint": None,
     }
 
 
@@ -1513,6 +1517,7 @@ def test_status_file_written_on_success(cli):
             "code": "ok",
             "products_from": None,
             "identity_changes": 0,
+            "hint": None,
         }
     ]
 
@@ -1535,6 +1540,14 @@ def test_status_file_multi_url(cli):
     assert data["items_scraped"] == 10
     assert data["urls"][0]["status"] == "ok"
     assert data["urls"][1]["status"] == "403 Forbidden"
+
+
+def test_status_file_records_hint(cli):
+    routes = {"https://store.com/wp-json/": {"namespaces": ["wc/store/v1"]}}
+    run = cli(routes, "store.com")
+
+    [entry] = run.status()["urls"]
+    assert entry["hint"] == "looks like WooCommerce; pass platform='woocommerce'"
 
 
 def test_no_status_file_in_peek_mode(cli):
