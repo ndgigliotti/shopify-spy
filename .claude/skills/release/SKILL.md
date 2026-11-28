@@ -51,7 +51,7 @@ rebuild after tagging.
   bug), and install the previous release from PyPI into another. Then, still outside
   the repo:
   - `shopify-spy --version` prints X.Y.Z, and
-    `python -c "import shopify_spy as spy; print(spy.__version__)"` does too.
+    `python -c "import importlib.metadata as m; print(m.version('shopify-spy'))"` does too.
   - `python scripts/contract_test.py OLD/bin/shopify-spy NEW/bin/shopify-spy REPORT`
     (path to the script in the checkout) runs both CLIs against loopback stores. It
     exits 1 when the new CLI misses an expected outcome, or on a difference no
