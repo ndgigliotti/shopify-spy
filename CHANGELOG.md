@@ -158,6 +158,9 @@
   collections read, instead of `ok`.
 - A Shopify store read through its sitemap is now `partial` when a listed product
   failed (no response, or an error status other than 404 or 410), instead of `ok`.
+  A listed product's `.json` that answers 2xx without a product (no `product`
+  object with an `id`, such as `{"errors": ...}`) is no longer emitted as an item,
+  and counts as failed.
 
 ## 0.5.1
 

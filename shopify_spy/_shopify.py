@@ -610,8 +610,10 @@ async def _fetch_documents(
                 failed += 1
             return
         data = response.json_or_none()
-        if not isinstance(data, dict):
-            logger.warning("Non-JSON or unexpected response from %s", url)
+        if not _is_product_document(data):
+            # A 2xx can still be an error document ({"errors": ...}) or a page
+            logger.warning("No product in the response from %s", url)
+            failed += 1
             return
         data["url"] = response.url
         data["store"] = urllib.parse.urlsplit(response.url).netloc
@@ -631,6 +633,12 @@ async def _fetch_documents(
     if failed:
         logger.warning("%d listed products couldn't be read", failed)
     return failed
+
+
+def _is_product_document(data: Any) -> bool:
+    """Whether a /products/<handle>.json answer holds a product: ``{"product": {"id": ...}}``."""
+    product = data.get("product") if isinstance(data, dict) else None
+    return isinstance(product, dict) and product.get("id") is not None
 
 
 def _looks_like_woocommerce(data: Any) -> bool:

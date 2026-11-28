@@ -148,8 +148,8 @@ def test_sitemap_index_children_followed():
         bulk_url(1): (404, ""),
         SITEMAP: sitemapindex(child),
         child: urlset(f"{STORE}/products/a", f"{STORE}/products/b"),
-        f"{STORE}/products/a.json": {"product": {"handle": "a"}},
-        f"{STORE}/products/b.json": {"product": {"handle": "b"}},
+        f"{STORE}/products/a.json": {"product": {"id": 1, "handle": "a"}},
+        f"{STORE}/products/b.json": {"product": {"id": 1, "handle": "b"}},
     }
     items, _, _ = scrape(routes)
     assert sorted(i["product"]["handle"] for i in items) == ["a", "b"]
@@ -159,7 +159,7 @@ def test_non_2xx_product_json_dropped_silently():
     routes = {
         bulk_url(1): (404, ""),
         SITEMAP: urlset(f"{STORE}/products/a", f"{STORE}/products/gone"),
-        f"{STORE}/products/a.json": {"product": {"handle": "a"}},
+        f"{STORE}/products/a.json": {"product": {"id": 1, "handle": "a"}},
         f"{STORE}/products/gone.json": (410, "gone"),
     }
     items, result, _ = scrape(routes)
@@ -281,7 +281,7 @@ def test_partial_bulk_fetches_only_unseen_handles():
             f"{STORE}/products/p4?variant=1",  # query
             *(f"{STORE}/products/{h}" for h in unseen),
         ),
-        **{f"{STORE}/products/{h}.json": {"product": {"handle": h}} for h in unseen},
+        **{f"{STORE}/products/{h}.json": {"product": {"id": 1, "handle": h}} for h in unseen},
     }
     items, _, fetcher = scrape(routes)
     fetched = [u for u in requested(fetcher) if u.endswith(".json") and "/products/" in u]
@@ -322,8 +322,8 @@ def test_capped_bulk_pages_collections_then_sitemap(capped):
         collection_url("big", 2): products(50, 750),  # 50 new, then the end
         collection_url("small", 1): products(3, 800),
         SITEMAP: urlset(*(f"{STORE}/products/p{i}" for i in range(805))),
-        f"{STORE}/products/p803.json": {"product": {"handle": "p803"}},
-        f"{STORE}/products/p804.json": {"product": {"handle": "p804"}},
+        f"{STORE}/products/p803.json": {"product": {"id": 1, "handle": "p803"}},
+        f"{STORE}/products/p804.json": {"product": {"id": 1, "handle": "p804"}},
     }
     items, result, fetcher = scrape(routes)
     handles = [i["product"]["handle"] for i in items]
@@ -352,7 +352,10 @@ def test_few_missing_products_are_fetched_one_by_one_instead(capped):
     routes = {
         **capped,
         SITEMAP: urlset(*(f"{STORE}/products/p{i}" for i in range(752))),
-        **{f"{STORE}/products/p{i}.json": {"product": {"handle": f"p{i}"}} for i in (750, 751)},
+        **{
+            f"{STORE}/products/p{i}.json": {"product": {"id": 1, "handle": f"p{i}"}}
+            for i in (750, 751)
+        },
     }
     items, result, fetcher = scrape(routes)
     assert len(items) == 752
@@ -585,7 +588,7 @@ def test_max_items_per_store_sitemap_stops_exactly():
     routes = {
         bulk_url(1): (404, ""),
         SITEMAP: urlset(*(f"{STORE}/products/{h}" for h in handles)),
-        **{f"{STORE}/products/{h}.json": {"product": {"handle": h}} for h in handles},
+        **{f"{STORE}/products/{h}.json": {"product": {"id": 1, "handle": h}} for h in handles},
     }
     items, result, _ = scrape(routes, max_items_per_store=2)
     assert len(items) == 2
@@ -600,7 +603,10 @@ def test_capped_store_with_collections_reads_the_list_once(capped):
         SITEMAP: urlset(
             *(f"{STORE}/products/p{i}" for i in range(755)), f"{STORE}/collections/small"
         ),
-        **{f"{STORE}/products/p{i}.json": {"product": {"handle": f"p{i}"}} for i in (753, 754)},
+        **{
+            f"{STORE}/products/p{i}.json": {"product": {"id": 1, "handle": f"p{i}"}}
+            for i in (753, 754)
+        },
     }
     items, result, fetcher = scrape(routes, collections=True)
     assert fetcher.count(COLLECTIONS) == 1
@@ -617,7 +623,7 @@ def test_capped_store_reads_the_list_for_items_when_paging_skipped_it(capped):
         **capped,
         COLLECTIONS: collection_list(("c", 5)),
         SITEMAP: urlset(*(f"{STORE}/products/p{i}" for i in range(751))),
-        f"{STORE}/products/p750.json": {"product": {"handle": "p750"}},
+        f"{STORE}/products/p750.json": {"product": {"id": 1, "handle": "p750"}},
     }
     items, _, fetcher = scrape(routes, collections=True)
     assert fetcher.count(collection_url("all", 1)) == 0
@@ -953,6 +959,24 @@ def test_failed_listed_product_makes_the_store_partial():
         SITEMAP: urlset(f"{STORE}/products/a", f"{STORE}/products/b"),
         f"{STORE}/products/a.json": {"product": {"id": 1, "handle": "a"}},
         f"{STORE}/products/b.json": (503, "busy"),
+    }
+    items, result, _ = scrape(routes)
+    assert [i["product"]["handle"] for i in items] == ["a"]
+    store = result.stores[0]
+    assert (store.status, store.complete) == (spy.StoreStatus.partial, False)
+
+
+@pytest.mark.parametrize(
+    "document",
+    [{"errors": "Not Found"}, {"product": None}, {"product": {"title": "no id"}}, []],
+    ids=["errors", "null", "no_id", "list"],
+)
+def test_listed_document_that_is_not_a_product_is_not_emitted(document):
+    routes = {
+        bulk_url(1): (404, ""),
+        SITEMAP: urlset(f"{STORE}/products/a", f"{STORE}/products/b"),
+        f"{STORE}/products/a.json": {"product": {"id": 1, "handle": "a"}},
+        f"{STORE}/products/b.json": document,
     }
     items, result, _ = scrape(routes)
     assert [i["product"]["handle"] for i in items] == ["a"]
