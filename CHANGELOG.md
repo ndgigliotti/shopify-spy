@@ -153,7 +153,8 @@
 - A WooCommerce store read from its product pages picks the page's Product when
   its `@id` or `url` is written with `http://` on an `https://` page, beside a
   related product, and a listed product page with no Product data for it makes the
-  store `partial` instead of being skipped.
+  store `partial` instead of being skipped (not the shop page Yoast lists in its
+  product sitemap).
 - A Squarespace store whose listed `/<collection>/p/<slug>` page answers without
   Product data is `partial`, when product pages are read by default and when an
   `--ignore-robots` run falls back to them; before, only the pages read after the

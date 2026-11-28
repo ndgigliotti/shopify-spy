@@ -115,7 +115,7 @@ A headless Shopify store runs its storefront on a custom frontend (Hydrogen or a
 
 ## WooCommerce stores
 
-WooCommerce scraping uses the public Store API (`/wp-json/wc/store/v1/products`), built into WooCommerce since version 6.4 (2022). It needs no authentication. When it's unavailable, products come from the product pages' structured data instead (see [Items from product pages](output.md#items-from-product-pages)); a listed product page without Product data for it, or one that fails to load, makes the store `partial`. Those items have no categories or tags, and variations only for products with up to 30 of them (WooCommerce's default). Stores whose pages have no schema.org `Product` data, or that broadly block crawlers, may not be scrapeable.
+WooCommerce scraping uses the public Store API (`/wp-json/wc/store/v1/products`), built into WooCommerce since version 6.4 (2022). It needs no authentication. When it's unavailable, products come from the product pages' structured data instead (see [Items from product pages](output.md#items-from-product-pages)); a listed product page without Product data for it, or one that fails to load, makes the store `partial` (a 404 or 410, or the shop page Yoast lists in its product sitemap, doesn't). Those items have no categories or tags, and variations only for products with up to 30 of them (WooCommerce's default). Stores whose pages have no schema.org `Product` data, or that broadly block crawlers, may not be scrapeable.
 
 ## Magento stores
 

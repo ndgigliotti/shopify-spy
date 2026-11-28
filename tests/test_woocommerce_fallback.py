@@ -1085,3 +1085,20 @@ def test_scheme_match_keeps_the_host_and_path():
         {"@type": "Product", "name": "Other path", "@id": "http://shop.test/product/cap/"},
     )
     assert parse_product_page(html, url, fallback=False)[0] is None
+
+
+def test_shop_page_in_the_product_sitemap_is_not_a_missed_product():
+    # Yoast lists the post type's archive, the shop page, first in product-sitemap.xml
+    shop = f"{STORE}/shop/"
+    body = '<body class="archive post-type-archive post-type-archive-product woocommerce-shop">'
+    routes = {
+        woo_url(1): (404, ""),
+        f"{STORE}/sitemap_index.xml": sitemapindex(f"{STORE}/product-sitemap.xml"),
+        f"{STORE}/product-sitemap.xml": urlset(shop, product_url("hat")),
+        shop: (200, f"<html>{body}</body></html>", {"Content-Type": "text/html"}),
+        product_url("hat"): page_html("hat"),
+    }
+    items, result, _ = scrape_woo(routes)
+    assert [item["slug"] for item in items] == ["hat"]
+    assert result.stores[0].status == "ok"
+    assert result.stores[0].complete

@@ -335,9 +335,10 @@ async def _product_pages(ctx: StoreContext, emit: Emit) -> bool:
                 text, response.url, groups=True, fallback=False
             )
             if product is None:
-                # Every listed URL is a product page, so this product was missed
                 logger.info("No schema.org Product on %s", response.url)
-                failed = True
+                # Every other listed URL is a product page, so this product was
+                # missed. Yoast lists the shop page first in product-sitemap.xml
+                failed = failed or "archive" not in jsonld.body_classes(text)
                 return
             post_id = post_id or listed_id
             form = jsonld.variation_form(text, post_id)

@@ -162,8 +162,7 @@ def parse_product_page(
             logger.debug("Unparseable JSON-LD on %s", url)
             continue
         products += _products(scripts[-1], groups=groups)
-    body = _BODY_CLASS.search(html)
-    match = body and _POST_ID.search(body.group(2))
+    match = _POST_ID.search(" ".join(body_classes(html)))
     post_id = int(match.group(1)) if match else None
     found = _pick(scripts, products, url, fallback=fallback)
     if found is None:
@@ -171,6 +170,12 @@ def parse_product_page(
         nodes = microdata.items(html, url)
         found = _pick(nodes, _products(nodes, groups=groups), url, fallback=fallback)
     return found, post_id
+
+
+def body_classes(html: str) -> list[str]:
+    """The classes on the page's ``<body>`` (WordPress names the page type there)."""
+    body = _BODY_CLASS.search(html)
+    return body.group(2).split() if body else []
 
 
 def _pick(
