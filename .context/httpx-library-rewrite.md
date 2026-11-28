@@ -720,8 +720,9 @@ streaming `ItemWriter` context manager used by the CLI. Formats per §3.7 with D
 | Dev | `respx` (for `HttpxFetcher` tests only), `pytest-asyncio`, `pytest-cov` | Consolidate dev deps into one place (today split between `[dependency-groups]` and `optional-dependencies.dev`) |
 
 CLI deps stay required so `uv tool install shopify-spy` keeps working.
-Later extras: `[impersonate]` → `curl_cffi` (shipped in #95), `[browser]` →
-`playwright` (§12 items 3 and 4).
+`curl_cffi` is a core dependency since #95 made it the default transport (the
+`[impersonate]` extra never shipped). Later extra: `[browser]` → `playwright`
+(§12 item 4).
 
 ## 6. Python and platforms
 
@@ -933,8 +934,9 @@ on every public symbol (returns, statuses, files written); `py.typed`.
 
 Guiding principles:
 
-- Rotating browser UAs stay the default, so requests look like ordinary browser
-  traffic (Nick's decision); an honest UA is at most opt-in.
+- Requests look like ordinary browser traffic by default (Nick's decision): curl_cffi
+  browser profiles since #95, rotating browser UAs under `--no-impersonate`; an
+  honest UA is at most opt-in (`--user-agent`).
 - Neutral names: no "stealth", "impersonate" or "bypass" in user-facing names.
   `--impersonate` is Nick's exception (2026-11-26, #95), named after curl_cffi's
   own parameter; "stealth" and "bypass" stay out.
@@ -950,15 +952,16 @@ Guiding principles:
 2. **Platform auto-detect** (`platform="auto"`), in progress: #41, branch
    `feat/platform-autodetect`, no PR yet. On `master`, `platform="auto"` still
    raises (`_api.py:87`).
-3. **libcurl transport (done, #95):** shipped as `--impersonate BROWSER`,
-   `network.impersonate` and `impersonate=`, with an `[impersonate]` extra
-   (`curl_cffi>=0.16.3,<0.18`), after a smoke test found Cloudflare-fronted
-   stores refusing httpx's fingerprint whatever the UA. `CurlCffiFetcher` holds
-   the profile, and `Identity.impersonate` stays unused as the seam. One profile
-   serves the whole run, with no UA or profile rotation: a 403 or 429 retries
-   with the same profile. Whether rotating profiles is ever worth adding is an
-   open question; it may be too aggressive. Off by default, never automatic, and
-   no hint suggests it.
+3. **libcurl transport (done, #95):** curl_cffi is the default transport:
+   each store starts as `chrome` (`--impersonate BROWSER` picks another) and
+   can switch to the next of `chrome`, `safari`, `firefox`; `--no-impersonate`
+   and a custom `--user-agent` use httpx. Switching is a test of whether a
+   refusal is about identity, not a way to keep trying: it waits the retry's
+   backoff within the retry budget, stops for the store once a switched-to
+   identity is refused too, skips identities the host refused this run (#67),
+   never happens on challenge pages, 401s or myshopify.com, and `--no-rotate`
+   turns it off. `Identity.impersonate` carries the profile per request, and
+   `CurlCffiFetcher` keeps one curl session per profile.
 4. **Browser renderer:** any engine over CDP, defaulting to Playwright with
    Chromium. Lightpanda 1.0.5 got 0/6 Shopify stores' `/products.json` through
    the edge (challenge pages; the test was muddied by an IP rate limit), and its
