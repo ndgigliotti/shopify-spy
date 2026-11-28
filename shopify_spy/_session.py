@@ -197,7 +197,7 @@ class HostRegistry:
 
         async def fetch() -> RobotsRules:
             rules = await _fetch_robots(key, session, robots_kind)
-            self._note_crawl_delay(key, rules)
+            self._note_crawl_delay(key, rules, session.robots_agents)
             return rules
 
         rules = await self._robots.get(key, fetch)
@@ -205,10 +205,10 @@ class HostRegistry:
             self.slot(key, kind.slot).set_crawl_delay(delay)
         return rules
 
-    def _note_crawl_delay(self, key: str, rules: RobotsRules) -> None:
+    def _note_crawl_delay(self, key: str, rules: RobotsRules, agents: tuple[str, ...]) -> None:
         """Record the origin's robots.txt Crawl-delay, capped at the throttle's
         max_delay; called once per origin."""
-        requested = rules.crawl_delay()
+        requested = rules.crawl_delay(*agents)
         if requested is None:
             return
         applied = min(requested, self.throttle.max_delay)
@@ -358,8 +358,11 @@ class StoreSession:
         self._store_is_private: bool | None = None
 
     @property
-    def robots_agent(self) -> str:
-        return self.identity.user_agent or ROBOTS_TOKEN
+    def robots_agents(self) -> tuple[str, ...]:
+        """The agents whose robots.txt groups apply, most restrictive winning: always
+        our own token, plus a custom user agent (#80)."""
+        user_agent = self.identity.user_agent
+        return (ROBOTS_TOKEN, user_agent) if user_agent else (ROBOTS_TOKEN,)
 
     async def get(
         self,
@@ -443,7 +446,7 @@ class StoreSession:
         if not kind.check_robots or not self.registry.respect_robots_txt:
             return True
         rules = await self.registry.robots(url, self, kind)
-        if rules.allowed(url, self.robots_agent):
+        if rules.allowed(url, *self.robots_agents):
             return True
         if kind.counted:
             self.stats.robots_disallowed += 1

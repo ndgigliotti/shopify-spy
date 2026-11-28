@@ -175,6 +175,40 @@ async def test_robots_keyed_by_origin_including_port():
     assert fetcher.count("http://127.0.0.1:8002/robots.txt") == 1
 
 
+SHOPIFY_SPY_DISALLOW_ALL = (200, "User-agent: shopify-spy\nDisallow: /\n")
+
+
+@pytest.mark.parametrize(
+    "identity", [None, IdentityPool(user_agent="MyBot/1.0")], ids=["profile", "custom-ua"]
+)
+async def test_robots_token_group_applies_whatever_user_agent_is_sent(identity):
+    session, fetcher = make_session(
+        {f"{STORE}/robots.txt": SHOPIFY_SPY_DISALLOW_ALL, f"{STORE}/p": (200, "ok")},
+        identity=identity,
+    )
+    assert await get(session, f"{STORE}/p") is None
+    assert fetcher.count(f"{STORE}/p") == 0
+
+
+async def test_robots_custom_user_agent_group_applies_too():
+    robots = (
+        200,
+        "User-agent: MyBot\nDisallow: /p\nCrawl-delay: 4\n\nUser-agent: *\nCrawl-delay: 1\n",
+    )
+    session, _ = make_session(
+        {f"{STORE}/robots.txt": robots, f"{STORE}/p": (200, "ok")},
+        identity=IdentityPool(user_agent="MyBot/1.0"),
+    )
+    assert await get(session, f"{STORE}/p") is None
+    assert session.registry.slot(STORE).crawl_delay == 4.0
+
+
+async def test_robots_rotating_profile_ignores_other_agents_groups():
+    robots = (200, "User-agent: Mozilla\nDisallow: /\n")
+    session, _ = make_session({f"{STORE}/robots.txt": robots, f"{STORE}/p": (200, "ok")})
+    assert (await get(session, f"{STORE}/p")) is not None
+
+
 async def test_robots_ignored_when_disabled():
     session, fetcher = make_session(
         {f"{STORE}/robots.txt": DISALLOW_PRIVATE, f"{STORE}/private": (200, "ok")}, robots=False
