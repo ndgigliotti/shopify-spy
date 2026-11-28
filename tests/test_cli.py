@@ -8,6 +8,7 @@ accounting. Plan references (§, D) are to .context/httpx-library-rewrite.md.
 import asyncio
 import csv
 import dataclasses
+import io
 import json
 import sys
 from dataclasses import dataclass, field
@@ -1983,3 +1984,16 @@ def test_unknown_config_key_exits_1_naming_it(cli, tmp_path):
     assert "scrape.limt" in err and "did you mean 'limit'?" in err
     assert "Traceback" not in err
     assert not run.fetchers
+
+
+def test_url_prompt_goes_to_stderr(monkeypatch, capsys):
+    # --peek prints JSONL on stdout, so a prompt there would come before the item
+    class Terminal(io.StringIO):
+        def isatty(self):
+            return True
+
+    monkeypatch.setattr(sys, "stdin", Terminal("https://shop.example.com\n"))
+    assert get_urls(None, None) == ["https://shop.example.com"]
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "store URL" in captured.err

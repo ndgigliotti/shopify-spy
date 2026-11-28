@@ -58,7 +58,7 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 - `--output, -o PATH`: the output directory (default: `./output`).
 - `--format, -F FORMAT`: `jsonl` (the default), `json`, `csv`, `xlsx` or `xml`. `xlsx` needs the `excel` extra; see [Excel output](output.md#excel-output).
 - `--schema SCHEMA`: `native` (items as scraped, the default) or `unified` (a row per variant). CSV and XLSX are always unified. See [Schemas](output.md#schemas).
-- `--peek`: print one item to stdout as JSONL and exit, creating no files or directories. With `--schema unified`, it prints that item's unified rows. Warnings and errors go to stderr, so stdout stays valid JSONL.
+- `--peek`: print one item to stdout as JSONL and exit, creating no files or directories. With `--schema unified`, it prints that item's unified rows. Warnings, errors and the prompt for a URL go to stderr, so stdout stays valid JSONL.
 
 ### Network
 

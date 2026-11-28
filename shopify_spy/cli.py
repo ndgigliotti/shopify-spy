@@ -726,7 +726,12 @@ def get_urls(urls: list[str] | None, url_file: Path | None) -> list[str]:
 
     # Interactive prompt if stdin is a TTY
     if sys.stdin.isatty():
-        url = typer.prompt("Enter Shopify store URL").strip()
+        # On stderr, so --peek's stdout holds only JSONL (typer.prompt(err=True)
+        # still writes a space to stdout)
+        try:
+            url = err_console.input("Enter Shopify store URL: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            raise typer.Abort() from None
         if url:
             return [url]
 
