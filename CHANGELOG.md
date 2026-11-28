@@ -27,14 +27,15 @@
   `safari`, `firefox` or any other curl_cffi target. Setting your own
   `--user-agent` (`network.user_agent`, `user_agent=`) is the only way to send
   plain httpx requests, with exactly that string and never switched; it can't be
-  combined with `--impersonate`.
+  combined with `--impersonate`, and a blank one counts as unset. A custom CA is
+  trusted through `SSL_CERT_FILE`; curl_cffi doesn't read `SSL_CERT_DIR`.
 - After a 403 or 429, a store switches to another browser profile to test
   whether the refusal is about identity: only after the retry's usual backoff,
   within the existing retries, and never again for that store if the new profile
   is refused too. A host's refusals are remembered for the run, so no store
   switches to a profile it refused ([#67](https://github.com/ndgigliotti/shopify-spy/issues/67)). Challenge pages
-  (Cloudflare's `cf-mitigated: challenge`), 401s and `*.myshopify.com` refusals
-  never switch, and a challenge page isn't retried. Each switch is logged at INFO.
+  (Cloudflare's `cf-mitigated: challenge`), 401s, image downloads and
+  `*.myshopify.com` refusals never switch, and a challenge page isn't retried. Each switch is logged at INFO.
 - Throttling is more conservative by default. A robots.txt `Crawl-delay` (for the
   `shopify-spy` group, else `*`) spaces that host's requests, capped at the
   throttle's `max_delay` and applied even with `--no-throttle`. Throttled page and
