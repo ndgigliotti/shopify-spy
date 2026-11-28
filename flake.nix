@@ -1,5 +1,5 @@
 {
-  description = "Python library and CLI to scrape product data from Shopify, WooCommerce, Magento and other stores";
+  description = "Python library and CLI to scrape product data from Shopify, WooCommerce, Magento, BigCommerce and other stores";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 

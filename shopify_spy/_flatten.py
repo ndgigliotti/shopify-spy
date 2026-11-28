@@ -9,9 +9,10 @@ one row each, sharing the product columns they have. WooCommerce products get a 
 per variation, with the variation's own price, SKU and stock when the scrape fetched
 its record (otherwise the product's). Magento products get a row per configurable
 variant, with the variant's own price, SKU and stock (a simple product gets one row
-with its own). JSON-LD products get a row per ``hasVariant`` Product, else per offer
-in a list of offers, else one row. JSONL, JSON and XML keep each platform's native
-item shape.
+with its own). BigCommerce products get a row per variant in the same way, with the
+GraphQL ``edges``/``node`` connections read through. JSON-LD products get a row per
+``hasVariant`` Product, else per offer in a list of offers, else one row. JSONL, JSON
+and XML keep each platform's native item shape.
 """
 
 from __future__ import annotations
@@ -25,10 +26,13 @@ from html.parser import HTMLParser
 from typing import Any
 
 from shopify_spy import _jsonld as jsonld
+from shopify_spy._bigcommerce import image_list, nodes
 from shopify_spy._jsonld import OUT_OF_STOCK
-from shopify_spy._magento import gallery_urls
+from shopify_spy._magento import _dig, gallery_urls
 from shopify_spy._summary import (
+    bigcommerce_price,
     html_url,
+    is_bigcommerce,
     is_jsonld,
     is_magento,
     jsonld_id,
@@ -121,14 +125,17 @@ def _builder(item: dict[str, Any]) -> Callable[[dict[str, Any]], list[dict[str, 
         return _magento
     if is_jsonld(item):
         return _jsonld
+    # Before WooCommerce: both have a prices dict
+    if is_bigcommerce(item):
+        return _bigcommerce
     if isinstance(item.get("prices"), dict) and "permalink" in item:
         return _woocommerce
     return None
 
 
 def item_platform(item: dict[str, Any]) -> str | None:
-    """``"shopify"``, ``"woocommerce"``, ``"magento"`` or ``"jsonld"``; None when it
-    isn't a scraped item."""
+    """``"shopify"``, ``"woocommerce"``, ``"magento"``, ``"bigcommerce"`` or
+    ``"jsonld"``; None when it isn't a scraped item."""
     builder = _builder(item)
     return _PLATFORMS.get(builder) if builder else None
 
@@ -326,16 +333,11 @@ def _magento(item: dict[str, Any]) -> list[dict[str, Any]]:
     for variant in variants:
         data = variant.get("product") if isinstance(variant.get("product"), dict) else {}
         labels = {a.get("code"): a.get("label") for a in dicts(variant.get("attributes"))}
-        # option1-3 line up with the options column; codes it lacks come after
-        values = [labels.get(c) for c in codes] + [v for c, v in labels.items() if c not in codes]
         image = data.get("image") if isinstance(data.get("image"), dict) else {}
         rows.append(
             product
-            | {
-                "variant_id": data.get("uid"),
-                "variant_title": " / ".join(str(v) for v in values if v not in (None, "")) or None,
-            }
-            | {f"option{i + 1}": v for i, v in enumerate(values[:3])}
+            | {"variant_id": data.get("uid")}
+            | _variant_options(labels, codes)
             | _magento_offer(data, fallback=product)
             | {"variant_image_url": image.get("url")}
         )
@@ -490,11 +492,99 @@ def _html(value: Any) -> Any:
     return value.get("html") if isinstance(value, dict) else None
 
 
+def _bigcommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
+    summary = summarize(item)
+    images = image_list(item)
+    variants = nodes(item.get("variants"))
+    options = [o for o in nodes(item.get("productOptions")) if o.get("isVariantOption") is True]
+    path = item.get("path")
+    rating, reviews = _bigcommerce_reviews(item.get("reviewSummary"))
+    product = {
+        "platform": "bigcommerce",
+        "kind": "product",
+        "store": item.get("store"),
+        "id": item.get("entityId"),
+        "handle": path.strip("/") or None if isinstance(path, str) else None,
+        "title": summary.title,
+        "vendor": _dig(item, "brand", "name"),
+        "categories": _names(nodes(item.get("categories"))),
+        "options": _join(o.get("displayName") for o in options),
+        "created_at": _dig(item, "createdAt", "utc"),
+        "description": _text(item.get("description")),
+        "html_url": item.get("html_url"),
+        "image_url": images[0] if images else None,
+        "image_count": len(images),
+        "currency": summary.currency,
+        "min_price": summary.min_price,
+        "max_price": summary.max_price,
+        "average_rating": rating,
+        "review_count": reviews,
+        "variant_count": len(variants),
+        **_bigcommerce_offer(item),
+    } | _image_paths(item)
+    ids = [o.get("entityId") for o in options]
+    return [product | _bigcommerce_variant(v, ids, item) for v in variants] or [product]
+
+
+def _bigcommerce_variant(
+    variant: dict[str, Any], option_ids: list[Any], item: dict[str, Any]
+) -> dict[str, Any]:
+    """A variant's own columns; ``option_ids`` order option1-3 like the options column."""
+    labels = {}
+    for option in nodes(variant.get("options")):
+        values = nodes(option.get("values"))
+        labels[option.get("entityId")] = values[0].get("label") if values else None
+    return (
+        {"variant_id": variant.get("entityId"), "is_purchasable": variant.get("isPurchasable")}
+        | _variant_options(labels, option_ids)
+        | _bigcommerce_offer(variant, fallback=item)
+        | {"variant_image_url": _dig(variant, "defaultImage", "urlOriginal")}
+    )
+
+
+def _bigcommerce_offer(
+    data: dict[str, Any], fallback: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """The price, SKU and stock columns of a BigCommerce product or variant.
+
+    A variant without its own price takes the ``fallback`` product's prices, its
+    "was" price included, so a variant's price is never compared with another's.
+    The "was" price is ``basePrice``, else ``retailPrice`` (MSRP): the first one the
+    item sells below.
+    """
+    prices = data.get("prices")
+    if bigcommerce_price(prices, "price")[0] is None and fallback is not None:
+        prices = fallback.get("prices")
+
+    def money(key: str) -> Decimal | None:
+        return bigcommerce_price(prices, key)[0]
+
+    price = money("price")
+    was = [m for m in (money("basePrice"), money("retailPrice")) if _below(price, m)]
+    return {
+        "sku": data.get("sku"),
+        "price": price,
+        "compare_at_price": was[0] if was else None,
+        "available": _dig(data, "inventory", "isInStock"),
+    }
+
+
+def _bigcommerce_reviews(summary: Any) -> tuple[Decimal | None, Any]:
+    """The average rating (None without reviews) and the review count."""
+    count = _dig(summary, "numberOfReviews")
+    total = _dig(summary, "summationOfRatings")
+    numeric = all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in (count, total))
+    if not numeric or count <= 0:
+        return None, count
+    return (Decimal(str(total)) / Decimal(str(count))).quantize(Decimal("0.01")), count
+
+
 _PLATFORMS: dict[Callable[[dict[str, Any]], list[dict[str, Any]]], str] = {
     _shopify_product: "shopify",
     _shopify_collection: "shopify",
     _woocommerce: "woocommerce",
     _magento: "magento",
+    _bigcommerce: "bigcommerce",
     _jsonld: "jsonld",
 }
 
@@ -531,6 +621,17 @@ def _below(price: Decimal | None, regular_price: Decimal | None) -> bool:
     if price is None or regular_price is None or price.is_nan() or regular_price.is_nan():
         return False
     return price < regular_price
+
+
+def _variant_options(labels: dict[Any, Any], order: list[Any]) -> dict[str, Any]:
+    """A variant's ``variant_title`` and option1-3 from its option labels by key.
+
+    ``order`` lines option1-3 up with the options column; keys it lacks come after.
+    """
+    values = [labels.get(k) for k in order] + [v for k, v in labels.items() if k not in order]
+    return {"variant_title": " / ".join(str(v) for v in values if v not in (None, "")) or None} | {
+        f"option{i + 1}": v for i, v in enumerate(values[:3])
+    }
 
 
 def _join(values: Iterable[Any]) -> str:

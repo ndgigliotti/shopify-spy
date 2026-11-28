@@ -219,6 +219,61 @@ def test_magento_summary_dict_is_not_a_magento_item():
     assert flatten(spy.summarize(MAGENTO_PRODUCT).asdict()) is None
 
 
+def _bc_money(value, currency="GBP"):
+    return {"value": value, "currencyCode": currency}
+
+
+BIGCOMMERCE_PRODUCT = {
+    "entityId": 77,
+    "sku": "TEE",
+    "name": "Tee",
+    "path": "/tee/",
+    "prices": {
+        "price": _bc_money(19.5),
+        "priceRange": {"min": _bc_money(19.5), "max": _bc_money(25)},
+    },
+    "images": {
+        "edges": [
+            {"node": {"urlOriginal": "https://bc.test/a.jpg", "isDefault": False}},
+            {"node": {"urlOriginal": "https://bc.test/b.jpg", "isDefault": True}},
+        ]
+    },
+    "store": "bc.test",
+    "platform": "bigcommerce",
+    "html_url": "https://bc.test/tee/",
+    "image_urls": [],
+}
+
+
+def test_bigcommerce_product():
+    s = spy.summarize(BIGCOMMERCE_PRODUCT)
+    assert (s.kind, s.platform, s.id, s.title) == ("product", "bigcommerce", 77, "Tee")
+    assert (s.min_price, s.max_price) == (Decimal("19.5"), Decimal("25"))
+    assert s.currency == "GBP"
+    assert (s.html_url, s.store) == ("https://bc.test/tee/", "bc.test")
+    # image_urls is empty without images; the images connection stands in, default first
+    assert s.image_urls == ["https://bc.test/b.jpg", "https://bc.test/a.jpg"]
+
+
+def test_bigcommerce_product_without_a_price_range_uses_the_price():
+    prices = {"price": _bc_money(8, "USD")}
+    s = spy.summarize({**BIGCOMMERCE_PRODUCT, "prices": prices})
+    assert (s.min_price, s.max_price, s.currency) == (Decimal("8"), Decimal("8"), "USD")
+
+
+def test_bigcommerce_product_without_prices():
+    s = spy.summarize({**BIGCOMMERCE_PRODUCT, "prices": None})
+    assert (s.min_price, s.max_price, s.currency) == (None, None, None)
+
+
+def test_bigcommerce_summary_dict_is_not_a_bigcommerce_item():
+    from shopify_spy._flatten import flatten, item_platform
+
+    summary = spy.summarize(BIGCOMMERCE_PRODUCT).asdict()
+    assert flatten(summary) is None
+    assert item_platform(summary) is None
+
+
 JSONLD_PRODUCT = {
     "@context": "https://schema.org",
     "@type": "Product",

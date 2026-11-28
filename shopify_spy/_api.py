@@ -56,7 +56,7 @@ class ScrapeOptions(BaseModel):
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
-    platform: Literal["shopify", "woocommerce", "magento", "jsonld"] = "shopify"
+    platform: Literal["shopify", "woocommerce", "magento", "bigcommerce", "jsonld"] = "shopify"
     products: bool = True
     collections: bool = False
     images: bool = False
@@ -74,6 +74,8 @@ class ScrapeOptions(BaseModel):
     throttle: bool = True
     throttle_start_delay: float = Field(default=1.0, ge=0)
     throttle_max_delay: float = Field(default=60.0, ge=0)
+    throttle_min_delay: float = Field(default=1.0, ge=0)
+    throttle_image_delay: float = Field(default=0.25, ge=0)
     throttle_target_concurrency: float = Field(default=1.0, ge=0.1)
     on_failure: Literal["raise", "warn", "ignore"] = "raise"
     strict: bool = False
@@ -87,7 +89,7 @@ def _prepare(
     if options.get("platform") == "auto":
         raise ValueError(
             "auto-detection isn't supported yet; "
-            "use 'shopify', 'woocommerce', 'magento' or 'jsonld'"
+            "use 'shopify', 'woocommerce', 'magento', 'bigcommerce' or 'jsonld'"
         )
     proxy = options.get("proxy")
     if proxy is not None and not isinstance(proxy, str):
@@ -159,6 +161,8 @@ def _config(opts: ScrapeOptions, backoff: bool) -> RunConfig:
             enabled=opts.throttle,
             start_delay=opts.throttle_start_delay,
             max_delay=opts.throttle_max_delay,
+            min_delay=opts.throttle_min_delay,
+            image_delay=opts.throttle_image_delay,
             target_concurrency=opts.throttle_target_concurrency,
         ),
         backoff=backoff,
@@ -441,18 +445,22 @@ _SCRAPE_DOC = """
     Args:
         urls: A store URL or an iterable of them. Only the host matters; paths are
             ignored. One platform per call.
-        platform: "shopify", "woocommerce", "magento" or "jsonld" (default
+        platform: "shopify", "woocommerce", "magento", "bigcommerce" or "jsonld" (default
             {platform}). When a WooCommerce store's Store API is unavailable, its
             product pages are read instead: partial items in the Store API's shape
             with ``source="product_page"``. Magento stores are read through the
             storefront GraphQL API at ``/graphql``, in the default store view and
-            its currency; there are no Magento collections. JSON-LD stores are
+            its currency; there are no Magento collections. BigCommerce stores are
+            read through the Storefront GraphQL API at ``/graphql`` (or the
+            ``mybigcommerce.com`` endpoint a headless storefront's page names), with
+            the public API token the storefront's homepage carries, in the default
+            currency; there are no BigCommerce collections. JSON-LD stores are
             read from the product pages listed in their sitemaps: each page with
             schema.org Product JSON-LD (or microdata) becomes an item, at one request per
             product. It is a best-effort fallback for platforms without an
             adapter, so ``max_items_per_store`` and the throttle matter.
         products: Scrape products (default {products}). Shopify only; WooCommerce,
-            Magento and JSON-LD always scrape products.
+            Magento, BigCommerce and JSON-LD always scrape products.
         collections: Also scrape collections (default {collections}). Shopify only.
         images: Download product images into ``images_dir/full/`` (default {images}).
             Requires ``images_dir``. Each item gains ``scraped_images`` records
@@ -465,17 +473,26 @@ _SCRAPE_DOC = """
         bail: Give up on a store that yields no item within this many seconds
             (default {bail}; None or 0 disables). Waits a server asks for with
             Retry-After don't count, for each request, so a rate-limited store can
-            take minutes or hours to fail.
+            take minutes or hours to fail. A Retry-After longer than 60s isn't
+            waited out or retried: it pauses that host for the whole Retry-After
+            (not excused from bail) and the request ends as if its retries ran out.
         concurrent_requests: Max concurrent requests per host across the run
             (default {concurrent_requests}).
         request_timeout: Seconds allowed for one request, not the whole run
             (default {request_timeout}).
         retries: Retries for 403/429/5xx responses and network errors (default
             {retries}). A 429 also swaps the user agent, and a 429 or 503 pauses and slows
-            every request to that host.
+            every request to that host. A Retry-After up to 60s is waited out before
+            the retry; a longer one isn't retried early: the host is paused for it,
+            the request ends as if its retries ran out (a store with no successful
+            response is ``rate_limited`` after a 429, ``unavailable`` after a 503),
+            and the pause is logged as a WARNING on the ``shopify_spy`` logger (which
+            prints nothing until the caller configures logging).
         user_agent: Fixed User-Agent, never swapped; by default each store gets a
             random browser UA, swapped after a 403 or 429.
-        respect_robots_txt: Obey robots.txt (default {respect_robots_txt}).
+        respect_robots_txt: Obey robots.txt (default {respect_robots_txt}), including
+            its Crawl-delay as a minimum gap between requests to that host, capped
+            at ``throttle_max_delay`` and applied even with ``throttle=False``.
         verify_tls: Verify TLS certificates (default {verify_tls}).
         proxy: A fixed proxy URL for every request: http://, https:// or socks5://.
             It overrides HTTPS_PROXY, HTTP_PROXY and ALL_PROXY, which are otherwise
@@ -486,10 +503,16 @@ _SCRAPE_DOC = """
             against the refusal of non-public addresses.
         max_concurrent_stores: Stores scraped at once (default {max_concurrent_stores};
             None = no limit).
-        throttle, throttle_start_delay, throttle_max_delay,
-        throttle_target_concurrency: AutoThrottle settings. Defaults: {throttle};
-            {throttle_start_delay}s start and {throttle_max_delay}s max delay; target
-            concurrency {throttle_target_concurrency}.
+        throttle, throttle_start_delay, throttle_max_delay, throttle_min_delay,
+        throttle_image_delay, throttle_target_concurrency: AutoThrottle settings.
+            Defaults: {throttle}; {throttle_start_delay}s start,
+            {throttle_min_delay}s min, {throttle_image_delay}s image and
+            {throttle_max_delay}s max delay; target concurrency
+            {throttle_target_concurrency}. ``throttle_min_delay`` is the shortest gap
+            between page and API requests to one host, ``throttle_image_delay`` the
+            shortest between image downloads from one host. Neither applies with
+            ``throttle=False``, while robots.txt Crawl-delay and Retry-After pauses
+            still do.
         on_failure: What to do when stores fail, checked once iteration ends:
             "raise" (default) raises ScrapeFailed if every store failed; "warn"
             issues a ScrapeWarning; "ignore" leaves it to ``run.result``.
@@ -502,24 +525,26 @@ _SCRAPE_DOC = """
     (429), not found, unavailable (5xx), times out, can't be reached, or errors
     (status ``error``: an unexpected error, a Magento store whose ``/graphql``
     answered without products, with the GraphQL message in ``StoreResult.errors``,
-    or a JSON-LD store whose pages have no Product data); ``run.result.failed``
-    lists them with a status and, sometimes, a ``hint`` (e.g. a likely wrong
-    ``platform``). A store stopped by ``bail`` can also end ``error`` with a reason
-    when its adapter recorded one (JSON-LD pages checked without Product data). An
-    empty store is not a failure. A store's ``hint`` and ``products_from`` also
-    name the ``myshopify.com`` domain a headless store's products came from.
-    Invalid URLs and options raise ValueError at call time. Requests to non-public
-    addresses (loopback, private networks, cloud metadata) are refused with a
-    warning unless the store's own URL is on one.
+    a BigCommerce store without a token on its homepage, or whose ``/graphql``
+    answered without products, or a JSON-LD store whose pages have no Product
+    data); ``run.result.failed`` lists them with a status and, sometimes, a
+    ``hint`` (e.g. a likely wrong ``platform``). A store stopped by ``bail`` can
+    also end ``error`` with a reason when its adapter recorded one (JSON-LD pages
+    checked without Product data). An empty store is not a failure. A store's
+    ``hint`` and ``products_from`` also name the ``myshopify.com`` domain a
+    headless store's products came from. Invalid URLs and options raise
+    ValueError at call time. Requests to non-public addresses (loopback, private
+    networks, cloud metadata) are refused with a warning unless the store's own
+    URL is on one.
 
     Items are each platform's native shape plus ``store``, ``platform``
-    ("shopify", "woocommerce", "magento" or "jsonld") and ``image_urls`` (Magento
-    and JSON-LD items also get ``html_url``; a JSON-LD item is the page's
-    schema.org Product or ProductGroup node, with ``@type``, ``name``, ``offers``
-    and so on; see ``ShopifyProductItem``, ``WooCommerceProductItem``,
-    ``MagentoProductItem``, ``JsonLdProductItem``);
-    ``write_items(..., schema="unified")`` flattens them into one row per variant
-    with the same columns on every platform.
+    ("shopify", "woocommerce", "magento", "bigcommerce" or "jsonld") and
+    ``image_urls`` (Magento, BigCommerce and JSON-LD items also get ``html_url``;
+    a JSON-LD item is the page's schema.org Product or ProductGroup node, with
+    ``@type``, ``name``, ``offers`` and so on; see ``ShopifyProductItem``,
+    ``WooCommerceProductItem``, ``MagentoProductItem``, ``BigCommerceProductItem``,
+    ``JsonLdProductItem``); ``write_items(..., schema="unified")`` flattens them
+    into one row per variant with the same columns on every platform.
 
     Nothing is written to disk unless ``images=True``, and no config file is read.
 """.format_map(

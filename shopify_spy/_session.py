@@ -14,7 +14,7 @@ import dataclasses
 import logging
 import urllib.parse
 from collections import Counter
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
 
@@ -69,13 +69,16 @@ class RequestKind:
     # A 429 counts toward StoreStats.rate_limits: its pause holds up the store's data
     # (images come after the data they belong to)
     rate_limits: bool = True
+    success: bool = True  # a 2xx counts toward StoreStats.successes
     # A slot shared by every URL of this kind, instead of one per origin
     slot: str | None = None
+    # Spaced by the throttle's image_delay instead of min_delay
+    image: bool = False
 
 
 STORE = RequestKind("store")
 ROBOTS = RequestKind("robots", check_robots=False, counted=False, dedupe=False)
-IMAGE = RequestKind("image", counted=False, dedupe=False, rate_limits=False)
+IMAGE = RequestKind("image", counted=False, dedupe=False, rate_limits=False, image=True)
 PROBE = RequestKind("probe", counted=False, dedupe=False)  # e.g. a wrong-platform check
 # A fallback source, e.g. WooCommerce product pages: if it finds nothing, the store's
 # diagnosis still explains why the primary source failed
@@ -151,6 +154,7 @@ class HostRegistry:
         self.shutdown = asyncio.Event()  # set for a graceful stop: no new requests
         self._slots: dict[str, HostSlot] = {}
         self._robots: SingleFlight[RobotsRules] = SingleFlight()
+        self._crawl_delays: dict[str, float] = {}  # applied Crawl-delay by origin
         # None: hostnames aren't looked up (a proxy or custom transport resolves them)
         self.resolver = resolver
         self._resolved: SingleFlight[list[IPAddress]] = SingleFlight()
@@ -170,11 +174,41 @@ class HostRegistry:
     ) -> RobotsRules:
         """Return robots.txt rules for the URL's origin, fetching them once per run.
 
-        The fetch takes the slot and rotation of the ``kind`` that asked.
+        The fetch takes the slot and rotation of the ``kind`` that asked. Its
+        Crawl-delay goes to the slot of every kind that asks, since an origin can be
+        reached through both its own slot and a shared one.
         """
         key = origin(url)
         robots_kind = dataclasses.replace(ROBOTS, rotate=kind.rotate, slot=kind.slot)
-        return await self._robots.get(key, lambda: _fetch_robots(key, session, robots_kind))
+
+        async def fetch() -> RobotsRules:
+            rules = await _fetch_robots(key, session, robots_kind)
+            self._note_crawl_delay(key, rules)
+            return rules
+
+        rules = await self._robots.get(key, fetch)
+        if (delay := self._crawl_delays.get(key)) is not None:
+            self.slot(key, kind.slot).set_crawl_delay(delay)
+        return rules
+
+    def _note_crawl_delay(self, key: str, rules: RobotsRules) -> None:
+        """Record the origin's robots.txt Crawl-delay, capped at the throttle's
+        max_delay; called once per origin."""
+        requested = rules.crawl_delay()
+        if requested is None:
+            return
+        applied = min(requested, self.throttle.max_delay)
+        if applied < requested:
+            logger.warning(
+                "robots.txt Crawl-delay of %gs for %s is over the %gs maximum; using %gs",
+                requested,
+                key,
+                self.throttle.max_delay,
+                applied,
+            )
+        else:
+            logger.info("Using robots.txt Crawl-delay of %gs for %s", applied, key)
+        self._crawl_delays[key] = applied
 
     async def resolved(self, url: str, timeout: float) -> list[IPAddress]:
         """The addresses the URL's host resolves to, looked up once per origin per run;
@@ -344,6 +378,22 @@ class StoreSession:
             url = target
         raise RequestFailed(url, f"more than {MAX_REDIRECTS} redirects")
 
+    async def post(
+        self,
+        url: str,
+        body: bytes,
+        *,
+        headers: Mapping[str, str],
+        kind: RequestKind = STORE,
+    ) -> Response | None:
+        """POST a body; return None if robots.txt disallows the URL.
+
+        Never deduped, since every page of an API can share one URL. A 3xx is
+        returned, not followed: a browser would turn a 301-303 POST into a GET.
+        Raises like ``get()``.
+        """
+        return await self._fetch_with_retries(url, kind, method="POST", body=body, headers=headers)
+
     def _is_duplicate(self, url: str) -> bool:
         """Record the URL as requested; True (and counted) if it already was."""
         try:
@@ -428,15 +478,72 @@ class StoreSession:
                 self._unexcuse_from_bail(excused_until)
             raise
 
+    @staticmethod
+    def _bail_excused(retry_after: float | None, rate_limited: bool) -> bool:
+        """Whether a retry wait is excused from --bail: a server's Retry-After on a
+        rate limit."""
+        return rate_limited and retry_after is not None
+
     def _retry_delay(
         self, attempt: int, retry_after: float | None, rate_limited: bool
     ) -> tuple[float, float | None]:
         """The wait before a retry, and when its bail excusal ends if it has one; a
         server's Retry-After isn't cut short by --bail."""
-        excused = rate_limited and retry_after is not None
+        excused = self._bail_excused(retry_after, rate_limited)
         cap = None if excused else self.bail_time_left()
         delay = self.retry.delay(attempt, retry_after, cap, rate_limited)
         return delay, self._excuse_from_bail(delay) if excused else None
+
+    def _count_response(self, response: Response, kind: RequestKind) -> None:
+        if kind.counted:
+            self.stats.responses += 1
+            self.stats.by_status[response.status] += 1
+            self.stats.successes += response.ok and kind.success
+
+    def _count_error(self, error: FetchError, kind: RequestKind) -> None:
+        if kind.counted:
+            self.stats.transport_errors[type(error).__name__] += 1
+            self.stats.tls_errors += isinstance(error, FetchTLSError)
+
+    def _ends_request(
+        self,
+        url: str,
+        slot: HostSlot,
+        image: bool,
+        attempt: int,
+        retry_after: float | None,
+        rate_limited: bool,
+        will_retry: bool,
+    ) -> bool:
+        """Whether a response ends the request, backing off from it if so.
+
+        A Retry-After longer than we'd wait isn't retried early: a rate limit pauses
+        the host for all of it, without excusing the pause from --bail.
+        """
+        cap = None if self._bail_excused(retry_after, rate_limited) else self.bail_time_left()
+        if not self.retry.retry_after_too_long(retry_after, cap):
+            if will_retry:
+                return False
+            if rate_limited:  # no retry left, but the host still has to back off
+                slot.pause(self._retry_delay(attempt, retry_after, True)[0], image)
+            return True
+        assert retry_after is not None
+        if rate_limited:
+            slot.pause(retry_after, image)
+            logger.warning(
+                "Pausing requests to %s for %.0fs on Retry-After; not retrying %s",
+                origin(url),
+                retry_after,
+                url,
+            )
+        elif will_retry:
+            logger.info(
+                "Not retrying %s: Retry-After %.0fs is longer than the %.0fs wait allowed",
+                url,
+                retry_after,
+                self.retry.limit(cap),
+            )
+        return True
 
     async def _cleared(self, url: str, kind: RequestKind) -> bool:
         """Whether the request may be sent; False if robots.txt disallows it."""
@@ -447,7 +554,15 @@ class StoreSession:
         await self._check_destination(url)
         return await self._allowed(url, kind)
 
-    async def _fetch_with_retries(self, url: str, kind: RequestKind) -> Response | None:
+    async def _fetch_with_retries(
+        self,
+        url: str,
+        kind: RequestKind,
+        *,
+        method: str = "GET",
+        body: bytes | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> Response | None:
         if not await self._cleared(url, kind):
             return None
         slot = self.registry.slot(url, kind.slot)
@@ -462,29 +577,29 @@ class StoreSession:
                 response: Response | None = None
                 error: FetchError | None = None
                 async with self._store_slots, slot.semaphore:
-                    sent_at = await slot.wait_turn()
+                    sent_at = await slot.wait_turn(kind.image)
                     self.stats.requests += 1
                     sent = self.identity.current
                     try:
                         response = await self.fetcher.fetch(
                             Request(
-                                method="GET",
+                                method=method,
                                 url=url,
                                 identity=sent,
                                 timeout=self.request_timeout,
+                                headers=headers or {},
+                                body=body,
                             )
                         )
                     except FetchError as exc:
                         error = exc
                 if response is not None:
                     slot.adjust(response.latency, response.status, sent_at)
-                    if kind.counted:
-                        self.stats.responses += 1
-                        self.stats.by_status[response.status] += 1
-                        self.stats.successes += response.ok
+                    self._count_response(response, kind)
                     limited = response.status == 429
                     logger.debug(
-                        "GET %s -> %d in %.2fs (attempt %d, %s)",
+                        "%s %s -> %d in %.2fs (attempt %d, %s)",
+                        method,
                         url,
                         response.status,
                         response.latency,
@@ -495,9 +610,12 @@ class StoreSession:
                     rate_limited = response.status in RATE_LIMIT_STATUSES
                     # Whatever the transport rotates on, a 403 to such a kind is final
                     refused = not kind.rotate and response.status == 403
-                    if refused or not self.retry.should_retry_status(response.status, attempt):
-                        if rate_limited:  # no retry left, but the host still has to back off
-                            slot.pause(self._retry_delay(attempt, retry_after, True)[0])
+                    will_retry = not refused and self.retry.should_retry_status(
+                        response.status, attempt
+                    )
+                    if self._ends_request(
+                        url, slot, kind.image, attempt, retry_after, rate_limited, will_retry
+                    ):
                         return response
                     # A concurrent refusal of the same agent may have swapped it already
                     if (
@@ -517,9 +635,7 @@ class StoreSession:
                     assert error is not None
                     limited = False
                     name = type(error).__name__
-                    if kind.counted:
-                        self.stats.transport_errors[name] += 1
-                        self.stats.tls_errors += isinstance(error, FetchTLSError)
+                    self._count_error(error, kind)
                     logger.debug("Error fetching %s: %s", url, error)
                     retryable = not isinstance(
                         error, (FetchTLSError, FetchTooLarge, FetchInvalidURL)
@@ -531,7 +647,7 @@ class StoreSession:
                     reason = name
                 delay, excused_until = self._retry_delay(attempt, retry_after, rate_limited)
                 if rate_limited:
-                    slot.pause(delay)
+                    slot.pause(delay, kind.image)
                 attempt += 1
                 logger.info("Retrying %s (attempt %d, %s) in %.1fs", url, attempt, reason, delay)
                 await self._sleep_before_retry(delay, excused_until)

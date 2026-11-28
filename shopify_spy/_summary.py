@@ -2,8 +2,9 @@
 
 Provisional API. Each platform's items have their own shape (Shopify wraps the
 payload in "product"/"collection"; WooCommerce is flat, with prices in minor units;
-Magento is flat, with prices in ``price_range``; JSON-LD is the page's schema.org
-node, with prices in ``offers``); this reads any of them.
+Magento is flat, with prices in ``price_range``; BigCommerce is a GraphQL node, with
+prices in ``prices``; JSON-LD is the page's schema.org node, with prices in
+``offers``); this reads any of them.
 """
 
 from __future__ import annotations
@@ -18,7 +19,8 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from shopify_spy import _jsonld as jsonld
-from shopify_spy._magento import gallery_urls
+from shopify_spy._bigcommerce import image_list
+from shopify_spy._magento import _dig, gallery_urls
 from shopify_spy._utils import dicts
 
 logger = logging.getLogger("shopify_spy")
@@ -27,7 +29,7 @@ logger = logging.getLogger("shopify_spy")
 @dataclass(frozen=True)
 class ItemSummary:
     kind: str  # "product" or "collection"
-    platform: str  # "shopify", "woocommerce", "magento" or "jsonld"
+    platform: str  # "shopify", "woocommerce", "magento", "bigcommerce" or "jsonld"
     id: Any
     title: str | None
     min_price: Decimal | None
@@ -102,6 +104,12 @@ def is_magento(item: dict[str, Any]) -> bool:
     return item.get("platform") == "magento" and isinstance(item.get("price_range"), dict)
 
 
+def is_bigcommerce(item: dict[str, Any]) -> bool:
+    """Whether ``item`` is a scraped BigCommerce product (``summarize().asdict()`` has
+    a ``platform`` but no ``entityId``)."""
+    return item.get("platform") == "bigcommerce" and "entityId" in item
+
+
 def is_jsonld(item: dict[str, Any]) -> bool:
     """Whether ``item`` is a scraped JSON-LD product (``summarize().asdict()`` has a
     ``platform`` but no ``@type``)."""
@@ -109,11 +117,13 @@ def is_jsonld(item: dict[str, Any]) -> bool:
 
 
 def summarize(item: dict[str, Any]) -> ItemSummary:
-    """Summarize a Shopify, WooCommerce, Magento or JSON-LD item from ``scrape()``."""
+    """Summarize a Shopify, WooCommerce, Magento, BigCommerce or JSON-LD item from ``scrape()``."""
     if isinstance(item.get("product"), dict) or isinstance(item.get("collection"), dict):
         return _shopify(item)
     if is_magento(item):
         return _magento(item)
+    if is_bigcommerce(item):
+        return _bigcommerce(item)
     if is_jsonld(item):
         return _jsonld(item)
     return _woocommerce(item)
@@ -234,6 +244,36 @@ def _jsonld(item: dict[str, Any]) -> ItemSummary:
         min_price=low,
         max_price=high,
         currency=currency,
+        html_url=item.get("html_url"),
+        store=item.get("store"),
+        image_urls=[u for u in urls if isinstance(u, str)],
+    )
+
+
+def bigcommerce_price(prices: Any, *keys: str) -> tuple[Decimal | None, str | None]:
+    """The amount and currency of the BigCommerce ``Money`` at ``prices[keys...]``
+    (say ``"price"``, or ``"priceRange", "min"``), or Nones if absent."""
+    money = _dig(prices, *keys)
+    if not isinstance(money, dict):
+        return None, None
+    currency = money.get("currencyCode")
+    return _decimal(money.get("value")), currency if isinstance(currency, str) else None
+
+
+def _bigcommerce(item: dict[str, Any]) -> ItemSummary:
+    prices = item.get("prices")
+    price, price_currency = bigcommerce_price(prices, "price")
+    low, low_currency = bigcommerce_price(prices, "priceRange", "min")
+    high, high_currency = bigcommerce_price(prices, "priceRange", "max")
+    urls = item.get("image_urls") or image_list(item)
+    return ItemSummary(
+        kind="product",
+        platform="bigcommerce",
+        id=item.get("entityId"),
+        title=item.get("name"),
+        min_price=low if low is not None else price,
+        max_price=high if high is not None else price,
+        currency=low_currency or high_currency or price_currency,
         html_url=item.get("html_url"),
         store=item.get("store"),
         image_urls=[u for u in urls if isinstance(u, str)],

@@ -29,7 +29,7 @@ blocked = [s.input_url for s in result.failed if s.status == "robots_blocked"]
 spy.write_items(spy.scrape(blocked, respect_robots_txt=False), "products.jsonl", append=True)
 ```
 
-Items are plain dicts with typed definitions (`ShopifyProductItem`, `ShopifyCollectionItem`, `WooCommerceProductItem`, `MagentoProductItem`, `JsonLdProductItem`), in the native shapes described under [Output](output.md#shopify-items). Pass `platform="woocommerce"` or `platform="magento"` for those stores; Shopify is the default. `platform="jsonld"` reads any other store from the schema.org Product data on its product pages, at one request per product, so set `max_items_per_store` for a sample (see [JSON-LD stores](troubleshooting.md#json-ld-stores)). `summarize()` gives the same fields on every platform.
+Items are plain dicts with typed definitions (`ShopifyProductItem`, `ShopifyCollectionItem`, `WooCommerceProductItem`, `MagentoProductItem`, `BigCommerceProductItem`, `JsonLdProductItem`), in the native shapes described under [Output](output.md#shopify-items). Pass `platform="woocommerce"`, `platform="magento"` or `platform="bigcommerce"` for those stores; Shopify is the default. `platform="jsonld"` reads any other store from the schema.org Product data on its product pages, at one request per product, so set `max_items_per_store` for a sample (see [JSON-LD stores](troubleshooting.md#json-ld-stores)). `summarize()` gives the same fields on every platform.
 
 ## A workflow for coding agents
 
@@ -58,6 +58,8 @@ Each `StoreResult` has a `status`, an item count and sometimes a `hint`, such as
 The options match the CLI: `platform`, `products`, `collections`, `images` (with `images_dir`), `max_items_per_store`, `bail`, `concurrent_requests`, `request_timeout`, `retries`, `user_agent`, `respect_robots_txt`, `verify_tls`, `proxy`, `max_concurrent_stores`, `throttle` and the `throttle_*` settings. `help(spy.scrape)` gives each one's meaning and default.
 
 - `max_items_per_store` is per store; use `itertools.islice` for a total.
+- `throttle_min_delay` (default 1.0) is the shortest gap between page and API requests to one host (at most 1 per second), and `throttle_image_delay` (default 0.25) the shortest gap between image downloads from one host (at most 4 per second). Neither applies with `throttle=False`. A robots.txt `Crawl-delay` is honored either way, capped at `throttle_max_delay`.
+- A `Retry-After` longer than 60 seconds isn't retried early: the host is paused for it and the request ends as if its retries had run out, so a store with no successful response ends `rate_limited` for a 429 (`unavailable` for a 503). The pause is logged as a `Pausing requests to ...` warning on the `shopify_spy` logger, which shows once you configure logging (the package attaches a `NullHandler`, so nothing prints by default).
 - `proxy=` sends every request through one proxy, overriding the environment variables. See [Proxies](cli.md#proxies) for the URL forms, credentials and when a proxy helps. Through a proxy, only literal IP addresses and `localhost` names are checked against the [non-public address rule](troubleshooting.md#refused-requests-to-non-public-addresses).
 
 ## Images
@@ -66,7 +68,7 @@ The options match the CLI: `platform`, `products`, `collections`, `images` (with
 
 ## Schemas
 
-`write_items(run, "products.jsonl")` writes items as scraped. With `schema="unified"`, it writes the same one-row-per-variant records as the CLI's `--schema unified`, shared by every platform (see [Unified schema](output.md#unified-schema)), so items from Shopify, WooCommerce, Magento and JSON-LD runs can go in one file.
+`write_items(run, "products.jsonl")` writes items as scraped. With `schema="unified"`, it writes the same one-row-per-variant records as the CLI's `--schema unified`, shared by every platform (see [Unified schema](output.md#unified-schema)), so items from Shopify, WooCommerce, Magento, BigCommerce and JSON-LD runs can go in one file.
 
 - CSV and Excel are always unified; `schema="native"` raises `ValueError`.
 - `fields=[...]` picks unified columns. A name that isn't one of them is logged and left empty.

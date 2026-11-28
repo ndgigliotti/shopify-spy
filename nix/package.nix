@@ -70,10 +70,13 @@ buildPythonPackage (finalAttrs: {
     # nixpkgs also skips e2e (tight timeouts on its builders); our CI check runs them
   ];
 
+  # Tests that start a local HTTP server fail in the Darwin sandbox without this (#85)
+  __darwinAllowLocalNetworking = true;
+
   pythonImportsCheck = [ "shopify_spy" ];
 
   meta = {
-    description = "Python library and CLI to scrape product data, images, and collections from Shopify, WooCommerce, Magento and other stores";
+    description = "Python library and CLI to scrape product data, images, and collections from Shopify, WooCommerce, Magento, BigCommerce and other stores";
     homepage = "https://github.com/ndgigliotti/shopify-spy";
     changelog = "https://github.com/ndgigliotti/shopify-spy/blob/v${finalAttrs.version}/CHANGELOG.md";
     license = lib.licenses.mit;

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from typing import Any
 from xml.sax.saxutils import escape
 
 import shopify_spy as spy
+from shopify_spy import _bigcommerce
 from shopify_spy._fetch import FakeFetcher
 from shopify_spy._magento import get_api_url
 
@@ -31,6 +33,20 @@ def woo_url(page: int, store: str = STORE) -> str:
 
 def magento_url(page: int, page_size: int = 100, store: str = STORE) -> str:
     return get_api_url(store, page, page_size)
+
+
+def bigcommerce_api(store: str = STORE) -> str:
+    return _bigcommerce.get_api_url(store)
+
+
+def bc_token(**claims: Any) -> str:
+    """An unsigned three-part JWT shaped like a BigCommerce Storefront API token."""
+
+    def part(data: dict[str, Any]) -> str:
+        return base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
+
+    payload = {"iss": "BC", "sub": "BC", "cors": [STORE], "eat": 2_000_000_000, **claims}
+    return f"{part({'alg': 'ES256', 'typ': 'JWT'})}.{part(payload)}.c2lnbmF0dXJl"
 
 
 def product(i: int | str, **extra: Any) -> dict[str, Any]:

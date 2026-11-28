@@ -397,9 +397,9 @@ def write_items(
 
     ``schema="native"`` writes each item as scraped; ``schema="unified"`` writes one
     row per product variant (WooCommerce: per variation; Magento: per configurable
-    variant; JSON-LD: per ``hasVariant`` entry or per offer; collections and
-    products without variants: one row), every value a scalar, with the same
-    columns on every platform and a ``platform`` column.
+    variant; BigCommerce: per variant; JSON-LD: per ``hasVariant`` entry or per
+    offer; collections and products without variants: one row), every value a
+    scalar, with the same columns on every platform and a ``platform`` column.
     JSONL, JSON and XML default to native; CSV and XLSX are always unified
     (``schema="native"`` raises ValueError). ``fields`` picks a unified row's
     columns. Dicts that aren't scraped items, such as ``summarize().asdict()``, get

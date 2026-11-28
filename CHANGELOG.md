@@ -12,6 +12,17 @@
   without products reports `failed` with Magento's message, and one whose robots.txt
   disallows URLs with query strings (`Disallow: /*?`) gets a hint saying so
   ([#89](https://github.com/ndgigliotti/shopify-spy/issues/89)).
+- A `bigcommerce` platform (`--platform bigcommerce`, `platform="bigcommerce"`) for
+  BigCommerce Stencil storefronts, read through the Storefront GraphQL API at
+  `/graphql` with the public API token the storefront's homepage carries. Items are
+  the GraphQL product nodes plus `store`, `platform`, `html_url` and `image_urls`
+  (`BigCommerceProductItem`), and the unified schema has a row per variant. A store
+  whose homepage has no unexpired token (such as the default Cornerstone theme)
+  reports `failed` with that reason. The theme's own Stencil token is preferred
+  over app tokens, a headless storefront's page that names its
+  `store-<hash>.mybigcommerce.com/graphql` endpoint is read through it, and
+  products with more than 250 variants are paged in full
+  ([#90](https://github.com/ndgigliotti/shopify-spy/issues/90)).
 - A `jsonld` platform (`--platform jsonld`, `platform="jsonld"`) for stores on
   platforms without their own adapter. It reads the product pages listed in the
   store's sitemaps (robots.txt `Sitemap:` lines, `/sitemap.xml`,
@@ -45,6 +56,17 @@
   URLs are resolved, and names and descriptions escaped twice (`&amp;amp;`) are
   unescaped. Prices with a currency symbol or separators (`$19.99`, `1.234,56`) are
   read.
+- Throttling is more conservative by default. A robots.txt `Crawl-delay` (for the
+  `shopify-spy` group, else `*`) spaces that host's requests, capped at the
+  throttle's `max_delay` and applied even with `--no-throttle`. Throttled page and
+  API requests to one host are at least 1 second apart, set by the new
+  `--min-delay` option, config `throttle.min_delay` and library option
+  `throttle_min_delay`. Throttled image downloads from one host, the store's own
+  included, are at least 0.25 seconds apart, set by the new `--image-delay`
+  option, config `throttle.image_delay` and library option `throttle_image_delay`. A `Retry-After` longer than 60 seconds is no longer
+  retried after 60 seconds: the host is paused for the whole `Retry-After` and the
+  request ends as if its retries had run out, so a store with no successful
+  response ends `rate_limited` for a 429 (`unavailable` for a 503).
 
 ## 0.5.1
 

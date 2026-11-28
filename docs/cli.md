@@ -20,6 +20,8 @@ spy scrape --platform woocommerce https://www.example.com
 # Scrape a Magento store
 spy scrape --platform magento https://www.example.com
 
+# Scrape a BigCommerce store
+spy scrape --platform bigcommerce https://www.example.com
 # Any other store, from its product pages' JSON-LD (one request per product)
 spy scrape --platform jsonld https://www.example.com --limit 100
 
@@ -41,10 +43,10 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 
 - `URL...`: one or more store URLs (optional with `--url-file`).
 - `--url-file, -f FILE`: a file of URLs, one per line; lines starting with `#` are comments.
-- `--platform, -p PLATFORM`: `shopify` (the default), `woocommerce`, `magento` or `jsonld`. `jsonld` reads the schema.org Product data on the product pages a store's sitemaps list, for platforms without their own adapter. It is a best-effort fallback at one request per product; see [JSON-LD stores](troubleshooting.md#json-ld-stores).
+- `--platform, -p PLATFORM`: `shopify` (the default), `woocommerce`, `magento`, `bigcommerce` or `jsonld`. `jsonld` reads the schema.org Product data on the product pages a store's sitemaps list, for platforms without their own adapter. It is a best-effort fallback at one request per product; see [JSON-LD stores](troubleshooting.md#json-ld-stores).
 - `--products / --no-products`: scrape products (default: yes; Shopify only).
 - `--collections / --no-collections`: scrape collections (default: no; Shopify only).
-- `--images / --no-images`: download product images into `<output>/images/full/` (default: no). See [Images](output.md#images).
+- `--images / --no-images`: download product images into `<output>/images/full/` (default: no). Downloads from one host are at least `--image-delay` apart while throttling. See [Images](output.md#images).
 - `--limit, -n INT`: stop each store after N items. The limit is per store, which is useful for sampling or testing.
 
 ### Output
@@ -58,7 +60,9 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 
 - `--concurrent INT`: concurrent requests per host (default: 16).
 - `--max-stores INT`: stores scraped at once (default: 16).
-- `--throttle / --no-throttle`: auto-throttle requests (default: yes). See [Rate limiting](troubleshooting.md#rate-limiting).
+- `--throttle / --no-throttle`: auto-throttle requests (default: yes). `--no-throttle` drops the adaptive delay, `--min-delay` and `--image-delay`, but a robots.txt `Crawl-delay` and `Retry-After` pauses still apply. See [Rate limiting](troubleshooting.md#rate-limiting).
+- `--min-delay SECONDS`: the minimum gap between page and API requests to one host while throttling (default: 1, at most 1 request per second per host). It's a strict gap, not an average: requests never bunch up to catch up.
+- `--image-delay SECONDS`: the minimum gap between image downloads from one host while throttling, the store's own host included (default: 0.25, at most 4 images per second per host).
 - `--user-agent, -A TEXT`: a fixed User-Agent header, never swapped (default: a random browser user agent per store, swapped after a 403 or 429).
 - `--proxy URL`: send every request through this proxy; see [Proxies](#proxies).
 - `--insecure`: don't verify TLS certificates.
@@ -93,7 +97,7 @@ A config file looks like this, and `spy init` writes one to start from:
 ```yaml
 # shopify-spy.yaml
 scrape:
-  platform: shopify   # Platform: shopify, woocommerce, magento, jsonld
+  platform: shopify   # Platform: shopify, woocommerce, magento, bigcommerce, jsonld
   products: true      # Scrape product data (Shopify only)
   collections: false  # Scrape collection data (Shopify only)
   images: false       # Download product images
@@ -120,10 +124,12 @@ throttle:
   enabled: true            # Auto-throttle based on server response
   start_delay: 1           # Initial download delay (seconds)
   max_delay: 60            # Maximum download delay (seconds)
+  min_delay: 1             # Minimum seconds between page and API requests to one host
+  image_delay: 0.25        # Minimum seconds between image downloads from one host
   target_concurrency: 1.0  # Target concurrent requests (higher = faster)
 ```
 
-`network.timeout`, `network.retries`, `output.images_subdir` and the `throttle` settings other than `enabled` have no command-line option, so the config file is the only way to change them from the CLI. The library reads no config file; it takes the same settings as [options](library.md#options).
+`network.timeout`, `network.retries`, `output.images_subdir` and the `throttle` settings other than `enabled`, `min_delay` and `image_delay` have no command-line option, so the config file is the only way to change them from the CLI. The library reads no config file; it takes the same settings as [options](library.md#options).
 
 ## Proxies
 

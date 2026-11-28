@@ -51,6 +51,7 @@ _PLATFORM_NAMES = {
     "woocommerce": "WooCommerce",
     "magento": "Magento",
     "jsonld": "JSON-LD",
+    "bigcommerce": "BigCommerce",
 }
 
 _LABELS = {
