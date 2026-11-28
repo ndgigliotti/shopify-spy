@@ -23,6 +23,9 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 BAIL = 4
+# Per-host minimums off, so request spacing doesn't slow the suite or eat into BAIL;
+# a test about pacing passes throttle_floors=True to keep the real defaults
+NO_THROTTLE_FLOORS = ("--min-delay", "0", "--image-delay", "0")
 DISALLOW_ALL = b"User-agent: *\nDisallow: /\n"
 
 
@@ -306,7 +309,7 @@ def stores():
         server.shutdown()
 
 
-def _run(tmp_path, urls, *args):
+def _run(tmp_path, urls, *args, throttle_floors=False):
     result = subprocess.run(
         [
             sys.executable,
@@ -319,6 +322,7 @@ def _run(tmp_path, urls, *args):
             "--bail",
             str(BAIL),
             "--quiet",
+            *(() if throttle_floors else NO_THROTTLE_FLOORS),
             *args,
         ],
         capture_output=True,
@@ -369,7 +373,7 @@ def test_shopify_diagnosis(tmp_path, stores, transport):
 def test_crawl_delay_spaces_requests_without_throttle(tmp_path, stores, transport):
     """robots.txt Crawl-delay still applies with --no-throttle."""
     url = stores("crawl_delay")
-    statuses = _run(tmp_path, [url], "--no-throttle", *transport)
+    statuses = _run(tmp_path, [url], "--no-throttle", *transport, throttle_floors=True)
     assert statuses[url] == "ok"
     arrivals = stores.servers["crawl_delay"].RequestHandlerClass.arrivals
     pages = [t for path, t in arrivals if path.startswith("/products.json")]
@@ -407,7 +411,7 @@ def test_woocommerce_rate_limited_or_unavailable(tmp_path, stores, scenario, exp
     """A Store API 429 ends the store; a 503 falls back to product pages, which 503 too.
     Either way the store fails instead of coming up empty."""
     url = stores(scenario)
-    statuses = _run(tmp_path, [url], "--platform", "woocommerce")
+    statuses = _run(tmp_path, [url], "--platform", "woocommerce", throttle_floors=True)
     assert statuses[url] == expected
 
 
@@ -416,9 +420,7 @@ def test_woocommerce_failed_variation_listing(tmp_path, stores, scenario):
     """A refused or hanging variation listing leaves the store ok, with the listing's
     entries; a hang gives up before --bail."""
     url = stores(scenario)
-    # Several requests to one host before the first item: at the default 1 s minimum
-    # they come close to the short e2e --bail on a slow runner
-    statuses = _run(tmp_path, [url], "--platform", "woocommerce", "--min-delay", "0")
+    statuses = _run(tmp_path, [url], "--platform", "woocommerce")
     assert statuses[url] == "ok"
     [output] = tmp_path.rglob("*.jsonl")
     [item] = [json.loads(line) for line in output.read_text().splitlines()]
@@ -428,11 +430,7 @@ def test_woocommerce_failed_variation_listing(tmp_path, stores, scenario):
 def test_woocommerce_variation_rows_in_csv(tmp_path, stores):
     """The CLI's CSV gives each variation row its own price, SKU and stock."""
     url = stores("woo_variations_ok")
-    # Like the variation-listing tests above: several requests to one host before the
-    # first item would come close to the short e2e --bail at the default 1 s minimum
-    statuses = _run(
-        tmp_path, [url], "--platform", "woocommerce", "--format", "csv", "--min-delay", "0"
-    )
+    statuses = _run(tmp_path, [url], "--platform", "woocommerce", "--format", "csv")
     assert statuses[url] == "ok"
     [output] = tmp_path.rglob("*.csv")
     rows = list(csv.DictReader(output.open(newline="", encoding="utf-8")))
@@ -496,7 +494,7 @@ def forwarding_proxy():
     server.shutdown()
 
 
-def _run_verbose(tmp_path, urls, *args):
+def _run_verbose(tmp_path, urls, *args, throttle_floors=False):
     """Like _run, at DEBUG with the log inside tmp_path; returns (process, status JSON)."""
     result = subprocess.run(
         [
@@ -510,6 +508,7 @@ def _run_verbose(tmp_path, urls, *args):
             "--bail",
             str(BAIL),
             "--verbose",
+            *(() if throttle_floors else NO_THROTTLE_FLOORS),
             *args,
         ],
         capture_output=True,
