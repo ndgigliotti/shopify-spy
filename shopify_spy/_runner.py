@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib.metadata
 import logging
 import time
 import traceback
@@ -25,7 +26,15 @@ from shopify_spy import _magento as magento
 from shopify_spy import _shopify as shopify
 from shopify_spy import _squarespace as squarespace
 from shopify_spy import _woocommerce as woocommerce
-from shopify_spy._fetch import FetcherFactory, HttpxFetcher, redact_url, uses_proxy
+from shopify_spy._fetch import (
+    DEFAULT_IMPERSONATE,
+    CurlCffiFetcher,
+    FetcherFactory,
+    HttpxFetcher,
+    impersonate_rotation,
+    redact_url,
+    uses_proxy,
+)
 from shopify_spy._images import RESULT_FIELD as IMAGES_FIELD
 from shopify_spy._images import ImageDownloader
 from shopify_spy._policy import IdentityPool, ThrottleSettings, retry_policy_for
@@ -74,6 +83,10 @@ class RunConfig:
     respect_robots_txt: bool = True
     verify_tls: bool = True
     proxy: str | None = field(default=None, repr=False)
+    # The first browser profile (None = DEFAULT_IMPERSONATE); a user_agent means
+    # httpx instead
+    impersonate: str | None = None
+    rotate: bool = True  # swap the identity after a 403 or 429
     max_concurrent_stores: int | None = 16
     throttle: ThrottleSettings = field(default_factory=ThrottleSettings)
     backoff: bool = True
@@ -126,6 +139,7 @@ class StoreState:
             robots_disallowed=stats.robots_disallowed,
             rate_limited_requests=stats.rate_limits,
             images_failed=stats.images_failed,
+            identity_changes=stats.identity_changes,
             errors=list(self.errors),
             duration=duration,
             via_proxy=via_proxy,
@@ -149,6 +163,7 @@ class Runner:
         self.queue: asyncio.Queue[Any] = asyncio.Queue(QUEUE_SIZE)
         self.shutdown = asyncio.Event()
         self._driver: asyncio.Task[None] | None = None
+        self._rotation: tuple[str, ...] | None = None  # computed on first use
 
     def start(self) -> None:
         self._driver = asyncio.get_running_loop().create_task(self._drive())
@@ -188,14 +203,41 @@ class Runner:
         """Finish reason for a store that didn't end on its own."""
         return "shutdown" if self.shutdown.is_set() else "closed"
 
+    def _default_fetcher(self) -> HttpxFetcher | CurlCffiFetcher:
+        config = self.config
+        if config.proxy:
+            logger.info("Using proxy %s", redact_url(config.proxy))
+        if config.user_agent is not None:
+            return HttpxFetcher(verify=config.verify_tls, proxy=config.proxy)
+        first, *rest = self._profiles()
+        version = importlib.metadata.version("curl_cffi")
+        if config.rotate:
+            logger.info(
+                "Impersonating %s, then %s after a refusal (curl_cffi %s)",
+                first,
+                ", ".join(rest),
+                version,
+            )
+        else:
+            logger.info("Impersonating %s (curl_cffi %s)", first, version)
+        return CurlCffiFetcher(first, verify=config.verify_tls, proxy=config.proxy)
+
+    def _profiles(self) -> tuple[str, ...]:
+        if self._rotation is None:
+            start = self.config.impersonate or DEFAULT_IMPERSONATE
+            self._rotation = impersonate_rotation(start)
+        return self._rotation
+
+    def _identity(self) -> IdentityPool:
+        """A store's identity: the fixed user agent, else its browser profiles."""
+        if self.config.user_agent is not None:
+            return IdentityPool(user_agent=self.config.user_agent)
+        return IdentityPool(profiles=self._profiles(), rotation=self.config.rotate)
+
     async def _drive(self) -> None:
         watcher: asyncio.Task[None] | None = None
         try:
-            factory = self.config.fetcher_factory or (
-                lambda: HttpxFetcher(verify=self.config.verify_tls, proxy=self.config.proxy)
-            )
-            if self.config.fetcher_factory is None and self.config.proxy:
-                logger.info("Using proxy %s", redact_url(self.config.proxy))
+            factory = self.config.fetcher_factory or self._default_fetcher
             # A custom transport's resolution is unknown, and test transports use
             # made-up hosts that must not reach DNS
             resolver = None if self.config.fetcher_factory else _direct_resolver(self.config.proxy)
@@ -253,7 +295,7 @@ class Runner:
             fetcher=fetcher,
             registry=registry,
             retry=retry_policy_for(fetcher.capabilities, config.retries, config.backoff),
-            identity=IdentityPool(user_agent=config.user_agent),
+            identity=self._identity(),
             request_timeout=config.request_timeout,
             store_url=state.url,
         )

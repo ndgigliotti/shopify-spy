@@ -11,6 +11,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from shopify_spy._fetch import validate_proxy
+from shopify_spy._utils import blank_to_none
 
 OutputFormat = Literal["json", "jsonl", "csv", "xlsx", "xml"]
 OutputSchema = Literal["native", "unified"]
@@ -59,16 +60,24 @@ class NetworkConfig(BaseModel):
     concurrent_requests: int = Field(default=16, ge=1)
     timeout: int = Field(default=180, ge=1)
     retries: int = Field(default=2, ge=0)
-    user_agent: str | None = None  # None = random browser UA, swapped after a 403 or 429
+    user_agent: str | None = None  # Set: httpx with exactly this UA, never swapped
     respect_robots_txt: bool = True
     verify_tls: bool = True
     max_concurrent_stores: int | None = Field(default=16, ge=1)  # None = no limit
     proxy: str | None = None  # None = HTTPS_PROXY/HTTP_PROXY/ALL_PROXY from the environment
+    # First browser profile (None = chrome), checked when the run starts
+    impersonate: str | None = None
+    rotate: bool = True  # Switch browser profile after a 403 or 429
 
     @field_validator("proxy")
     @classmethod
     def _check_proxy(cls, value: str | None) -> str | None:
         return None if value is None else validate_proxy(value)
+
+    @field_validator("user_agent")
+    @classmethod
+    def _blank_user_agent(cls, value: str | None) -> str | None:
+        return blank_to_none(value)
 
 
 class ThrottleConfig(BaseModel):
@@ -109,6 +118,8 @@ class Config(BaseModel):
             "verify_tls": self.network.verify_tls,
             "max_concurrent_stores": self.network.max_concurrent_stores,
             "proxy": self.network.proxy,
+            "impersonate": self.network.impersonate,
+            "rotate": self.network.rotate,
             "throttle": self.throttle.enabled,
             "throttle_start_delay": self.throttle.start_delay,
             "throttle_max_delay": self.throttle.max_delay,
@@ -148,8 +159,10 @@ network:
   concurrent_requests: 16  # Concurrent requests per host
   timeout: 180             # Request timeout (seconds)
   retries: 2               # Retry failed requests
-  # user_agent: MyBot/1.0 (+https://example.com)  # Custom user agent
+  # user_agent: MyBot/1.0 (+https://example.com)  # Custom user agent (turns impersonation off)
   # proxy: http://proxy.example.com:8080  # Fixed proxy (overrides HTTPS_PROXY)
+  # impersonate: safari  # First browser profile (default chrome)
+  rotate: true             # Try another browser profile after a 403 or 429 (false = --no-rotate)
   respect_robots_txt: true
   verify_tls: true         # Verify TLS certificates (false = --insecure)
   max_concurrent_stores: 16  # Stores scraped at once
