@@ -391,10 +391,10 @@ class Runner:
 def _report_no_item_reason(state: StoreState, ctx: StoreContext, bail: float) -> None:
     """Make a bailed store an error with the adapter's reason for having no item.
 
-    Not when a request was rate limited: a 429 that retries didn't get past is the
-    likelier cause, and the store ends rate_limited.
+    Also when pages were rate limited, which the reason counts: the store then ends
+    as it would have without --bail.
     """
-    if ctx.no_item_reason is not None and ctx.session.stats.rate_limits == 0:
+    if ctx.no_item_reason is not None:
         state.errored = True
         state.errors.append(
             f"{ctx.no_item_reason}; stopped at --bail ({bail:g}s); raise --bail to check more pages"

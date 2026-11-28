@@ -705,13 +705,15 @@ def test_bail_with_no_page_back_times_out():
     assert s.errors == []
 
 
-def test_bail_with_rate_limited_pages_is_rate_limited():
+def test_bail_with_rate_limited_pages_is_an_error():
+    # As without --bail (test_short_all_429_listing_is_an_error)
     routes = store(60, page=lambda i: slow((429, ""), 0.2))
     _, result, _ = scrape_ld(routes, bail=0.5, retries=0)
     [s] = result.stores
-    assert s.status == "rate_limited"
+    assert s.status == "error"
     assert s.finish_reason == "bail"
-    assert s.errors == []
+    assert "answered 429" in s.errors[0]
+    assert "stopped at --bail (0.5s)" in s.errors[0]
 
 
 def test_retry_after_wait_outlasts_bail():
