@@ -28,7 +28,7 @@ uv add shopify-spy        # or: pip install shopify-spy
 
 # Or run either once, nothing to install
 uvx shopify-spy scrape --peek https://www.example.com
-uv run --with 'shopify-spy>=0.4' python script.py
+uv run --with 'shopify-spy>=0.6' python script.py
 
 # Excel output (--format xlsx) needs the excel extra: install 'shopify-spy[excel]'
 ```
@@ -88,7 +88,7 @@ for store in run.result.failed:
 
 ### With a coding agent
 
-An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an item's shape, and a script run with `uv run --with 'shopify-spy>=0.4' python script.py` filters and saves only what the task needs. The CLI is simpler for whole-catalog dumps and image downloads. Everything an agent needs to work this out is in `spy scrape --help`, which prints plain, complete text when piped, and in `help(spy.scrape)`.
+An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an item's shape, and a script run with `uv run --with 'shopify-spy>=0.6' python script.py` filters and saves only what the task needs. The CLI is simpler for whole-catalog dumps and image downloads. Everything an agent needs to work this out is in `spy scrape --help`, which prints plain, complete text when piped, and in `help(spy.scrape)`.
 
 ## Features
 
