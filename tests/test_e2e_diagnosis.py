@@ -432,8 +432,11 @@ def test_site_owner_block_all(tmp_path, stores, transport):
     assert _run(tmp_path, [url], *transport)[url] == "blocked by robots.txt"
     hits = stores.servers["owner_block_all"].RequestHandlerClass.hits
     assert set(hits) == {"/robots.txt"}
-    # Crossing the opt-out takes --ignore-robots
-    assert _run(tmp_path, [url], "--ignore-robots", *transport)[url] == "ok"
+    # Crossing the opt-out takes --ignore-robots. A fresh output directory, since _run
+    # reads whichever status file it globs first
+    ignored = tmp_path / "ignored"
+    ignored.mkdir()
+    assert _run(ignored, [url], "--ignore-robots", *transport)[url] == "ok"
 
 
 def test_site_owner_block_path(tmp_path, stores, transport):
