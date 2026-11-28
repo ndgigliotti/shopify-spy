@@ -33,10 +33,17 @@ from typing import Any
 
 from shopify_spy import _generic as generic
 from shopify_spy._session import Emit, RequestFailed, StoreContext
-from shopify_spy._utils import canonicalize_url, hostname
+from shopify_spy._utils import canonicalize_url, dicts, hostname
 from shopify_spy._woocommerce import GONE
 
-__all__ = ["PRODUCT_SHAPE", "SquarespaceError", "collection_path", "is_product_url", "run"]
+__all__ = [
+    "PRODUCT_SHAPE",
+    "SquarespaceError",
+    "collection_path",
+    "image_urls",
+    "is_product_url",
+    "run",
+]
 
 logger = logging.getLogger("shopify_spy")
 
@@ -329,14 +336,14 @@ def _item(record: dict[str, Any], ctx: StoreContext) -> dict[str, Any]:
         "store": urllib.parse.urlsplit(ctx.url).netloc,
         "platform": "squarespace",
         "html_url": html_url,
-        "image_urls": _image_urls(record) if ctx.images else [],
+        "image_urls": image_urls(record) if ctx.images else [],
         "source": "format_json",
     }
 
 
-def _image_urls(record: dict[str, Any]) -> list[str]:
-    """The record's images (``items``, else ``assetUrl``), then its variants'
-    ``mainImage`` not already listed."""
+def image_urls(record: dict[str, Any], *, variants: bool = True) -> list[str]:
+    """The record's images (``items``, else ``assetUrl``), then, with ``variants``, its
+    variants' ``mainImage`` not already listed."""
     images = record.get("items")
     urls = [
         image["assetUrl"]
@@ -345,8 +352,9 @@ def _image_urls(record: dict[str, Any]) -> list[str]:
     ]
     if not urls and isinstance(record.get("assetUrl"), str):
         urls = [record["assetUrl"]]
-    for variant in record["structuredContent"]["variants"]:
-        image = variant.get("mainImage") if isinstance(variant, dict) else None
+    content = record.get("structuredContent")
+    for variant in dicts(content.get("variants")) if variants and isinstance(content, dict) else []:
+        image = variant.get("mainImage")
         url = image.get("assetUrl") if isinstance(image, dict) else None
         if isinstance(url, str) and url not in urls:
             urls.append(url)
