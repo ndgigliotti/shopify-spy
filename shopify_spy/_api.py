@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from shopify_spy._fetch import (
     DEFAULT_IMPERSONATE,
     IMPERSONATE_PROFILES,
+    ca_locations,
     check_proxy_support,
     validate_impersonate,
 )
@@ -118,6 +119,8 @@ def _prepare(
         )
     if opts.fetcher_factory is None:  # a custom transport ignores the transport settings
         check_proxy_support(opts.proxy)
+        if opts.verify_tls:
+            ca_locations()  # a bad CA variable fails here, not once the run is under way
         if opts.impersonate is not None:
             validate_impersonate(opts.impersonate)
     if opts.images and opts.images_dir is None:
@@ -511,7 +514,8 @@ _SCRAPE_DOC = """
             at ``throttle_max_delay`` and applied even with ``throttle=False``.
         verify_tls: Verify TLS certificates (default {verify_tls}), against certifi's
             bundle, or instead the CA file in SSL_CERT_FILE, else REQUESTS_CA_BUNDLE,
-            else CURL_CA_BUNDLE, and the directory in SSL_CERT_DIR, read at run time.
+            else CURL_CA_BUNDLE, and the directory in SSL_CERT_DIR, read at run time;
+            a CA file that can't be read raises ValueError.
         proxy: A fixed proxy URL for every request: http://, https:// or socks5://.
             It overrides HTTPS_PROXY, HTTP_PROXY and ALL_PROXY, which are otherwise
             honored (with NO_PROXY); an explicit proxy ignores NO_PROXY. Credentials

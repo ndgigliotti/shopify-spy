@@ -41,6 +41,7 @@ from shopify_spy._fetch import (
     DEFAULT_IMPERSONATE,
     IMPERSONATE_PROFILES,
     FetcherFactory,
+    ca_locations,
     check_proxy_support,
     validate_impersonate,
     validate_proxy,
@@ -577,6 +578,8 @@ def _check_options(config: Config, peek: bool) -> None:
         _check_impersonate(config.network.impersonate, config.network.user_agent)
     if FETCHER_FACTORY is None:
         check_proxy_support(config.network.proxy)
+        if config.network.verify_tls:
+            ca_locations()  # a bad CA variable fails here, not once the run is under way
 
 
 def _check_impersonate(target: str, user_agent: str | None) -> None:

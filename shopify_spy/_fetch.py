@@ -463,11 +463,24 @@ def ca_locations(trust_env: bool = True) -> tuple[str | None, str | None]:
     set, the directory (OpenSSL's hashed layout) from SSL_CERT_DIR. Either one, or
     both together, replaces the default bundle, as httpx does with SSL_CERT_FILE.
     (None, None) means certifi's bundle.
+
+    Raises ValueError, naming the variable, for a file that can't be opened: httpx
+    would fail building its client and curl on every request, each its own way.
     """
     if not trust_env:
         return None, None
-    cafile = next((v for name in _CA_FILE_VARIABLES if (v := os.environ.get(name))), None)
-    return cafile, os.environ.get("SSL_CERT_DIR") or None
+    cafile = None
+    for name in _CA_FILE_VARIABLES:
+        if cafile := os.environ.get(name):
+            try:
+                open(cafile, "rb").close()
+            except OSError as exc:
+                raise ValueError(
+                    f"{name} in the environment: can't read the CA file {cafile!r} "
+                    f"({exc.strerror or exc})"
+                ) from None
+            break
+    return cafile or None, os.environ.get("SSL_CERT_DIR") or None
 
 
 def _ssl_context(trust_env: bool) -> ssl.SSLContext:

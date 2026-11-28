@@ -524,6 +524,14 @@ def test_unknown_impersonate_target_is_a_clean_error():
     assert "Traceback" not in err
 
 
+def test_unreadable_ca_file_is_a_clean_error(ca_env, tmp_path):
+    ca_env.setenv("CURL_CA_BUNDLE", str(tmp_path / "nonexistent.pem"))
+    code, err = _scrape_without_fake()
+    assert code == 1
+    assert "Error: CURL_CA_BUNDLE in the environment: can't read the CA file" in err
+    assert "Traceback" not in err
+
+
 @pytest.mark.parametrize("in_config", [False, True])
 def test_impersonate_with_user_agent_is_a_clean_error(cli, tmp_path, in_config):
     if in_config:

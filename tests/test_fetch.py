@@ -499,18 +499,32 @@ def test_validate_impersonate_rejects(target):
     ("env", "expected"),
     [
         ({}, (None, None)),
-        ({"SSL_CERT_FILE": "/a", "REQUESTS_CA_BUNDLE": "/b", "CURL_CA_BUNDLE": "/c"}, ("/a", None)),
-        ({"REQUESTS_CA_BUNDLE": "/b", "CURL_CA_BUNDLE": "/c"}, ("/b", None)),
-        ({"CURL_CA_BUNDLE": "/c"}, ("/c", None)),
-        ({"SSL_CERT_FILE": "", "CURL_CA_BUNDLE": "/c"}, ("/c", None)),
-        ({"SSL_CERT_DIR": "/d"}, (None, "/d")),
-        ({"SSL_CERT_FILE": "/a", "SSL_CERT_DIR": "/d"}, ("/a", "/d")),
+        ({"SSL_CERT_FILE": "a", "REQUESTS_CA_BUNDLE": "b", "CURL_CA_BUNDLE": "c"}, ("a", None)),
+        ({"REQUESTS_CA_BUNDLE": "b", "CURL_CA_BUNDLE": "c"}, ("b", None)),
+        ({"CURL_CA_BUNDLE": "c"}, ("c", None)),
+        ({"SSL_CERT_FILE": "", "CURL_CA_BUNDLE": "c"}, ("c", None)),
+        ({"SSL_CERT_DIR": "d"}, (None, "d")),
+        ({"SSL_CERT_FILE": "a", "SSL_CERT_DIR": "d"}, ("a", "d")),
     ],
 )
-def test_ca_locations_precedence(ca_env, env, expected):
+def test_ca_locations_precedence(ca_env, tmp_path, env, expected):
+    for name in "abc":
+        (tmp_path / name).write_text("")
+    (tmp_path / "d").mkdir()
     for name, value in env.items():
-        ca_env.setenv(name, value)
-    assert ca_locations() == expected
+        ca_env.setenv(name, value and str(tmp_path / value))
+    assert ca_locations() == tuple(value and str(tmp_path / value) for value in expected)
+    assert ca_locations(trust_env=False) == (None, None)
+
+
+@pytest.mark.parametrize("variable", ["SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"])
+@pytest.mark.parametrize("missing", [True, False])
+def test_unreadable_ca_file_names_the_variable(ca_env, tmp_path, variable, missing):
+    """A missing file, or a directory, never quietly falls back to another bundle."""
+    location = str(tmp_path / "nonexistent.pem") if missing else str(tmp_path)
+    ca_env.setenv(variable, location)
+    with pytest.raises(ValueError, match=f"^{variable} in the environment: can't read"):
+        ca_locations()
     assert ca_locations(trust_env=False) == (None, None)
 
 
@@ -533,12 +547,14 @@ def _both(cafile, capath) -> dict:
     return {"cainfo": cafile, "capath": capath, "proxy_cainfo": cafile, "proxy_capath": capath}
 
 
-async def test_curl_session_reads_the_ca_file_when_it_opens(ca_env):
+async def test_curl_session_reads_the_ca_file_when_it_opens(ca_env, tmp_path):
     """Set after import; the file stands in as the unused directory."""
-    ca_env.setenv("REQUESTS_CA_BUNDLE", "/ca/file.pem")
-    assert await _curl_ca() == _both("/ca/file.pem", "/ca/file.pem")
-    ca_env.setenv("SSL_CERT_DIR", "/ca/dir")
-    assert await _curl_ca() == _both("/ca/file.pem", "/ca/dir")
+    cafile = str(tmp_path / "file.pem")
+    (tmp_path / "file.pem").write_text("")
+    ca_env.setenv("REQUESTS_CA_BUNDLE", cafile)
+    assert await _curl_ca() == _both(cafile, cafile)
+    ca_env.setenv("SSL_CERT_DIR", str(tmp_path))
+    assert await _curl_ca() == _both(cafile, str(tmp_path))
 
 
 async def test_curl_session_reads_the_ca_directory_when_it_opens(ca_env, tmp_path):

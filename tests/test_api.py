@@ -702,6 +702,14 @@ def test_unknown_impersonate_target_raises_at_call_time():
         spy.scrape("a.com", impersonate="nosuchbrowser")
 
 
+def test_unreadable_ca_file_raises_at_call_time(monkeypatch, ca_env, tmp_path):
+    ca_env.setenv("SSL_CERT_FILE", str(tmp_path / "nonexistent.pem"))
+    with pytest.raises(ValueError, match="^SSL_CERT_FILE in the environment"):
+        spy.scrape("a.com")
+    _record_transports(monkeypatch)
+    assert len(list(spy.scrape(STORE, verify_tls=False, **FAST))) == 2
+
+
 def test_custom_fetcher_ignores_impersonate(monkeypatch):
     monkeypatch.setitem(sys.modules, "curl_cffi", None)  # neither imported nor validated
     items, _, _ = scrape(ok_routes(), impersonate="nosuchbrowser")

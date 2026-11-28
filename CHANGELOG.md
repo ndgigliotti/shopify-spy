@@ -33,7 +33,8 @@
   and the directory in `SSL_CERT_DIR`, either one replacing certifi's bundle as
   `SSL_CERT_FILE` already did. httpx now reads `REQUESTS_CA_BUNDLE` and
   `CURL_CA_BUNDLE` too, and trusts `SSL_CERT_DIR` alongside `SSL_CERT_FILE`
-  rather than ignoring it when both are set.
+  rather than ignoring it when both are set. A CA file that can't be read
+  stops the run before it starts, naming the variable, on both transports.
 - After a 403 or 429, a store switches to another browser profile to test
   whether the refusal is about identity: only after the retry's usual backoff,
   within the existing retries, and never again for that store if the new profile

@@ -602,6 +602,13 @@ async def test_ca_from_the_environment_replaces_the_default(
 
 
 @pytest.mark.parametrize("transport", ["curl", "httpx"])
+async def test_unreadable_ca_file_fails_the_same_way(tls_server, tmp_path, ca_env, transport):
+    ca_env.setenv("REQUESTS_CA_BUNDLE", str(tmp_path / "nonexistent.pem"))
+    with pytest.raises(ValueError, match="^REQUESTS_CA_BUNDLE in the environment"):
+        await fetch(f"{tls_server}/ok", transport)
+
+
+@pytest.mark.parametrize("transport", ["curl", "httpx"])
 async def test_trust_env_off_ignores_the_ca_environment(
     tls, tls_server, tmp_path, ca_env, transport
 ):
