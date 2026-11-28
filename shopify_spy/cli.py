@@ -1043,7 +1043,8 @@ def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
     if StoreStatus.tls_error in present:
         hints.append(
             "TLS certificate verification failed. "
-            "Retry with [bold]--insecure[/bold] to skip verification."
+            "Retry with [bold]--insecure[/bold] to skip verification, or behind a "
+            "company proxy point SSL_CERT_FILE or SSL_CERT_DIR at its CA."
         )
     if StoreStatus.no_response in present:
         hints.append("No responses received. Check the URL and your network connection.")

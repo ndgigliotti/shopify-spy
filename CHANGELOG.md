@@ -27,8 +27,13 @@
   `safari`, `firefox` or any other curl_cffi target. Setting your own
   `--user-agent` (`network.user_agent`, `user_agent=`) is the only way to send
   plain httpx requests, with exactly that string and never switched; it can't be
-  combined with `--impersonate`, and a blank one counts as unset. A custom CA is
-  trusted through `SSL_CERT_FILE`; curl_cffi doesn't read `SSL_CERT_DIR`.
+  combined with `--impersonate`, and a blank one counts as unset.
+- Both transports trust the same CAs, read from the environment during the run:
+  the file in `SSL_CERT_FILE`, else `REQUESTS_CA_BUNDLE`, else `CURL_CA_BUNDLE`,
+  and the directory in `SSL_CERT_DIR`, either one replacing certifi's bundle as
+  `SSL_CERT_FILE` already did. httpx now reads `REQUESTS_CA_BUNDLE` and
+  `CURL_CA_BUNDLE` too, and trusts `SSL_CERT_DIR` alongside `SSL_CERT_FILE`
+  rather than ignoring it when both are set.
 - After a 403 or 429, a store switches to another browser profile to test
   whether the refusal is about identity: only after the retry's usual backoff,
   within the existing retries, and never again for that store if the new profile

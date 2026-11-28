@@ -12,6 +12,7 @@
   hatchling,
 
   # dependencies
+  certifi,
   curl-cffi,
   defusedxml,
   httpx,
@@ -42,6 +43,7 @@ buildPythonPackage (finalAttrs: {
   build-system = [ hatchling ];
 
   dependencies = [
+    certifi
     curl-cffi
     defusedxml
     httpx

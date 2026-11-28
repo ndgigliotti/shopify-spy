@@ -19,6 +19,7 @@ from shopify_spy._fetch import (
     ACCEPT_ENCODING,
     DEFAULT_IMPERSONATE,
     IMPERSONATE_PROFILES,
+    CurlCffiFetcher,
     FakeFetcher,
     FetchConnectionError,
     FetchIncomplete,
@@ -33,6 +34,7 @@ from shopify_spy._fetch import (
     Response,
     Seq,
     _is_cert_error,
+    ca_locations,
     check_proxy_support,
     decompress,
     encode_proxy_userinfo,
@@ -491,6 +493,88 @@ def test_validate_impersonate_rejects(target):
     with pytest.raises(ValueError, match="chrome, firefox or safari") as info:
         validate_impersonate(target)
     assert repr(target) in str(info.value)
+
+
+CA_VARIABLES = ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_DIR")
+
+
+@pytest.fixture
+def ca_env(monkeypatch):
+    for name in CA_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    return monkeypatch
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({}, (None, None)),
+        ({"SSL_CERT_FILE": "/a", "REQUESTS_CA_BUNDLE": "/b", "CURL_CA_BUNDLE": "/c"}, ("/a", None)),
+        ({"REQUESTS_CA_BUNDLE": "/b", "CURL_CA_BUNDLE": "/c"}, ("/b", None)),
+        ({"CURL_CA_BUNDLE": "/c"}, ("/c", None)),
+        ({"SSL_CERT_FILE": "", "CURL_CA_BUNDLE": "/c"}, ("/c", None)),
+        ({"SSL_CERT_DIR": "/d"}, (None, "/d")),
+        ({"SSL_CERT_FILE": "/a", "SSL_CERT_DIR": "/d"}, ("/a", "/d")),
+    ],
+)
+def test_ca_locations_precedence(ca_env, env, expected):
+    for name, value in env.items():
+        ca_env.setenv(name, value)
+    assert ca_locations() == expected
+    assert ca_locations(trust_env=False) == (None, None)
+
+
+async def _curl_ca(**kwargs) -> dict:
+    from curl_cffi import CurlOpt, ffi
+
+    names = {
+        CurlOpt.CAINFO: "cainfo",
+        CurlOpt.CAPATH: "capath",
+        CurlOpt.PROXY_CAINFO: "proxy_cainfo",
+        CurlOpt.PROXY_CAPATH: "proxy_capath",
+    }
+    async with CurlCffiFetcher("chrome", **kwargs) as fetcher:
+        options = fetcher._session("chrome").curl_options
+    found = {names[key]: value for key, value in options.items() if key in names}
+    return {key: None if value == ffi.NULL else value for key, value in found.items()}
+
+
+def _both(cafile, capath) -> dict:
+    return {"cainfo": cafile, "capath": capath, "proxy_cainfo": cafile, "proxy_capath": capath}
+
+
+async def test_curl_session_reads_the_ca_file_when_it_opens(ca_env):
+    """Set after import; the file stands in as the unused directory."""
+    ca_env.setenv("REQUESTS_CA_BUNDLE", "/ca/file.pem")
+    assert await _curl_ca() == _both("/ca/file.pem", "/ca/file.pem")
+    ca_env.setenv("SSL_CERT_DIR", "/ca/dir")
+    assert await _curl_ca() == _both("/ca/file.pem", "/ca/dir")
+
+
+async def test_curl_session_reads_the_ca_directory_when_it_opens(ca_env, tmp_path):
+    """A hashed certificate from the directory stands in as the unused file."""
+    (tmp_path / "ca.pem").write_text("-----BEGIN CERTIFICATE-----\n")
+    (tmp_path / "0123abcd.r0").write_text("-----BEGIN X509 CRL-----\n")
+    (tmp_path / "89abcdef.0").write_text("-----BEGIN CERTIFICATE-----\n")
+    ca_env.setenv("SSL_CERT_DIR", str(tmp_path))
+    assert await _curl_ca() == _both(str(tmp_path / "89abcdef.0"), str(tmp_path))
+    (tmp_path / "89abcdef.0").unlink()
+    assert await _curl_ca() == _both(None, str(tmp_path))
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"trust_env": False}])
+async def test_curl_session_uses_certifi_otherwise(ca_env, kwargs):
+    import certifi
+
+    if kwargs:
+        ca_env.setenv("SSL_CERT_FILE", "/ca/file.pem")
+        ca_env.setenv("SSL_CERT_DIR", "/ca/dir")
+    assert await _curl_ca(**kwargs) == _both(certifi.where(), certifi.where())
+
+
+async def test_curl_session_without_verification_sets_no_ca(ca_env):
+    ca_env.setenv("SSL_CERT_FILE", "/ca/file.pem")
+    assert await _curl_ca(verify=False) == {}
 
 
 def test_explicit_proxy_is_always_used(clean_proxy_env):

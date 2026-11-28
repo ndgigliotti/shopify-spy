@@ -54,6 +54,7 @@ dependencies = [
     "protego>=0.4",
     "defusedxml>=0.7",
     "curl_cffi>=0.16.3,<0.18",
+    "certifi",
 ]
 
 [project.optional-dependencies]

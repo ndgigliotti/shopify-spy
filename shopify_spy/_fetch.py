@@ -13,6 +13,7 @@ import http.cookiejar
 import ipaddress
 import json
 import logging
+import os
 import re
 import ssl
 import urllib.parse
@@ -449,10 +450,38 @@ def check_proxy_support(proxy: str | None) -> None:
             raise ValueError(f"NO_PROXY in the environment: bad entry {host!r} ({exc})") from None
 
 
+_CA_FILE_VARIABLES = ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
+
+
+def ca_locations(trust_env: bool = True) -> tuple[str | None, str | None]:
+    """The CA file and directory both fetchers trust instead of certifi's bundle.
+
+    Read from the environment when called, and only with ``trust_env``: the file
+    from the first of SSL_CERT_FILE, REQUESTS_CA_BUNDLE and CURL_CA_BUNDLE that is
+    set, the directory (OpenSSL's hashed layout) from SSL_CERT_DIR. Either one, or
+    both together, replaces the default bundle, as httpx does with SSL_CERT_FILE.
+    (None, None) means certifi's bundle.
+    """
+    if not trust_env:
+        return None, None
+    cafile = next((v for name in _CA_FILE_VARIABLES if (v := os.environ.get(name))), None)
+    return cafile, os.environ.get("SSL_CERT_DIR") or None
+
+
+def _ssl_context(trust_env: bool) -> ssl.SSLContext:
+    import certifi
+
+    cafile, capath = ca_locations(trust_env)
+    if cafile is None and capath is None:
+        cafile = certifi.where()
+    return ssl.create_default_context(cafile=cafile, capath=capath)
+
+
 class HttpxFetcher:
     """Default transport: httpx over HTTP/1.1, one hop per fetch.
 
     An explicit ``proxy`` replaces any proxy from the environment (NO_PROXY included).
+    CAs come from ca_locations, read on entry.
     """
 
     capabilities = FetcherCapabilities()
@@ -471,7 +500,8 @@ class HttpxFetcher:
         self._client = httpx.AsyncClient(
             http1=True,
             http2=False,
-            verify=self._verify,
+            # An SSLContext, so httpx's own reading of SSL_CERT_FILE/DIR never applies
+            verify=_ssl_context(self._trust_env) if self._verify else False,
             trust_env=self._trust_env,
             proxy=self._proxy,
             follow_redirects=False,
@@ -577,6 +607,49 @@ def _scrub(message: str, proxy: str | None) -> str:
     return message.replace(proxy, redact_url(proxy)) if proxy else message
 
 
+def _curl_ca_options(trust_env: bool) -> dict[Any, Any]:
+    """libcurl options for ca_locations, for the store and the proxy alike.
+
+    Both locations are always set, so neither curl_cffi's import-time CA file nor
+    libcurl's built-in CA directory adds to them. An unused one gets a placeholder,
+    not NULL: the libcurl in curl_cffi 0.16 (8.21) takes NULL as the built-in default.
+    A CA file stands in as the directory (nothing can be found under a file), and
+    a certificate from the directory as the file (the directory trusts it anyway).
+    """
+    from curl_cffi import CurlOpt, ffi
+
+    cafile, capath = ca_locations(trust_env)
+    if cafile is None:
+        import certifi
+
+        cafile = _hashed_cert_in(capath) if capath else certifi.where()
+    options: dict[Any, Any] = {
+        CurlOpt.CAINFO: cafile or ffi.NULL,  # NULL only for a directory without one
+        CurlOpt.CAPATH: capath or cafile,
+    }
+    options[CurlOpt.PROXY_CAINFO] = options[CurlOpt.CAINFO]
+    options[CurlOpt.PROXY_CAPATH] = options[CurlOpt.CAPATH]
+    return options
+
+
+def _hashed_cert_in(directory: str) -> str | None:
+    """A PEM certificate the directory serves under its hashed name, if any."""
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError:
+        return None
+    for name in names:
+        if re.fullmatch(r"[0-9a-f]{8}\.\d+", name):
+            path = os.path.join(directory, name)
+            try:
+                with open(path, "rb") as file:
+                    if b"CERTIFICATE-----" in file.read(65536):
+                        return path
+            except OSError:
+                continue
+    return None
+
+
 class CurlCffiFetcher:
     """Transport that presents a browser profile's TLS and HTTP/2 fingerprint and
     headers, through curl_cffi. One hop per fetch.
@@ -584,8 +657,7 @@ class CurlCffiFetcher:
     It keeps HttpxFetcher's contract: no redirects followed, no cookies kept, the
     MAX_SIZE cap, the same errors, a total deadline on the loop clock, and proxies
     chosen by httpx's rules (an explicit ``proxy`` replaces the environment's).
-    CA trust differs: curl_cffi reads SSL_CERT_FILE (and CURL_CA_BUNDLE or
-    REQUESTS_CA_BUNDLE) once, at import, and never SSL_CERT_DIR.
+    CAs come from ca_locations, read when each session opens.
     Each request uses ``Request.identity.impersonate``, or ``impersonate`` when that
     is None. The profile brings its own user agent and headers, so the identity's
     are never applied; ``Request.headers`` override the profile's.
@@ -598,10 +670,12 @@ class CurlCffiFetcher:
         impersonate: str = DEFAULT_IMPERSONATE,
         *,
         verify: bool = True,
+        trust_env: bool = True,
         proxy: str | None = None,
     ) -> None:
         self._impersonate = impersonate
         self._verify = verify
+        self._trust_env = trust_env
         self._proxy = None if proxy is None else encode_proxy_userinfo(proxy)
         # One session per (profile, raw): a session's connections keep the TLS and
         # HTTP/2 settings of the profile that opened them, so profiles never share
@@ -655,6 +729,7 @@ class CurlCffiFetcher:
             curl_options={
                 CurlOpt.NOPROXY: "",
                 **({CurlOpt.HTTP_CONTENT_DECODING: 0} if raw else {}),
+                **(_curl_ca_options(self._trust_env) if self._verify is True else {}),
             },
         )
         return session
@@ -674,7 +749,7 @@ class CurlCffiFetcher:
             # libcurl would read file:// and open dict://, ftp:// and the rest;
             # httpx raises UnsupportedProtocol, a transport error
             raise FetchConnectionError(f"unsupported protocol in {request.url!r}")
-        proxy = self._proxy or env_proxy_for(request.url)
+        proxy = self._proxy or (env_proxy_for(request.url) if self._trust_env else None)
         if proxy:
             proxy = _socks_on_proxy(proxy)
         # proxies={"all": ""} sets an empty CURLOPT_PROXY: direct, whatever the

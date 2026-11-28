@@ -7,6 +7,7 @@ redirects, cookies, sizes, encodings, deadlines, errors and proxies.
 import asyncio
 import base64
 import gzip
+import hashlib
 import http.server
 import json
 import selectors
@@ -19,6 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 import trustme
+from cryptography import x509
 
 from shopify_spy import _fetch
 from shopify_spy._api import _PausedClockLoop
@@ -31,6 +33,7 @@ from shopify_spy._fetch import (
     FetchTimeout,
     FetchTLSError,
     FetchTooLarge,
+    HttpxFetcher,
     Identity,
     Request,
 )
@@ -506,6 +509,126 @@ async def test_self_signed_certificate(tls_server):
     assert (response.status, response.body) == (200, b"ok")
 
 
+def _der(tag: int, body: bytes) -> bytes:
+    size = len(body)
+    if size < 0x80:
+        return bytes([tag, size]) + body
+    length = size.to_bytes((size.bit_length() + 7) // 8, "big")
+    return bytes([tag, 0x80 | len(length)]) + length + body
+
+
+def _subject_hash(pem: bytes) -> str:
+    """OpenSSL's ``x509 -subject_hash``, the file name a CA directory looks up.
+
+    The hash of the subject's canonical form: each RDN as a DER SET of its
+    attributes, values as lowercased UTF8Strings with whitespace collapsed.
+    """
+    out = b""
+    for rdn in x509.load_pem_x509_certificate(pem).subject.rdns:
+        attributes = []
+        for attribute in rdn:
+            first, second, *rest = (int(p) for p in attribute.oid.dotted_string.split("."))
+            oid = bytes([40 * first + second])
+            for arc in rest:
+                chunk = [arc & 0x7F]
+                while arc := arc >> 7:
+                    chunk.append(0x80 | (arc & 0x7F))
+                oid += bytes(reversed(chunk))
+            value = " ".join(str(attribute.value).split()).lower().encode()
+            attributes.append(_der(0x30, _der(0x06, oid) + _der(0x0C, value)))
+        out += _der(0x31, b"".join(sorted(attributes)))
+    return f"{int.from_bytes(hashlib.sha1(out).digest()[:4], 'little'):08x}"
+
+
+CA_VARIABLES = ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_DIR")
+
+
+def _make_fetcher(transport: str, **kwargs):
+    return CurlCffiFetcher("chrome", **kwargs) if transport == "curl" else HttpxFetcher(**kwargs)
+
+
+async def _fetch_with(transport: str, url: str, **kwargs) -> _fetch.Response:
+    async with _make_fetcher(transport, **kwargs) as fetcher:
+        return await fetcher.fetch(make_request(url))
+
+
+@pytest.fixture
+def ca_env(monkeypatch):
+    for name in CA_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    return monkeypatch
+
+
+def _ca_dir(directory, pem: bytes) -> str:
+    """Laid out as OpenSSL's c_rehash would; BoringSSL reads it the same way."""
+    directory.mkdir(exist_ok=True)
+    (directory / f"{_subject_hash(pem)}.0").write_bytes(pem)
+    return str(directory)
+
+
+@pytest.mark.parametrize("transport", ["curl", "httpx"])
+@pytest.mark.parametrize("variable", CA_VARIABLES)
+async def test_ca_from_the_environment_is_trusted(
+    tls, tls_server, tmp_path, ca_env, transport, variable
+):
+    """Set after import, as a company proxy's CA would be."""
+    pem = open(tls.ca, "rb").read()
+    location = _ca_dir(tmp_path / "ca", pem) if variable == "SSL_CERT_DIR" else tls.ca
+    ca_env.setenv(variable, location)
+    response = await _fetch_with(transport, f"{tls_server}/ok")
+    assert (response.status, response.body) == (200, b"ok")
+
+
+@pytest.mark.parametrize("transport", ["curl", "httpx"])
+async def test_ca_file_comes_first(tls, tls_server, tmp_path, ca_env, transport):
+    (tmp_path / "other.pem").write_bytes(trustme.CA().cert_pem.bytes())
+    ca_env.setenv("SSL_CERT_FILE", str(tmp_path / "other.pem"))
+    ca_env.setenv("REQUESTS_CA_BUNDLE", tls.ca)
+    with pytest.raises(FetchTLSError):
+        await _fetch_with(transport, f"{tls_server}/ok")
+    ca_env.setenv("SSL_CERT_FILE", "")
+    assert (await _fetch_with(transport, f"{tls_server}/ok")).status == 200
+
+
+@pytest.mark.parametrize("transport", ["curl", "httpx"])
+async def test_ca_file_and_directory_are_both_trusted(tls, tls_server, tmp_path, ca_env, transport):
+    pem = open(tls.ca, "rb").read()
+    (tmp_path / "other.pem").write_bytes(trustme.CA().cert_pem.bytes())
+    ca_env.setenv("SSL_CERT_FILE", str(tmp_path / "other.pem"))
+    ca_env.setenv("SSL_CERT_DIR", _ca_dir(tmp_path / "ca", pem))
+    assert (await _fetch_with(transport, f"{tls_server}/ok")).status == 200
+
+
+@pytest.mark.parametrize("transport", ["curl", "httpx"])
+@pytest.mark.parametrize("variable", ["SSL_CERT_FILE", "SSL_CERT_DIR"])
+async def test_ca_from_the_environment_replaces_the_default(
+    tls_server, tmp_path, ca_env, transport, variable
+):
+    """Without the server's CA, the default trust store doesn't fill in, and
+    ``verify=False`` still skips verification."""
+    other = trustme.CA().cert_pem.bytes()
+    (tmp_path / "other.pem").write_bytes(other)
+    location = (
+        _ca_dir(tmp_path / "dir", other)
+        if variable == "SSL_CERT_DIR"
+        else str(tmp_path / "other.pem")
+    )
+    ca_env.setenv(variable, location)
+    with pytest.raises(FetchTLSError):
+        await _fetch_with(transport, f"{tls_server}/ok")
+    assert (await _fetch_with(transport, f"{tls_server}/ok", verify=False)).status == 200
+
+
+@pytest.mark.parametrize("transport", ["curl", "httpx"])
+async def test_trust_env_off_ignores_the_ca_environment(
+    tls, tls_server, tmp_path, ca_env, transport
+):
+    ca_env.setenv("SSL_CERT_FILE", tls.ca)
+    ca_env.setenv("SSL_CERT_DIR", _ca_dir(tmp_path / "ca", open(tls.ca, "rb").read()))
+    with pytest.raises(FetchTLSError):
+        await _fetch_with(transport, f"{tls_server}/ok", trust_env=False)
+
+
 # --- Proxies -------------------------------------------------------------------------------
 
 
@@ -527,6 +650,12 @@ async def test_environment_proxy_is_used(server, clean_proxy_env, recording_prox
     response = await fetch(f"{server.url}/echo")
     assert response.json() == {"proxied": True}
     assert len(proxy.records) == 1
+
+
+async def test_trust_env_off_ignores_the_environment_proxy(server, clean_proxy_env):
+    clean_proxy_env.setenv("HTTP_PROXY", DEAD_PROXY)
+    response = await fetch(f"{server.url}/ok", trust_env=False)
+    assert (response.status, response.body) == (200, b"ok")
 
 
 async def test_no_proxy_host_goes_direct(server, clean_proxy_env):

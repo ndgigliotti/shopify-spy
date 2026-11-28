@@ -62,7 +62,7 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 - `--rotate / --no-rotate`: after a 403 or 429, retry once as another browser profile (default: yes). `--no-rotate` keeps one identity for the whole run. See [Retries and identities](troubleshooting.md#retries-and-identities).
 - `--user-agent, -A TEXT`: send plain requests (through httpx, not as a browser) with exactly this User-Agent, never switched. Can't be combined with `--impersonate`. A blank value counts as unset.
 - `--proxy URL`: send every request through this proxy; see [Proxies](#proxies).
-- `--insecure`: don't verify TLS certificates.
+- `--insecure`: don't verify TLS certificates. Otherwise they're checked against certifi's CA bundle, or against a CA of your own, such as a company proxy's: the file named by `SSL_CERT_FILE`, else `REQUESTS_CA_BUNDLE`, else `CURL_CA_BUNDLE`, and the directory named by `SSL_CERT_DIR` (hashed, as `openssl rehash` lays it out). Either one, or both together, replaces certifi's bundle rather than adding to it, so a file that should also trust public sites has to include their CAs. Both transports read these variables the same way during the run, so setting them after importing the library works.
 - `--ignore-robots, -i`: ignore robots.txt restrictions.
 
 ### Run control
@@ -154,4 +154,3 @@ spy scrape --user-agent 'MyBot/1.0 (+https://example.com)' https://www.example.c
 - `--impersonate BROWSER` (`network.impersonate` in the config file, `impersonate=` in the library) picks the first profile: `chrome`, `safari`, `firefox`, or any other target the installed curl_cffi accepts, such as a pinned `chrome150`. A profile outside those three comes first, followed by them. An unknown value is rejected before the run starts.
 - `--user-agent TEXT` (`network.user_agent`, `user_agent=`) is the only way to send plain requests: they go through httpx with exactly that User-Agent, never switched, so it can't be combined with `--impersonate`. Either flag replaces the other's config-file setting for that run.
 - robots.txt and its `Crawl-delay`, throttling (`--min-delay`, `--image-delay`), `Retry-After`, `--concurrent`, `--proxy`, `--insecure` and the [non-public address check](troubleshooting.md#refused-requests-to-non-public-addresses) work the same on both transports.
-- A custom certificate authority, such as a company proxy's, is trusted on both transports through `SSL_CERT_FILE`. curl_cffi doesn't read `SSL_CERT_DIR`, so a CA set only there works with `--user-agent` alone.
