@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Self
 
+import certifi
+
 from shopify_spy._utils import canonicalize_url
 
 if TYPE_CHECKING:
@@ -469,8 +471,6 @@ def ca_locations(trust_env: bool = True) -> tuple[str | None, str | None]:
 
 
 def _ssl_context(trust_env: bool) -> ssl.SSLContext:
-    import certifi
-
     cafile, capath = ca_locations(trust_env)
     if cafile is None and capath is None:
         cafile = certifi.where()
@@ -620,16 +620,15 @@ def _curl_ca_options(trust_env: bool) -> dict[Any, Any]:
 
     cafile, capath = ca_locations(trust_env)
     if cafile is None:
-        import certifi
-
         cafile = _hashed_cert_in(capath) if capath else certifi.where()
-    options: dict[Any, Any] = {
-        CurlOpt.CAINFO: cafile or ffi.NULL,  # NULL only for a directory without one
-        CurlOpt.CAPATH: capath or cafile,
+    info = cafile or ffi.NULL  # NULL only for a directory without one
+    path = capath or cafile
+    return {
+        CurlOpt.CAINFO: info,
+        CurlOpt.CAPATH: path,
+        CurlOpt.PROXY_CAINFO: info,
+        CurlOpt.PROXY_CAPATH: path,
     }
-    options[CurlOpt.PROXY_CAINFO] = options[CurlOpt.CAINFO]
-    options[CurlOpt.PROXY_CAPATH] = options[CurlOpt.CAPATH]
-    return options
 
 
 def _hashed_cert_in(directory: str) -> str | None:
