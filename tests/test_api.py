@@ -752,6 +752,13 @@ def test_no_rotate_logs_only_the_first_profile(monkeypatch, clean_proxy_env, cap
     assert "after a refusal" not in caplog.text
 
 
+@pytest.mark.parametrize("blank", ["", "  "])
+def test_blank_user_agent_counts_as_unset(monkeypatch, clean_proxy_env, blank):
+    made = _record_transports(monkeypatch)
+    assert len(list(spy.scrape(STORE, user_agent=blank, **FAST))) == 2
+    assert made == [("curl_cffi", "chrome", True, None)]
+
+
 def test_user_agent_runs_on_httpx(monkeypatch, clean_proxy_env):
     made = _record_transports(monkeypatch)
     assert len(list(spy.scrape(STORE, user_agent="MyBot/1.0", **FAST))) == 2

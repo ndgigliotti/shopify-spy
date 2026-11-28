@@ -60,7 +60,7 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 - `--image-delay SECONDS`: the minimum gap between image downloads from one host while throttling, the store's own host included (default: 0.25, at most 4 images per second per host).
 - `--impersonate, -I BROWSER`: the browser profile each store starts with (default: `chrome`). See [Browser profiles](#browser-profiles).
 - `--rotate / --no-rotate`: after a 403 or 429, retry once as another browser profile (default: yes). `--no-rotate` keeps one identity for the whole run. See [Retries and identities](troubleshooting.md#retries-and-identities).
-- `--user-agent, -A TEXT`: send plain requests (through httpx, not as a browser) with exactly this User-Agent, never switched. Can't be combined with `--impersonate`.
+- `--user-agent, -A TEXT`: send plain requests (through httpx, not as a browser) with exactly this User-Agent, never switched. Can't be combined with `--impersonate`. A blank value counts as unset.
 - `--proxy URL`: send every request through this proxy; see [Proxies](#proxies).
 - `--insecure`: don't verify TLS certificates.
 - `--ignore-robots, -i`: ignore robots.txt restrictions.

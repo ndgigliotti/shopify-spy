@@ -11,6 +11,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from shopify_spy._fetch import validate_proxy
+from shopify_spy._utils import blank_to_none
 
 OutputFormat = Literal["json", "jsonl", "csv", "xlsx", "xml"]
 OutputSchema = Literal["native", "unified"]
@@ -69,6 +70,11 @@ class NetworkConfig(BaseModel):
     @classmethod
     def _check_proxy(cls, value: str | None) -> str | None:
         return None if value is None else validate_proxy(value)
+
+    @field_validator("user_agent")
+    @classmethod
+    def _blank_user_agent(cls, value: str | None) -> str | None:
+        return blank_to_none(value)
 
 
 class ThrottleConfig(BaseModel):

@@ -47,7 +47,7 @@ from shopify_spy._fetch import (
 )
 from shopify_spy._flatten import default_columns
 from shopify_spy._results import _PLATFORM_NAMES, RunResult, StoreResult, StoreStatus
-from shopify_spy._utils import normalize_url, read_url_file, split_valid_urls
+from shopify_spy._utils import blank_to_none, normalize_url, read_url_file, split_valid_urls
 from shopify_spy._xlsx import require_xlsxwriter
 
 if TYPE_CHECKING:
@@ -644,6 +644,7 @@ def apply_cli_overrides(
     image_delay: float | None = None,
 ) -> Config:
     """Apply CLI argument overrides to config. ``None`` keeps the config value."""
+    user_agent = blank_to_none(user_agent)
     scrape_dict = config.scrape.model_dump() | _given(
         platform=platform,
         products=products,

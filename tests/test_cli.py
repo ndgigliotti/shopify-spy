@@ -500,6 +500,15 @@ def test_impersonate_defaults_to_none(cli, monkeypatch):
     assert seen["impersonate"] is None
 
 
+def test_blank_user_agent_flag_keeps_the_config_file(cli, monkeypatch, tmp_path):
+    seen = _seen_kwargs(monkeypatch)
+    config_file = tmp_path / "spy.yaml"
+    config_file.write_text("network:\n  impersonate: safari\n  user_agent: ''\n")
+    run = cli(shop("shop.test", 1), "-c", str(config_file), "-A", "", "shop.test")
+    assert run.exit_code == 0, run.stderr
+    assert (seen["impersonate"], seen["user_agent"]) == ("safari", None)
+
+
 def test_user_agent_alone_reaches_library(cli, monkeypatch):
     seen = _seen_kwargs(monkeypatch)
     run = cli(shop("shop.test", 1), "shop.test", "-A", "MyBot/1.0")

@@ -21,7 +21,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from shopify_spy._fetch import (
     DEFAULT_IMPERSONATE,
@@ -32,7 +32,7 @@ from shopify_spy._fetch import (
 from shopify_spy._policy import ThrottleSettings
 from shopify_spy._results import RunResult, ScrapeFailed, StoreResult, run_finish_reason
 from shopify_spy._runner import RunConfig, Runner
-from shopify_spy._utils import is_valid_url, normalize_url, origin
+from shopify_spy._utils import blank_to_none, is_valid_url, normalize_url, origin
 
 
 def _docs_url() -> str:
@@ -88,6 +88,11 @@ class ScrapeOptions(BaseModel):
     on_failure: Literal["raise", "warn", "ignore"] = "raise"
     strict: bool = False
     fetcher_factory: Callable[[], Any] | None = None  # provisional
+
+    @field_validator("user_agent")
+    @classmethod
+    def _blank_user_agent(cls, value: str | None) -> str | None:
+        return blank_to_none(value)
 
 
 def _prepare(
@@ -507,7 +512,7 @@ _SCRAPE_DOC = """
             configures logging).
         user_agent: Fixed User-Agent, never swapped. It turns impersonation off:
             requests go through httpx with exactly this user agent. Can't be
-            combined with an ``impersonate`` profile.
+            combined with an ``impersonate`` profile. A blank one counts as unset.
         respect_robots_txt: Obey robots.txt (default {respect_robots_txt}), including
             its Crawl-delay as a minimum gap between requests to that host, capped
             at ``throttle_max_delay`` and applied even with ``throttle=False``.
