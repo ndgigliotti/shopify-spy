@@ -405,7 +405,8 @@ def _jsonld(item: dict[str, Any]) -> list[dict[str, Any]]:
                 "variant_title": jsonld.name(offer.get("name")),
                 "sku": jsonld.text(offer.get("sku")),
             }
-            | _codes(product, offer)
+            # Not the product row's codes, which are the first offer's that has one
+            | jsonld.codes(offer, item)
             | _jsonld_offer(offer)
             for offer in offers
         ]

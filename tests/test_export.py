@@ -1339,7 +1339,8 @@ def test_csv_jsonld_gtin_per_offer_and_from_the_offer(tmp_path):
     ]
     path = tmp_path / "out.csv"
     write_items([JSONLD_PRODUCT | {"offers": offers}], path)
-    assert [r["gtin"] for r in read_csv(path)] == ["4006381333931", "4006381333931"]
+    # B's row doesn't take A's barcode
+    assert [r["gtin"] for r in read_csv(path)] == ["4006381333931", ""]
     single = JSONLD_PRODUCT | {"offers": JSONLD_PRODUCT["offers"] | {"gtin8": 12345670}}
     write_items([single], path)
     (row,) = read_csv(path)
