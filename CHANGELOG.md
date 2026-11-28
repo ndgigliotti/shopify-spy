@@ -166,6 +166,10 @@
 - A BigCommerce product whose later variants page fails (or that stops at the
   2,500-variant bound) keeps the variants read so far and makes the store
   `partial`, instead of `ok`.
+- A Magento store that caps the page size without an error (its first answer's
+  `page_info.page_size` smaller than the 100 asked for) is paged with that size,
+  and paging follows `page_info.total_pages`; before, such a store stopped after
+  its first page and reported `ok`.
 
 ## 0.5.1
 

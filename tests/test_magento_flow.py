@@ -360,3 +360,33 @@ def test_failed_page_size_retry_is_an_error(retry):
     assert items == []
     assert result.stores[0].status == "error"
     assert "after a page-size retry" in result.stores[0].errors[-1]
+
+
+def paged(items, total, page_size, current, total_pages):
+    body = answer(items, total)
+    info = {"current_page": current, "page_size": page_size, "total_pages": total_pages}
+    body["data"]["products"]["page_info"] = info
+    return body
+
+
+def test_a_smaller_effective_page_size_drives_paging():
+    routes = {
+        magento_url(1): paged([mg_product(1)], 2, 1, 1, 2),
+        magento_url(2, 1): paged([mg_product(2)], 2, 1, 2, 2),
+    }
+    items, result, fetcher = scrape_mg(routes)
+    assert [i["sku"] for i in items] == ["SKU1", "SKU2"]
+    assert requested(fetcher) == [magento_url(1), magento_url(2, 1)]
+    assert result.stores[0].status == "ok"
+    assert result.stores[0].complete
+
+
+def test_total_pages_ends_paging():
+    routes = {
+        magento_url(1): paged([mg_product(i) for i in range(100)], 500, 100, 1, 2),
+        magento_url(2): paged([mg_product(i) for i in range(100, 150)], 500, 100, 2, 2),
+    }
+    items, result, fetcher = scrape_mg(routes)
+    assert len(items) == 150
+    assert fetcher.count(magento_url(3)) == 0
+    assert result.stores[0].complete

@@ -5,9 +5,11 @@ number written into its text, so each page has its own URL and the session's ded
 robots.txt, retries and redirects apply as for any other request. No ``Store``
 header is sent, so the default store view and its currency are scraped.
 
-Paging ends when ``currentPage * pageSize`` reaches ``total_count`` or a page comes
-back empty. A page-size limit named in a GraphQL error on the first page shrinks the
-page size; later pages keep it, since changing it would shift every later offset.
+Paging ends at the answer's ``page_info.total_pages``, else when ``currentPage *
+pageSize`` reaches ``total_count``, or when a page comes back empty. A page-size
+limit named in a GraphQL error on the first page, or a smaller ``page_info.page_size``
+than asked for in its answer (a store that caps it silently), shrinks the page size;
+later pages keep it, since changing it would shift every later offset.
 """
 
 from __future__ import annotations
@@ -105,7 +107,9 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
                 # Resolver errors null out the items they hit, so this is a failed page
                 return await _failed(ctx, response, where, page, problem)
             logger.warning("Magento GraphQL answered with errors for %s: %s", where, problem)
-        done = await _take_page(ctx, emit, response, products, seen, where, page * size)
+        if page == 1:
+            size = _effective_page_size(products, size, where)
+        done = await _take_page(ctx, emit, response, products, seen, where, page, size)
         if done is not None:
             return done
         page += 1
@@ -146,12 +150,13 @@ async def _take_page(
     products: dict[str, Any],
     seen: _Seen,
     where: str,
-    read: int,
+    page: int,
+    size: int,
 ) -> bool | None:
     """Emit a page's new products; return whether the store got to the end, or None
-    to read the next page. ``read`` is ``currentPage * pageSize``."""
-    total = products.get("total_count")
-    total = total if isinstance(total, int) and not isinstance(total, bool) else None
+    to read the next page."""
+    total = _int(products.get("total_count"))
+    last = _int(_dig(products, "page_info", "total_pages"))
     batch = dicts(products["items"])
     if not batch:
         return seen.finish(total, where)
@@ -163,9 +168,26 @@ async def _take_page(
         return False
     for product in fresh:
         await emit(_item(product, response, ctx.images))
-    if total is not None and read >= total:
+    if last is not None and last > 0:
+        if page >= last:
+            return seen.finish(total, where)
+    elif total is not None and page * size >= total:
         return seen.finish(total, where)
     return None
+
+
+def _int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _effective_page_size(products: dict[str, Any], size: int, where: str) -> int:
+    """The page size to page with: the first answer's ``page_info.page_size`` when
+    it is smaller than ``size`` and the page holds no more items than that."""
+    answered = _int(_dig(products, "page_info", "page_size"))
+    if answered is None or not 1 <= answered < size or len(products["items"]) > answered:
+        return size
+    logger.info("Magento answered page size %d for %d at %s; paging with it", answered, size, where)
+    return answered
 
 
 async def _failed(
