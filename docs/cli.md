@@ -122,7 +122,7 @@ network:
   retries: 2               # Retry failed requests
   # user_agent: MyBot/1.0 (+https://example.com)  # Custom user agent (turns impersonation off)
   # proxy: http://proxy.example.com:8080  # Fixed proxy (overrides HTTPS_PROXY)
-  # impersonate: safari  # First browser profile (default chrome); false = no impersonation
+  # impersonate: safari  # First browser profile (default chrome)
   rotate: true             # Try another browser profile after a 403 or 429 (false = --no-rotate)
   respect_robots_txt: true
   verify_tls: true         # Verify TLS certificates (false = --insecure)

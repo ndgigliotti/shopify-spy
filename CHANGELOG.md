@@ -146,6 +146,9 @@
   the closest known key (`unknown key 'limt' in the scrape section; did you mean
   'limit'?`), and the CLI exits with status 1. An invalid config file is reported
   as an error instead of a traceback.
+- The config example in the command-line docs said `impersonate: false` turns
+  impersonation off, which fails validation; it now matches `spy init`'s file, where
+  a `user_agent` turns browser profiles off and `rotate: false` keeps one.
 - The CLI's end-of-run summary prints each store's `StoreResult.hint`, so a store
   that never answered through a proxy (`--proxy`, `network.proxy` or a proxy
   environment variable) gets the hint to check the proxy, or its credentials after
