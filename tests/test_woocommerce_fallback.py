@@ -261,18 +261,19 @@ def test_no_fallback_for_empty_catalog():
     assert result.stores[0].complete
 
 
-def test_pages_without_product_data_are_skipped():
+def test_pages_without_product_data_are_skipped_and_partial():
     routes = {
         woo_url(1): (500, ""),
         wp_list(1): [{"id": 1, "link": product_url("a")}, {"id": 2, "link": product_url("b")}],
         product_url("a"): (200, "<html><body>no structured data</body></html>"),
         product_url("b"): page_html("b"),
     }
-    items, _, _ = scrape_woo(routes)
+    items, result, _ = scrape_woo(routes)
     assert [item["slug"] for item in items] == ["b"]
+    assert result.stores[0].status == "partial"
 
 
-def test_page_of_unmatched_products_is_skipped():
+def test_page_of_unmatched_products_is_skipped_and_partial():
     # Related-product cards, and no product that names the page: as for --platform generic
     card = '<div itemscope itemtype="https://schema.org/Product"><b itemprop="name">{}</b></div>'
     routes = {
@@ -281,8 +282,9 @@ def test_page_of_unmatched_products_is_skipped():
         product_url("a"): (200, f"<html><body>{card.format('X')}{card.format('Y')}</body></html>"),
         product_url("b"): page_html("b"),
     }
-    items, _, _ = scrape_woo(routes)
+    items, result, _ = scrape_woo(routes)
     assert [item["slug"] for item in items] == ["b"]
+    assert result.stores[0].status == "partial"
 
 
 def test_fallback_respects_item_limit():
@@ -1050,3 +1052,36 @@ def test_store_api_row_has_no_codes():
     item = {"id": 1, "name": "Hat", "permalink": f"{STORE}/product/hat/", "prices": {}}
     (row,) = flatten(item)
     assert (row.get("gtin"), row.get("mpn")) == (None, None)
+
+
+# --- Completeness of the fallback --------------------------------------------------
+
+
+def test_product_id_on_http_matches_the_https_page_beside_a_related_product():
+    hat = {"@type": "Product", "@id": "http://shop.test/product/hat/#product", "name": "Hat"}
+    related = {"@type": "Product", "@id": f"{STORE}/product/other/#product", "name": "Other"}
+    routes = {
+        woo_url(1): (403, ""),
+        wp_list(1): listed("hat", "cap"),
+        product_url("hat"): (
+            200,
+            ld_page({"@graph": [related, hat]}),
+            {"Content-Type": "text/html"},
+        ),
+        product_url("cap"): page_html("cap"),
+    }
+    items, result, _ = scrape_woo(routes)
+    by_slug = {i["slug"]: i for i in items}
+    assert set(by_slug) == {"hat", "cap"}
+    assert by_slug["hat"]["name"] == "Hat"
+    assert result.stores[0].status == "ok"
+    assert result.stores[0].complete
+
+
+def test_scheme_match_keeps_the_host_and_path():
+    url = f"{STORE}/product/hat/"
+    html = ld_page(
+        {"@type": "Product", "name": "Other host", "@id": "http://other.test/product/hat/"},
+        {"@type": "Product", "name": "Other path", "@id": "http://shop.test/product/cap/"},
+    )
+    assert parse_product_page(html, url, fallback=False)[0] is None

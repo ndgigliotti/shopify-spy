@@ -150,6 +150,10 @@
   nothing, and a store's hint replaces the status hint it would otherwise share
   with other stores. The wrong-platform hint now reads the same in the CLI and the
   library (`looks like WooCommerce; use the woocommerce platform`).
+- A WooCommerce store read from its product pages picks the page's Product when
+  its `@id` or `url` is written with `http://` on an `https://` page, beside a
+  related product, and a listed product page with no Product data for it makes the
+  store `partial` instead of being skipped.
 
 ## 0.5.1
 

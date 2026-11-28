@@ -306,7 +306,8 @@ def _looks_like_shopify(data: Any) -> bool:
 async def _product_pages(ctx: StoreContext, emit: Emit) -> bool:
     """Emit a partial item for every listed product page with schema.org Product data.
 
-    Returns whether the listing was read to the end and every page was fetched.
+    Returns whether the listing was read to the end and every page that still exists
+    gave an item.
     """
     limiter = asyncio.Semaphore(FETCH_CONCURRENCY)
     failed = False
@@ -334,7 +335,9 @@ async def _product_pages(ctx: StoreContext, emit: Emit) -> bool:
                 text, response.url, groups=True, fallback=False
             )
             if product is None:
+                # Every listed URL is a product page, so this product was missed
                 logger.info("No schema.org Product on %s", response.url)
+                failed = True
                 return
             post_id = post_id or listed_id
             form = jsonld.variation_form(text, post_id)

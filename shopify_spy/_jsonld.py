@@ -111,6 +111,15 @@ def _strip_fragment(url: Any) -> str:
     return url.split("#", 1)[0].rstrip("/") if isinstance(url, str) else ""
 
 
+_HTTP_SCHEME = re.compile(r"^https?://", re.I)
+
+
+def _identity(url: Any) -> str:
+    """A URL without its fragment, trailing slash or ``http``/``https`` scheme: SEO
+    plugins can write a product's ``@id`` as ``http://`` on an ``https://`` page."""
+    return _HTTP_SCHEME.sub("//", _strip_fragment(url))
+
+
 def _unmatched(products: list[dict[str, Any]], *, fallback: bool) -> dict[str, Any] | None:
     """The product for a page none of whose nodes names it.
 
@@ -244,15 +253,16 @@ class _Graph:
     def page_product(self, products: list[dict[str, Any]]) -> dict[str, Any] | None:
         """The product whose ``url`` or ``@id`` is the page, else the only one that
         is the page but for the query string (a ``?variant=`` URL, say). Several
-        such are a group's variants, written beside it."""
-        page = _strip_fragment(self.url)
+        such are a group's variants, written beside it. ``http`` and ``https``
+        name the same page."""
+        page = _identity(self.url)
         if not page:
             return None
         bare = page.split("?", 1)[0].rstrip("/")
         loose = []
         for product in products:
             names = {
-                _strip_fragment(self.key(v))
+                _identity(self.key(v))
                 for v in (product.get("url"), product.get("@id"))
                 if isinstance(v, str) and v
             }
