@@ -126,6 +126,18 @@ async def test_wait_turn_never_closer_than_min_delay(low_jitter):
     assert t2 - t1 >= 0.19
 
 
+async def test_wait_turn_jitters_above_min_delay_when_the_delay_is_below_it(monkeypatch):
+    monkeypatch.setattr(policy.random, "uniform", lambda a, b: 1.5)
+    s = slot(start_delay=0.0, min_delay=0.2)
+    loop = asyncio.get_running_loop()
+    async with asyncio.timeout(2):
+        await s.wait_turn()
+        t1 = loop.time()
+        await s.wait_turn()
+        t2 = loop.time()
+    assert t2 - t1 >= 0.29  # 1.5 * min_delay, not a fixed min_delay beat
+
+
 def test_default_image_delay_is_a_quarter_second():
     assert ThrottleSettings().image_delay == 0.25
 
@@ -197,6 +209,19 @@ async def test_crawl_delay_spaces_requests_without_throttle():
         await s.wait_turn()
         t2 = loop.time()
     assert t2 - t1 >= 0.19
+
+
+async def test_crawl_delay_not_jittered_without_throttle(monkeypatch):
+    monkeypatch.setattr(policy.random, "uniform", lambda a, b: 1.5)
+    s = slot(enabled=False)
+    s.set_crawl_delay(0.2)
+    loop = asyncio.get_running_loop()
+    async with asyncio.timeout(2):
+        await s.wait_turn()
+        t1 = loop.time()
+        await s.wait_turn()
+        t2 = loop.time()
+    assert 0.19 <= t2 - t1 < 0.28
 
 
 def test_adjust_never_goes_below_crawl_delay():
@@ -283,6 +308,24 @@ async def test_pause_sets_a_floor_that_eases_back_down():
     assert s.floor == pytest.approx(0.5, abs=0.02)  # halves in ~34 successes
     s.adjust(latency=0.05, status=429)
     assert s.floor == pytest.approx(0.5, abs=0.02)  # only successes lower it
+
+
+@pytest.mark.parametrize("min_delay", [1.0, 5.0])
+def test_pause_doubles_from_min_delay_when_the_delay_is_below_it(clock, min_delay):
+    # The refused pace was min_delay, not the lower adaptive delay
+    s = slot(start_delay=1.0, min_delay=min_delay)
+    s.delay = 0.2
+    s.pause(0)
+    assert s.delay == s.floor == 2 * min_delay
+
+
+@pytest.mark.parametrize(("image_delay", "doubled"), [(0.25, 1.0), (5.0, 10.0)])
+def test_pause_doubles_an_image_download_from_image_delay(clock, image_delay, doubled):
+    # An image slot was spaced by image_delay, so that is the pace to double
+    s = slot(start_delay=1.0, min_delay=5.0, image_delay=image_delay)
+    s.delay = 0.2
+    s.pause(0, image=True)
+    assert s.delay == s.floor == doubled
 
 
 @pytest.mark.parametrize("pause", [5.0, 0.0], ids=["backoff", "no-pause"])

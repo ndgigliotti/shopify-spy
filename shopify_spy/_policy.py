@@ -41,8 +41,9 @@ class ThrottleSettings:
     enabled: bool = True
     start_delay: float = 1.0
     max_delay: float = 60.0
-    min_delay: float = 1.0  # minimum gap between request starts while enabled
-    image_delay: float = 0.25  # min_delay for image downloads
+    # Minimum gaps between request starts while enabled (pages and API, images)
+    min_delay: float = 1.0
+    image_delay: float = 0.25
     target_concurrency: float = 1.0
 
 
@@ -52,12 +53,12 @@ class HostSlot:
     The throttle algorithm is adapted from Scrapy's AutoThrottle extension and
     download slots (https://github.com/scrapy/scrapy, BSD-3-Clause).
 
-    One request leaves the slot per gate pass; with a non-zero delay, passes are
-    spaced by ``uniform(0.5, 1.5) * delay`` since the previous request, but never
-    closer than the minimum gap: robots.txt Crawl-delay, and while throttling is
-    enabled ``min_delay`` (``image_delay`` for an image download). Those are floors on
-    the spacing, not on the adaptive delay, so images keep AutoThrottle's pace down to
-    ``image_delay`` though they share the slot with the host's other requests.
+    One request leaves the slot per gate pass; while throttling is enabled, passes are
+    spaced by ``uniform(0.5, 1.5)`` times the larger of the delay and the minimum gap
+    since the previous request, but never closer than the minimum gap: robots.txt
+    Crawl-delay and ``min_delay`` (``image_delay`` for an image download). Those are
+    floors on the spacing, not on the adaptive delay. Without throttling, only the
+    Crawl-delay spaces requests, unjittered.
 
     Rate limits work like TCP congestion control: a rate limit doubles a delay floor
     (multiplicative decrease of the rate) and each answered request lowers it a
@@ -100,18 +101,18 @@ class HostSlot:
             self.delay = max(self.delay, self.crawl_delay)
 
     async def wait_turn(self, image: bool = False) -> float:
-        """Wait until the throttle allows the next request to leave; return its send time.
-
-        An ``image`` download is held to ``image_delay`` instead of ``min_delay``.
-        """
+        """Wait until the throttle allows the next request to leave; return its send time."""
         async with self._gate:
             # A rate limit can extend the pause while we sleep, so check again
             while (pause := self.paused_until - now()) > 0:
                 await asyncio.sleep(pause)
             if self.last_seen is not None:
                 spacing = self._min_gap(image)
-                if self.delay > 0:
-                    spacing = max(self.delay * random.uniform(0.5, 1.5), spacing)
+                # Jitter from the minimum gap too, or a delay below it sends on a fixed
+                # beat; --no-throttle keeps just the Crawl-delay
+                if self.throttle.enabled:
+                    pace = max(self.delay, spacing)
+                    spacing = max(pace * random.uniform(0.5, 1.5), spacing)
                 wait = spacing - (now() - self.last_seen)
                 if wait > 0:
                     await asyncio.sleep(wait)
@@ -137,20 +138,23 @@ class HostSlot:
             return
         self.delay = new
 
-    def pause(self, seconds: float) -> None:
+    def pause(self, seconds: float, image: bool = False) -> None:
         """Hold every request to this host for ``seconds`` and slow it down.
 
         For a rate limit: otherwise only the limited request waits, while the host's
         other requests keep arriving and use up their own retries. The doubled delay
         becomes the host's floor, so AutoThrottle can't jump straight back to the
-        rate that was refused. It doubles again only once the host has answered at
-        the slower rate (see the class docstring).
+        rate that was refused (``image`` if an image download was refused). It doubles
+        again only once the host has answered at the slower rate (see the class
+        docstring).
         """
         self.paused_until = max(self.paused_until, now() + seconds)
         if not self.answered_since_slowdown:
             return
         if self.throttle.enabled:
-            doubled = max(self.delay * 2, self.throttle.start_delay, self.MIN_RATE_LIMITED_DELAY)
+            # Double the refused pace: the minimum gap can hold the spacing above the delay
+            pace = max(self.delay, self._min_gap(image))
+            doubled = max(pace * 2, self.throttle.start_delay, self.MIN_RATE_LIMITED_DELAY)
             self.delay = self.floor = min(doubled, self.throttle.max_delay)
         self.slowed_at = now()
         self.answered_since_slowdown = False

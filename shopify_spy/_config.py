@@ -153,7 +153,7 @@ throttle:
   enabled: true            # Auto-throttle based on server response
   start_delay: 1           # Initial download delay (seconds)
   max_delay: 60            # Maximum download delay (seconds)
-  min_delay: 1             # Minimum seconds between requests to one host
+  min_delay: 1             # Minimum seconds between page and API requests to one host
   image_delay: 0.25        # Minimum seconds between image downloads from one host
   target_concurrency: 1.0  # Target concurrent requests (higher = faster)
 """
