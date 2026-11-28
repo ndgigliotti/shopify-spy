@@ -736,16 +736,40 @@ def test_robots_specific_group_beats_star():
     assert not rules.allowed("https://a.com/b", "OtherBot")
 
 
+TOKEN_AND_UA_GROUPS = (
+    "User-agent: shopify-spy\nDisallow: /a\nCrawl-delay: 2\n\n"
+    "User-agent: MyBot\nDisallow: /b\nCrawl-delay: 5\n\n"
+    "User-agent: *\nDisallow: /c\nCrawl-delay: 9\n"
+)
+
+
+def test_robots_token_and_custom_agent_most_restrictive_wins():
+    rules = RobotsRules(TOKEN_AND_UA_GROUPS)
+    agents = (policy.ROBOTS_TOKEN, "MyBot/1.0")
+    assert not rules.allowed("https://a.com/a", *agents)  # the token's group
+    assert not rules.allowed("https://a.com/b", *agents)  # the user agent's group
+    assert rules.allowed("https://a.com/c", *agents)  # both have a group, so not *'s
+    assert rules.allowed("https://a.com/b", policy.ROBOTS_TOKEN)  # the token alone
+    assert rules.crawl_delay(*agents) == 5.0
+    assert rules.crawl_delay(policy.ROBOTS_TOKEN) == 2.0
+
+
+def test_robots_custom_agent_without_group_falls_back_to_star():
+    rules = RobotsRules("User-agent: shopify-spy\nAllow: /\n\nUser-agent: *\nDisallow: /\n")
+    assert rules.allowed("https://a.com/p", policy.ROBOTS_TOKEN)
+    assert not rules.allowed("https://a.com/p", policy.ROBOTS_TOKEN, "MyBot/1.0")
+
+
 def test_crawl_delay_token_group_beats_star():
     rules = RobotsRules(
         "User-agent: shopify-spy\nCrawl-delay: 2\n\nUser-agent: *\nCrawl-delay: 9\n"
     )
-    assert rules.crawl_delay() == 2.0
+    assert rules.crawl_delay(policy.ROBOTS_TOKEN) == 2.0
 
 
 def test_crawl_delay_falls_back_to_star():
     rules = RobotsRules("User-agent: OtherBot\nCrawl-delay: 7\n\nUser-agent: *\nCrawl-delay: 1.5\n")
-    assert rules.crawl_delay() == 1.5
+    assert rules.crawl_delay(policy.ROBOTS_TOKEN) == 1.5
 
 
 @pytest.mark.parametrize(
@@ -762,7 +786,7 @@ def test_crawl_delay_falls_back_to_star():
     ids=["no-robots", "no-directive", "zero", "negative", "junk", "nan", "inf"],
 )
 def test_crawl_delay_unusable_is_none(text):
-    assert RobotsRules(text).crawl_delay() is None
+    assert RobotsRules(text).crawl_delay(policy.ROBOTS_TOKEN) is None
 
 
 def test_robots_html_page_has_no_rules():

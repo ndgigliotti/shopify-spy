@@ -457,7 +457,11 @@ def scrape(
         typer.Option(
             "--ignore-robots",
             "-i",
-            help="Ignore robots.txt restrictions.",
+            help=(
+                "Ignore robots.txt restrictions. Otherwise they're matched against the "
+                "shopify-spy token (else *) whatever User-Agent is sent, and a custom "
+                "--user-agent's group applies too; the more restrictive wins."
+            ),
             rich_help_panel=NETWORK_PANEL,
         ),
     ] = False,
@@ -1060,7 +1064,7 @@ def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
     if StoreStatus.robots_blocked in present:
         hints.append(
             "Likely blocked by robots.txt. "
-            "Retry with [bold]--ignore-robots[/bold] (-i) to ignore it."
+            "Retry with [bold]--ignore-robots[/bold] (-i) to ignore it, at your own risk."
         )
     if StoreStatus.rate_limited in present:
         # Requests, not responses: robots.txt's 429 isn't in responses_by_status
