@@ -132,6 +132,10 @@ class _Reader(HTMLParser):
         return values.get("content") or None
 
     def _link(self, value: str) -> str:
+        # Without the attribute the value is empty, not the page (a lazy-loaded
+        # <img> has only data-src)
+        if not value.strip():
+            return ""
         try:
             return urllib.parse.urljoin(self.url, value.strip())
         except ValueError:
@@ -172,7 +176,11 @@ class _Reader(HTMLParser):
 
 
 def _node(item: _Item, depth: int = 0) -> dict[str, Any]:
-    """An item as a JSON-LD node: one value as is, several as a list."""
+    """An item as a JSON-LD node: one value as is, several as a list.
+
+    Repeats of a value are dropped: pages often give a property twice, as a
+    ``<meta itemprop="name">`` beside an ``<h1 itemprop="name">``, and a list of
+    one name isn't read as a name."""
     node: dict[str, Any] = {}
     if item.types:
         node["@type"] = item.types[0] if len(item.types) == 1 else item.types
@@ -180,7 +188,8 @@ def _node(item: _Item, depth: int = 0) -> dict[str, Any]:
         node["@id"] = item.itemid
     for name, values in item.properties.items():
         found = [_node(v, depth + 1) if isinstance(v, _Item) and depth < 32 else v for v in values]
-        found = [v for v in found if not isinstance(v, _Item)]
+        texts: set[str] = set()
+        found = [v for v in found if not isinstance(v, _Item) and not _repeat(v, texts)]
         if found:
             node[name] = found[0] if len(found) == 1 else found
     kinds = set(item.types)
@@ -194,6 +203,16 @@ def _node(item: _Item, depth: int = 0) -> dict[str, Any]:
         if len(offers) == 1:
             node["name"] = offers[0]["name"]
     return node
+
+
+def _repeat(value: Any, texts: set[str]) -> bool:
+    """Whether ``value`` is a string already in ``texts``; adds it if not."""
+    if not isinstance(value, str):
+        return False
+    if value in texts:
+        return True
+    texts.add(value)
+    return False
 
 
 def _list(value: Any) -> list[Any]:

@@ -224,6 +224,24 @@ def test_rating_without_a_scale_is_left_out():
     assert parse(page)["aggregateRating"] == {"@type": "AggregateRating", "reviewCount": "3"}
 
 
+def test_repeated_values_are_read_once():
+    page = """<div itemscope itemtype="http://schema.org/Product">
+      <meta itemprop="name" content="Tee"><h1 itemprop="name">Tee</h1>
+      <div itemprop="offers" itemscope itemtype="http://schema.org/Offer">
+        <meta itemprop="price" content="9"><span itemprop="price">9</span>
+      </div></div>"""
+    found = parse(page)
+    assert (found["name"], found["offers"]["price"]) == ("Tee", "9")
+    cells = row(found)
+    assert (cells["title"], cells["price"]) == ("Tee", Decimal("9"))
+
+
+def test_image_without_src_is_not_the_page():
+    page = """<div itemscope itemtype="http://schema.org/Product"><b itemprop="name">Tee</b>
+      <img itemprop="image" data-src="/a.jpg"></div>"""
+    assert row(parse(page))["image_url"] is None
+
+
 def test_pages_without_a_product_type_are_not_parsed():
     page = '<div itemscope itemtype="https://schema.org/Organization">x</div>'
     assert items(page, PAGE) == []
