@@ -544,6 +544,18 @@ def test_bail_before_an_item_reports_the_collections_outcome():
     assert "1 answered 403" in s.errors[0]
 
 
+def test_bail_in_the_fallback_reports_both_outcomes():
+    routes = store(json=(403, ""), page=lambda slug: slow((403, ""), 5))
+    routes[url("tee")] = (403, "")
+    _, result, _ = scrape_json(routes, bail=0.3)
+    [s] = result.stores
+    assert s.finish_reason == "bail"
+    assert s.errors[0].startswith(
+        "no Squarespace product from 1 collection page (/shop): 1 answered 403; "
+        "no schema.org Product JSON-LD or microdata on 0 of 1 product pages checked"
+    )
+
+
 def test_listed_products_missing_from_the_collections_is_partial(caplog):
     caplog.set_level(logging.INFO, logger="shopify_spy")
     items, result, fetcher = scrape_json(store(5, json=collection(*map(record, SLUGS[:3]))))

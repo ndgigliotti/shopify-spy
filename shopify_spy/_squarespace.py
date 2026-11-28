@@ -293,20 +293,33 @@ class _JsonSource:
             self.ctx.url,
             json_reason,
         )
-        pages = generic._Pages(
+        pages = _FallbackPages(
             self.ctx,
             self._emit,
             self.listing,
             platform="squarespace",
             source="product_page",
             urls=self.product_urls,
+            json_reason=json_reason,
         )
         await pages.run()
         if pages.emitted:
             return self.listing.complete and not pages.failed
         # Never return False here: the sitemap's 2xx would make diagnose() say empty
         await pages.probe_others()
-        raise SquarespaceError(f"{json_reason}; {pages.reason()}")
+        raise SquarespaceError(pages.reason())
+
+
+class _FallbackPages(generic._Pages):
+    """The product pages read after the collections, whose reason for having no
+    item, also the one the runner reports on --bail, starts with the collections'."""
+
+    def __init__(self, *args: Any, json_reason: str, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.json_reason = json_reason
+
+    def reason(self) -> str:
+        return f"{self.json_reason}; {super().reason()}"
 
 
 def _is_product(record: Any) -> bool:
