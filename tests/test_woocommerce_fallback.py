@@ -1102,3 +1102,18 @@ def test_shop_page_in_the_product_sitemap_is_not_a_missed_product():
     assert [item["slug"] for item in items] == ["hat"]
     assert result.stores[0].status == "ok"
     assert result.stores[0].complete
+
+
+def test_listed_product_redirected_to_a_listing_is_not_a_missed_product():
+    from tests.flow_support import redirect
+
+    routes = {
+        woo_url(1): (500, ""),
+        wp_list(1): listed("old", "hat"),
+        product_url("old"): redirect(f"{STORE}/product-category/hats/"),
+        f"{STORE}/product-category/hats/": (200, "<html><body></body></html>"),
+        product_url("hat"): page_html("hat"),
+    }
+    items, result, _ = scrape_woo(routes)
+    assert [i["slug"] for i in items] == ["hat"]
+    assert result.stores[0].status == "ok"

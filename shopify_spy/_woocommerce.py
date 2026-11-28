@@ -338,7 +338,8 @@ async def _product_pages(ctx: StoreContext, emit: Emit) -> bool:
                 logger.info("No schema.org Product on %s", response.url)
                 # Every other listed URL is a product page, so this product was
                 # missed. Yoast lists the shop page first in product-sitemap.xml
-                failed = failed or "archive" not in jsonld.body_classes(text)
+                shop = "archive" in jsonld.body_classes(text)
+                failed = failed or not (shop or moved_away(url, response))
                 return
             post_id = post_id or listed_id
             form = jsonld.variation_form(text, post_id)
@@ -364,6 +365,14 @@ async def _product_pages(ctx: StoreContext, emit: Emit) -> bool:
             await limiter.acquire()
             tg.create_task(fetch(url.split("#", 1)[0], listed_id))
     return listing.complete and not failed
+
+
+def moved_away(listed: str, response: Response) -> bool:
+    """Whether a listed page redirected to another path: a deleted product sent to
+    its category or the home page, which, like a 404, doesn't make the store
+    incomplete."""
+    paths = {urllib.parse.urlsplit(u).path.rstrip("/") for u in (listed, response.url)}
+    return len(paths) > 1
 
 
 def _site(host: str) -> str:

@@ -27,7 +27,7 @@ from shopify_spy import _sitemap as sitemap
 from shopify_spy._fetch import Response
 from shopify_spy._session import Emit, RequestFailed, StoreContext
 from shopify_spy._utils import canonicalize_url, hostname
-from shopify_spy._woocommerce import FETCH_CONCURRENCY, GONE, _site
+from shopify_spy._woocommerce import FETCH_CONCURRENCY, GONE, _site, moved_away
 
 __all__ = ["GenericError", "read_pages", "run"]
 
@@ -397,13 +397,13 @@ class _Pages:
             if response is None:
                 self.counts.skipped += 1
                 self._missed()
-            elif (node := self._node(response)) is not None:
+            elif (node := self._node(url, response)) is not None:
                 item = _item(node, response, self.ctx.images, self.platform, self.source)
                 await self._emit_item(item)
         finally:
             self._limiter.release()
 
-    def _node(self, response: Response) -> dict[str, Any] | None:
+    def _node(self, url: str, response: Response) -> dict[str, Any] | None:
         """The page's Product node, counting the page if it has none."""
         if not response.ok:
             # A 404 or 410 is a listed page that no longer exists
@@ -417,7 +417,8 @@ class _Pages:
                 return node
             logger.info("No schema.org Product on %s", response.url)
             self.counts.no_product += 1
-            self.failed = self.failed or self.products_only
+            missed = self.products_only and not moved_away(url, response)
+            self.failed = self.failed or missed
         self._missed()
         return None
 
