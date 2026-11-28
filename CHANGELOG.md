@@ -151,6 +151,9 @@
   a `user_agent` turns browser profiles off and `rotate: false` keeps one.
 - The CLI's prompt for a store URL, shown when none is given in a terminal, went
   to stdout, ahead of `--peek`'s JSONL; it goes to stderr.
+- An output directory, config file or log path holding Rich markup, such as
+  `--output 'run[/batch]'`, crashed the CLI with a `MarkupError` when it was printed;
+  paths are printed as typed.
 - The CLI's end-of-run summary prints each store's `StoreResult.hint`, so a store
   that never answered through a proxy (`--proxy`, `network.proxy` or a proxy
   environment variable) gets the hint to check the proxy, or its credentials after

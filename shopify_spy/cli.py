@@ -635,12 +635,12 @@ def init(
     target = target.expanduser().resolve()
 
     if target.exists() and not force:
-        console.print(f"[yellow]File already exists: {target}[/yellow]")
+        console.print(f"[yellow]File already exists: {escape(str(target))}[/yellow]")
         console.print("Use --force to overwrite.")
         raise typer.Exit(1)
 
     created = create_default_config(target)
-    console.print(f"[green]Created config file: {created}[/green]")
+    console.print(f"[green]Created config file: {escape(str(created))}[/green]")
 
 
 def _given(**values: Any) -> dict[str, Any]:
@@ -814,7 +814,7 @@ def run_scrape(
         console.print(f"  Images: {config.scrape.images}")
         console.print(f"  Format: {config.output.format}")
         console.print(f"  Schema: {schema_for(config.output.format, config.output.schema_)}")
-        console.print(f"  Output: {output_dir}")
+        console.print(f"  Output: {escape(str(output_dir))}")
 
     saved = (logger.level, logger.propagate)
     handlers = _setup_logging(log_file, verbose, quiet)
@@ -867,7 +867,7 @@ def run_scrape(
         if close_error is None and writer.count:
             err_console.print(f"  The {writer.count} item(s) written before it are kept.")
         if log_file:
-            err_console.print(f"  Log: {log_file}")
+            err_console.print(f"  Log: {escape(str(log_file))}")
         raise typer.Exit(1)
 
     if total > 0:
@@ -888,7 +888,7 @@ def run_scrape(
     for hint in summary_hints(stores, config):
         out.print(f"  {hint}")
     if log_file:
-        out.print(f"  Log: {log_file}")
+        out.print(f"  Log: {escape(str(log_file))}")
     raise typer.Exit(1)
 
 
@@ -1005,7 +1005,7 @@ def _print_done(
     if not multi and stores and stores[0].products_from:
         console.print(f"  Products came from {escape(stores[0].products_from)}.")
     if log_file:
-        console.print(f"  Log: {log_file}")
+        console.print(f"  Log: {escape(str(log_file))}")
     if multi:
         for s in stores:
             console.print(f"  {escape(_host(s.input_url))}: {_display_status(s)}")

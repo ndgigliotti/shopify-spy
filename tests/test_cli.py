@@ -1997,3 +1997,21 @@ def test_url_prompt_goes_to_stderr(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "store URL" in captured.err
+
+
+def test_paths_with_markup_characters_print_as_typed(cli, tmp_path):
+    out = tmp_path / "run[/batch]" / "[bold]x"
+    run = cli(shop("shop.test", 1), "shop.test", "-o", str(out), output=False)
+    assert run.exit_code == 0, run.stderr
+    assert f"Output: {out}" in run.stdout.replace("\n", "")
+
+
+def test_init_paths_with_markup_characters_print_as_typed(tmp_path):
+    config_file = tmp_path / "run[/batch]" / "config.yaml"
+    for args in ([], ["--force"]):
+        result = runner.invoke(app, ["init", *args, str(config_file)])
+        assert result.exit_code == 0, result.output
+        assert str(config_file) in strip_ansi(result.stdout).replace("\n", "")
+    result = runner.invoke(app, ["init", str(config_file)])
+    assert result.exit_code == 1
+    assert str(config_file) in strip_ansi(result.stdout).replace("\n", "")
