@@ -14,7 +14,7 @@ from shopify_spy._export import ItemWriter, format_for, write_items
 from shopify_spy._flatten import COLUMNS, DATE_COLUMNS, ID_COLUMNS, NUMBER_COLUMNS
 from shopify_spy._summary import summarize
 
-from .test_export import SHOPIFY_PRODUCT, WOO_PRODUCT
+from .test_export import SHOPIFY_PRODUCT, SQUARESPACE_PRODUCT, WOO_PRODUCT
 
 
 def read_sheets(path):
@@ -341,3 +341,21 @@ def test_gtin_and_mpn_stay_text(tmp_path):
     write_items([JSONLD_PRODUCT | {"gtin13": "0012345678905", "mpn": 12345}], path)
     (row,) = read_rows(path)
     assert (row["gtin"], row["mpn"]) == ("0012345678905", "12345")
+
+
+def test_squarespace_rows_have_typed_cells(tmp_path):
+    path = tmp_path / "out.xlsx"
+    assert write_items([SQUARESPACE_PRODUCT], path) == 1
+    first, second = read_rows(path)
+    assert (first["platform"], first["source"], first["id"]) == (
+        "squarespace",
+        "format_json",
+        "5f1a2b",
+    )
+    # Epoch milliseconds become Excel dates in UTC
+    assert first["created_at"] == datetime(2026, 1, 2, 3, 4, 5)
+    assert first["published_at"] == datetime(2026, 1, 2, 3, 4, 5)
+    assert (first["price"], first["compare_at_price"]) == (15, 20)
+    assert (second["price"], second["compare_at_price"]) == (20, None)
+    assert (first["available"], second["available"]) == (True, False)
+    assert (first["variant_count"], first["image_count"]) == (2, 2)
