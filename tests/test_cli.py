@@ -24,7 +24,7 @@ from shopify_spy._fetch import FakeFetcher, FetchConnectionError, FetchTLSError,
 from shopify_spy._flatten import COLUMNS
 from shopify_spy._results import StoreResult, StoreStatus, run_finish_reason
 from shopify_spy._utils import is_valid_url
-from shopify_spy.cli import app, apply_cli_overrides, get_urls
+from shopify_spy.cli import app, apply_cli_overrides, get_urls, summary_hints
 
 from .conftest import runner, strip_ansi
 from .flow_support import bc_token, bigcommerce_api, magento_url, product_page
@@ -1240,7 +1240,8 @@ def test_diagnose_magento_query_string_rule(cli):
     run = cli(routes, "--platform", "magento", "store.com")
 
     assert _single_status(run) == "blocked by robots.txt"
-    assert "store.com's robots.txt disallows URLs with query strings" in run.stdout
+    assert "store.com: the store's robots.txt disallows URLs with query strings" in run.stdout
+    assert "--ignore-robots" not in run.stdout  # the store's hint replaces the generic one
 
 
 def test_ignore_robots_bypasses_block(cli):
@@ -1482,20 +1483,100 @@ def test_diagnose_tls_error_hints_insecure(cli):
     assert "--insecure" in run.stdout
 
 
+def test_proxy_that_refuses_gets_proxy_hint(cli, tmp_path, monkeypatch, recording_proxy):
+    """#81: with a proxy in use, an unreachable store points at the proxy (real transport)."""
+    proxy = recording_proxy(reject_connect=True)
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("network:\n  retries: 0\n")
+    monkeypatch.setattr(cli_module, "FETCHER_FACTORY", None)
+    out = tmp_path / "proxied"
+    result = runner.invoke(
+        app,
+        ["scrape", "--no-throttle", "-c", str(config_file), "--proxy", proxy.url]
+        + ["-o", str(out), "https://store.test"],
+    )
+    run = Run(result, out, tmp_path / "logs")
+
+    assert run.exit_code == 1
+    assert run.status()["urls"][0]["code"] == "no_response"
+    hint = "requests went through a proxy; check that it is reachable"
+    assert f"store.test: {hint}" in run.stdout
+    assert run.status()["urls"][0]["hint"] == hint
+    assert "No responses received" not in run.stdout
+
+
+def _failed_store(host, status, *, via_proxy=False, by_status=None):
+    return StoreResult(
+        input_url=host,
+        url=f"https://{host}",
+        store=host,
+        platform="shopify",
+        items=0,
+        status=status,
+        complete=True,
+        finish_reason="finished",
+        responses_by_status=by_status or {},
+        via_proxy=via_proxy,
+    )
+
+
+def test_summary_hints_proxy_407():
+    stores = [_failed_store("a.com", StoreStatus.no_response, via_proxy=True, by_status={407: 2})]
+    assert summary_hints(stores, Config()) == [
+        "a.com: the proxy refused its credentials (407); check the proxy URL"
+    ]
+
+
+def test_summary_hints_proxy_tls_error_skips_insecure():
+    stores = [_failed_store("a.com", StoreStatus.tls_error, via_proxy=True)]
+    hints = summary_hints(stores, Config())
+    assert hints == ["a.com: requests went through a proxy; check that it is reachable"]
+
+
+def test_summary_hints_without_proxy_keep_generic_hints():
+    stores = [
+        _failed_store("a.com", StoreStatus.no_response),
+        _failed_store("b.com", StoreStatus.tls_error),
+    ]
+    hints = summary_hints(stores, Config())
+    assert len(hints) == 2
+    assert "--insecure" in hints[0]
+    assert hints[1].startswith("No responses received")
+
+
+def test_summary_hints_generic_hint_only_for_stores_without_one():
+    stores = [
+        _failed_store("a.com", StoreStatus.no_response, via_proxy=True),
+        _failed_store("b.com", StoreStatus.no_response),
+    ]
+    hints = summary_hints(stores, Config())
+    assert hints[0].startswith("No responses received")
+    assert hints[1] == "a.com: requests went through a proxy; check that it is reachable"
+
+
+def test_mixed_run_prints_failed_store_hint(cli):
+    routes = merge(shop("ok.com", 2), {"https://woo.com/wp-json/": {"namespaces": ["wc/store/v1"]}})
+    run = cli(routes, "https://ok.com", "https://woo.com")
+
+    assert run.exit_code == 0
+    assert "woo.com: looks like WooCommerce; pass platform='woocommerce'" in run.stdout
+    assert "ok.com: 2 items" in run.stdout
+
+
 def test_wrong_platform_hint_printed(cli):
     """A Shopify run against a WooCommerce store prints the probe's hint (§4.3)."""
     routes = {"https://store.com/wp-json/": {"namespaces": ["wc/store/v1"]}}
     run = cli(routes, "store.com")
 
     assert run.exit_code == 1
-    assert "store.com looks like WooCommerce; use --platform woocommerce." in run.stdout
+    assert "store.com: looks like WooCommerce; pass platform='woocommerce'" in run.stdout
 
 
 def test_wrong_platform_hint_woocommerce_run(cli):
     routes = {"https://store.com/products.json": bulk(1)}
     run = cli(routes, "--platform", "woocommerce", "store.com")
 
-    assert "store.com looks like Shopify; use --platform shopify." in run.stdout
+    assert "store.com: looks like Shopify; pass platform='shopify'" in run.stdout
 
 
 # --- Status file tests ---

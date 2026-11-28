@@ -78,7 +78,7 @@ def test_piped_scrape_help_content():
         "generic is for any other store (Wix, Squarespace, custom sites)",
         "one request per product, so it's slow",
         "gets a hint naming that platform",
-        "StoreResult.hint",
+        "in the end-of-run summary and the status file",
         "Most requests in flight to one host at once",
         "they go out about one at a time",
         "uv run --with 'shopify-spy>=0.5' python script.py",
