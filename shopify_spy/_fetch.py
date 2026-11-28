@@ -286,7 +286,7 @@ _URL_RE = re.compile(
 _AUTHORITY_RE = re.compile(r"(?:(?P<userinfo>.*)@)?(?P<host>\[.*\]|[^:@]*):?(?P<port>.*)")
 _IPV4_STYLE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+")
 _DEFAULT_PORTS = {"ftp": 21, "http": 80, "https": 443, "ws": 80, "wss": 443}
-MAX_URL_LENGTH = 65536
+_MAX_URL_LENGTH = 65536
 
 
 def _split_url(url: str) -> tuple[str, str, int | None]:
@@ -296,9 +296,10 @@ def _split_url(url: str) -> tuple[str, str, int | None]:
     tests/test_fetch.py, quirks included: ``int()`` parses the port (``+80`` and
     ``99999`` pass) and a default port is dropped only for a lowercase scheme, since
     environment proxies and NO_PROXY entries that worked then must keep working. The
-    host is lowercased and in ASCII (IDNA) form; a scheme must start the URL.
+    host is in ASCII (IDNA) form, lowercased unless it is an IPv6 address; a scheme
+    must start the URL.
     """
-    if len(url) > MAX_URL_LENGTH:
+    if len(url) > _MAX_URL_LENGTH:
         raise ValueError("URL too long")
     if bad := re.search(r"[\x00-\x1f\x7f]", url):
         raise ValueError(
@@ -342,7 +343,8 @@ def _split_host(host: str) -> str:
             raise ValueError(f"Invalid IPv6 address: {host!r}") from None
         return host[1:-1]
     if host.isascii():
-        # Not IDNA-checked: a_b.com, -a.com and *example.com are all accepted
+        # Not IDNA-checked: a_b.com, -a.com and *example.com are all accepted.
+        # Percent-encoded as 0.5 did, so NO_PROXY entries compare the same way
         return re.sub(r"[ <>\[\]^]", lambda c: f"%{ord(c[0]):02X}", host.lower())
     # The stdlib codec would turn *münchen.de into xn--*mnchen-o2a.de, a NO_PROXY
     # pattern that matches nothing, so hosts meant to go direct would be proxied
