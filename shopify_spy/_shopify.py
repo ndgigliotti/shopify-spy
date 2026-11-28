@@ -27,6 +27,7 @@ from shopify_spy._session import (
     StoreContext,
 )
 from shopify_spy._utils import find_all_values, hostname, next_page_url, normalize_url, origin
+from shopify_spy._woocommerce import GONE
 
 logger = logging.getLogger("shopify_spy")
 
@@ -270,15 +271,15 @@ async def _past_bulk(
         locs = [loc async for loc in _product_locs(walk)]
         listed = {h for loc in locs if (h := _listed_handle(loc))} if walk.root_ok else None
         collections = await _collections(ctx, listing_emit, seen, paged.origin, listed, kind=kind)
-        await _fetch_documents(ctx, emit, _each(locs), seen)
-        return walk.root_ok, collections
+        failed = await _fetch_documents(ctx, emit, _each(locs), seen)
+        return walk.root_ok and not failed, collections
     if paged.outcome is Paging.CAPPED:
         # With an item limit the catalog may be far bigger than needed (millions of
         # products), so don't read the whole sitemap up front; it's streamed below
         collections = await _collections(ctx, listing_emit, seen, paged.origin, None, kind=kind)
     walk = _sitemap_walk(ctx)
-    await _fetch_documents(ctx, emit, _product_locs(walk), seen)
-    return not seen or walk.root_ok, collections
+    failed = await _fetch_documents(ctx, emit, _product_locs(walk), seen)
+    return (not seen or walk.root_ok) and not failed, collections
 
 
 async def _page_products(
@@ -582,19 +583,31 @@ async def _each(items: list[str]) -> AsyncIterator[str]:
 
 async def _fetch_documents(
     ctx: StoreContext, emit: Emit, locs: AsyncIterator[str], seen: set[str]
-) -> None:
-    """Fetch each entry's JSON document, skipping products whose handles were seen."""
+) -> int:
+    """Fetch each entry's JSON document, skipping products whose handles were seen.
+
+    Returns how many listed products failed: no response, or an error status other
+    than 404 or 410, which mean the product no longer exists.
+    """
     limiter = asyncio.Semaphore(FETCH_CONCURRENCY)
+    failed = 0
 
     async def fetch(url: str) -> None:
+        nonlocal failed
         try:
             response = await ctx.session.get(url)
         except RequestFailed as exc:
             logger.info("Request failed: %s", exc)
+            failed += 1
             return
         finally:
             limiter.release()
-        if response is None or not response.ok:
+        if response is None:  # robots.txt, or a redirect target already fetched
+            return
+        if not response.ok:
+            if response.status not in GONE:
+                logger.info("Product returned %d for %s", response.status, url)
+                failed += 1
             return
         data = response.json_or_none()
         if not isinstance(data, dict):
@@ -615,6 +628,9 @@ async def _fetch_documents(
             # queue one task per entry
             await limiter.acquire()
             tg.create_task(fetch(loc + ".json"))
+    if failed:
+        logger.warning("%d listed products couldn't be read", failed)
+    return failed
 
 
 def _looks_like_woocommerce(data: Any) -> bool:

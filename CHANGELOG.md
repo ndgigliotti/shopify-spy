@@ -156,6 +156,8 @@
 - A Shopify store read with `--collections` whose `/collections.json` fails or
   repeats a page before the end of the list is now `partial`, keeping the
   collections read, instead of `ok`.
+- A Shopify store read through its sitemap is now `partial` when a listed product
+  failed (no response, or an error status other than 404 or 410), instead of `ok`.
 
 ## 0.5.1
 

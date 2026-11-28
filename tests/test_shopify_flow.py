@@ -945,3 +945,16 @@ def test_failed_collection_list_page_makes_the_store_partial():
     assert len(items) == 250
     store = result.stores[0]
     assert (store.status, store.complete) == (spy.StoreStatus.partial, False)
+
+
+def test_failed_listed_product_makes_the_store_partial():
+    routes = {
+        bulk_url(1): (404, ""),
+        SITEMAP: urlset(f"{STORE}/products/a", f"{STORE}/products/b"),
+        f"{STORE}/products/a.json": {"product": {"id": 1, "handle": "a"}},
+        f"{STORE}/products/b.json": (503, "busy"),
+    }
+    items, result, _ = scrape(routes)
+    assert [i["product"]["handle"] for i in items] == ["a"]
+    store = result.stores[0]
+    assert (store.status, store.complete) == (spy.StoreStatus.partial, False)
