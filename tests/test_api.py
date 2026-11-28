@@ -744,6 +744,14 @@ def test_impersonate_picks_the_first_profile(monkeypatch, clean_proxy_env, caplo
     assert "Impersonating chrome146, then chrome, safari, firefox after" in caplog.text
 
 
+def test_no_rotate_logs_only_the_first_profile(monkeypatch, clean_proxy_env, caplog):
+    _record_transports(monkeypatch)
+    caplog.set_level("INFO", logger="shopify_spy")
+    assert len(list(spy.scrape(STORE, rotate=False, **FAST))) == 2
+    assert "Impersonating chrome (curl_cffi " in caplog.text
+    assert "after a refusal" not in caplog.text
+
+
 def test_user_agent_runs_on_httpx(monkeypatch, clean_proxy_env):
     made = _record_transports(monkeypatch)
     assert len(list(spy.scrape(STORE, user_agent="MyBot/1.0", **FAST))) == 2

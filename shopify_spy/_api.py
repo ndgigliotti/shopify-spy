@@ -106,14 +106,14 @@ def _prepare(
         opts = ScrapeOptions(**options)
     except ValidationError as exc:
         raise ValueError(str(exc)) from None
-    if isinstance(opts.impersonate, str) and opts.user_agent is not None:
+    if opts.impersonate is not None and opts.user_agent is not None:
         raise ValueError(
             "impersonate sets the user agent from the browser profile; drop user_agent, "
             "or drop impersonate to send user_agent without impersonation"
         )
     if opts.fetcher_factory is None:  # a custom transport ignores the transport settings
         check_proxy_support(opts.proxy)
-        if isinstance(opts.impersonate, str):
+        if opts.impersonate is not None:
             validate_impersonate(opts.impersonate)
     if opts.images and opts.images_dir is None:
         raise ValueError(

@@ -242,9 +242,9 @@ class IdentityPool:
     """A store's identity: a browser profile, switched only after a 403 or 429, or a
     fixed ``user_agent``, never switched.
 
-    The identity starts as the first of ``profiles`` (IMPERSONATE_PROFILES by
-    default), and each switch moves to the next, wrapping around; the profile brings
-    its own user agent. ``rotation=False`` keeps the first profile.
+    The identity starts as the first of ``profiles``, and each switch moves to the
+    next, wrapping around; the profile brings its own user agent. ``rotation=False``
+    keeps the first profile.
 
     A switch tests whether a refusal is specific to the identity (#62: Shopify
     refusing one user agent). If the new profile is refused before it is answered
@@ -252,7 +252,7 @@ class IdentityPool:
     """
 
     user_agent: str | None = None
-    profiles: tuple[str, ...] | None = None  # None: IMPERSONATE_PROFILES
+    profiles: tuple[str, ...] = IMPERSONATE_PROFILES  # ignored with a user_agent
     rotation: bool = True
     current: Identity = field(init=False)
     stopped: bool = field(default=False, init=False)  # a switched-to profile was refused
@@ -262,20 +262,14 @@ class IdentityPool:
 
     def __post_init__(self) -> None:
         if self.user_agent is not None:
-            if self.profiles is not None:
-                raise ValueError("a fixed user_agent can't be combined with profiles")
             self.profiles = ()
             self.current = Identity(user_agent=self.user_agent, headers=dict(DEFAULT_HEADERS))
             return
-        if self.profiles is None:
-            self.profiles = IMPERSONATE_PROFILES
-        if not self.profiles:
-            raise ValueError("profiles is empty")
         self.current = Identity(user_agent=None, impersonate=self.profiles[0])
 
     @property
     def rotates(self) -> bool:
-        return self.rotation and not self.stopped and len(self.profiles or ()) > 1
+        return self.rotation and not self.stopped and len(self.profiles) > 1
 
     def answered(self, sent: Identity) -> None:
         """``sent`` got a normal answer: a refusal it had escaped was about identity."""
@@ -291,7 +285,7 @@ class IdentityPool:
         """Switch to the next profile not in ``exclude``; False if none is left."""
         if not self.rotates:
             return False
-        profiles = self.profiles or ()
+        profiles = self.profiles
         n = len(profiles)
         for step in range(1, n):
             index = (self._index + step) % n

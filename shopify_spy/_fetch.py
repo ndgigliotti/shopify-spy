@@ -374,12 +374,6 @@ IMPERSONATE_PROFILES = ("chrome", "safari", "firefox")
 DEFAULT_IMPERSONATE = IMPERSONATE_PROFILES[0]
 
 
-def curl_cffi_version() -> str:
-    import curl_cffi
-
-    return curl_cffi.__version__
-
-
 def impersonate_rotation(start: str) -> tuple[str, ...]:
     """The profiles a store tries in turn, starting with ``start``.
 
@@ -633,19 +627,13 @@ class CurlCffiFetcher:
         self._entered = False
 
     def _session(self, profile: str, raw: bool = False) -> Any:
-        from curl_cffi import CurlOpt
-
-        session = self._sessions.get((profile, raw))
-        if session is None:
-            options = {CurlOpt.HTTP_CONTENT_DECODING: 0} if raw else None
-            session = self._sessions[profile, raw] = self._open_session(profile, options)
-        return session
-
-    def _open_session(self, profile: str, curl_options: Mapping[Any, Any] | None = None) -> Any:
         from curl_cffi import AsyncCurl, CurlOpt
         from curl_cffi.requests import AsyncSession
         from curl_cffi.utils import CurlCffiWarning
 
+        session = self._sessions.get((profile, raw))
+        if session is not None:
+            return session
         # On a Windows Proactor loop curl_cffi warns that it runs select() in a
         # thread and to change the loop policy, which scrape() and the CLI own; the
         # thread hands control back to the loop, so callbacks stay on it
@@ -653,7 +641,7 @@ class CurlCffiFetcher:
             warnings.simplefilter("ignore", CurlCffiWarning)
             acurl = AsyncCurl()
         self._curls.append(acurl)
-        return AsyncSession(
+        session = self._sessions[profile, raw] = AsyncSession(
             async_curl=acurl,
             max_clients=MAX_CURL_CLIENTS,
             impersonate=profile,
@@ -662,8 +650,12 @@ class CurlCffiFetcher:
             allow_redirects=False,
             # Every request sets its proxy, empty for direct, so libcurl never reads
             # the proxy environment; NOPROXY "" stops it applying NO_PROXY to that
-            curl_options={CurlOpt.NOPROXY: "", **(curl_options or {})},
+            curl_options={
+                CurlOpt.NOPROXY: "",
+                **({CurlOpt.HTTP_CONTENT_DECODING: 0} if raw else {}),
+            },
         )
+        return session
 
     async def fetch(self, request: Request) -> Response:
         import httpx

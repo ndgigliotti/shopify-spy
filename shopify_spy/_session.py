@@ -279,7 +279,7 @@ class StoreStats:
     transport_errors: Counter[str] = field(default_factory=Counter)
     tls_errors: int = 0
     images_failed: int = 0
-    identity_changes: int = 0  # browser profile or user agent swaps, any kind
+    identity_changes: int = 0  # browser profile switches, any kind
 
 
 Emit = Callable[[dict[str, Any]], Awaitable[None]]
@@ -558,8 +558,9 @@ class StoreSession:
             return
         self.stats.identity_changes += 1
         after = self.identity.current
-        what = "browser profile" if after.impersonate else "user agent"
-        logger.info("Switching %s for %s: %s -> %s", what, hostname(url), before.name, after.name)
+        logger.info(
+            "Switching browser profile for %s: %s -> %s", hostname(url), before.name, after.name
+        )
 
     async def _fetch_with_retries(self, url: str, kind: RequestKind) -> Response | None:
         if not await self._cleared(url, kind):

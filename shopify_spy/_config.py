@@ -63,7 +63,7 @@ class NetworkConfig(BaseModel):
     proxy: str | None = None  # None = HTTPS_PROXY/HTTP_PROXY/ALL_PROXY from the environment
     # First browser profile (None = chrome), checked when the run starts
     impersonate: str | None = None
-    rotate: bool = True  # Switch browser profile (or user agent) after a 403 or 429
+    rotate: bool = True  # Switch browser profile after a 403 or 429
 
     @field_validator("proxy")
     @classmethod

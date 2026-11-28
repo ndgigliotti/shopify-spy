@@ -616,11 +616,6 @@ def test_identity_rotation_off():
     assert not pool.rotate()
 
 
-def test_identity_fixed_user_agent_with_profiles_is_refused():
-    with pytest.raises(ValueError, match="user_agent"):
-        IdentityPool(user_agent="fixed/1.0", profiles=("chrome", "safari"))
-
-
 def test_identity_defaults_to_the_profile_pool():
     pool = IdentityPool()
     assert pool.profiles == IMPERSONATE_PROFILES

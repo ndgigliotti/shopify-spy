@@ -573,7 +573,7 @@ def _check_options(config: Config, peek: bool) -> None:
     schema_for(config.output.format, config.output.schema_)
     if config.output.format == "xlsx" and not peek:
         require_xlsxwriter()
-    if isinstance(config.network.impersonate, str):
+    if config.network.impersonate is not None:
         _check_impersonate(config.network.impersonate, config.network.user_agent)
     if FETCHER_FACTORY is None:
         check_proxy_support(config.network.proxy)

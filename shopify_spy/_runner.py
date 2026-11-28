@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib.metadata
 import logging
 import time
 import traceback
@@ -27,7 +28,6 @@ from shopify_spy._fetch import (
     CurlCffiFetcher,
     FetcherFactory,
     HttpxFetcher,
-    curl_cffi_version,
     impersonate_rotation,
     redact_url,
     uses_proxy,
@@ -203,12 +203,16 @@ class Runner:
             logger.info("Using proxy %s", redact_url(config.proxy))
         if config.impersonate is None:
             return HttpxFetcher(verify=config.verify_tls, proxy=config.proxy)
-        logger.info(
-            "Impersonating %s, then %s after a refusal (curl_cffi %s)",
-            config.impersonate,
-            ", ".join(self._profiles()[1:]),
-            curl_cffi_version(),
-        )
+        version = importlib.metadata.version("curl_cffi")
+        if config.rotate:
+            logger.info(
+                "Impersonating %s, then %s after a refusal (curl_cffi %s)",
+                config.impersonate,
+                ", ".join(self._profiles()[1:]),
+                version,
+            )
+        else:
+            logger.info("Impersonating %s (curl_cffi %s)", config.impersonate, version)
         return CurlCffiFetcher(config.impersonate, verify=config.verify_tls, proxy=config.proxy)
 
     def _profiles(self) -> tuple[str, ...]:
