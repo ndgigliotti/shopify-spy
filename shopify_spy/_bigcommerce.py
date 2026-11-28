@@ -412,6 +412,10 @@ class _Pager:
         product = node.get("entityId")
         if not isinstance(edges, list) or not isinstance(product, int):
             self.missed_variants = True
+            logger.warning(
+                "BigCommerce product %s: more variants, but no edges or entityId to page them",
+                product,
+            )
             return
         info = connection["pageInfo"]
         cursors: set[str] = set()
