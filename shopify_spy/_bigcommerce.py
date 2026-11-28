@@ -223,7 +223,8 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
             await _probe_others(ctx)
         raise BigCommerceError(f"{site}/: no Storefront API token on the homepage{reason}")
     api = None if stencil else find_endpoint(response.text, token)
-    return await _Pager(ctx, emit, site, token, api=api, headless=not stencil).run()
+    guessed = not stencil and api is None
+    return await _Pager(ctx, emit, site, token, api=api, guessed=guessed).run()
 
 
 async def _homepage(
@@ -259,13 +260,14 @@ class _Pager:
         token: str,
         *,
         api: str | None = None,
-        headless: bool = False,
+        guessed: bool = False,
     ) -> None:
         self.ctx = ctx
         self.emit = emit
         self.site = site  # product URLs stay here, wherever ``api`` is
         self.api = api or get_api_url(site)
-        self.headless = headless  # not a Stencil storefront
+        # Not a Stencil storefront, and its page named no endpoint to use instead
+        self.guessed = guessed
         self.token = token
         self.variant_first = VARIANT_PAGE_SIZE
         self.first = PAGE_SIZE
@@ -314,7 +316,7 @@ class _Pager:
             return await self._unauthorized(response)
         if 300 <= response.status < 400:
             # diagnose() has no redirect status and would call this empty
-            if self.headless and self.api == get_api_url(self.site):
+            if self.guessed:
                 return self._failed(
                     f"{self.api}: redirected ({response.status}); the homepage isn't a "
                     "Stencil storefront and names no store-<hash>.mybigcommerce.com/graphql "
