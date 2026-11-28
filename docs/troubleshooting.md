@@ -28,7 +28,7 @@ Every store ends with a status, which the CLI lists when a store fails and the [
 ## Exit status
 
 - **0:** at least one store produced items. Stores that failed are listed with their statuses.
-- **1:** no store produced items, the output couldn't be written, or the input was invalid (no URLs or no valid ones, `--verbose` with `--quiet`, an option value the CLI rejects, such as a bad `--proxy` or an unknown `--impersonate` browser, `--impersonate` with `--user-agent`, or `--format xlsx` without the `excel` extra, which `--peek` doesn't check). The CLI prints the reason.
+- **1:** no store produced items, the output couldn't be written, or the input was invalid (no URLs or no valid ones, `--verbose` with `--quiet`, an option value the CLI rejects, such as a bad `--proxy` or an unknown `--impersonate` browser, a config file with an unknown key or a bad value, `--impersonate` with `--user-agent`, or `--format xlsx` without the `excel` extra, which `--peek` doesn't check). The CLI prints the reason.
 - **2:** a usage error, such as an unknown option.
 
 ## The status file
