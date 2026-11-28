@@ -1,7 +1,11 @@
 """spy.summarize() across platforms (plan §4.3 "Items and summarize()")."""
 
 import copy
+import json
 from decimal import Decimal
+from pathlib import Path
+
+import pytest
 
 import shopify_spy as spy
 
@@ -339,3 +343,123 @@ def test_generic_summary_dict_is_not_a_generic_item():
     from shopify_spy._flatten import flatten
 
     assert flatten(spy.summarize(GENERIC_PRODUCT).asdict()) is None
+
+
+def _sq_variant(vid, price, *, sale=None, quantity=3, **attributes):
+    variant = {
+        "id": vid,
+        "sku": f"SKU-{vid}",
+        "attributes": attributes,
+        "onSale": sale is not None,
+        "priceMoney": {"currency": "USD", "value": price},
+        "unlimited": False,
+        "qtyInStock": quantity,
+    }
+    if sale is not None:
+        variant["salePriceMoney"] = {"currency": "USD", "value": sale}
+    return variant
+
+
+SQUARESPACE_PRODUCT = {
+    "id": "abc123",
+    "title": "Tee",
+    "urlId": "tee",
+    "fullUrl": "/shop/p/tee",
+    "items": [{"assetUrl": "https://images.test/tee.jpg"}],
+    "structuredContent": {
+        "variants": [
+            _sq_variant("v1", "20.00", sale="15.00", Color="Red", Size="S"),
+            _sq_variant("v2", "22.00", quantity=0, Color="Red", Size="M"),
+        ]
+    },
+    "store": "sq.test",
+    "platform": "squarespace",
+    "html_url": "https://sq.test/shop/p/tee",
+    "image_urls": [],
+    "source": "format_json",
+}
+
+
+def test_squarespace_format_json_product():
+    s = spy.summarize(SQUARESPACE_PRODUCT)
+    assert (s.kind, s.platform, s.id, s.title) == ("product", "squarespace", "abc123", "Tee")
+    # The sale price is the selling price
+    assert (s.min_price, s.max_price, s.currency) == (Decimal("15.00"), Decimal("22.00"), "USD")
+    assert (s.html_url, s.store) == ("https://sq.test/shop/p/tee", "sq.test")
+    assert s.image_urls == ["https://images.test/tee.jpg"]
+
+
+# A live digital product (productType 2) record, trimmed: no variants, priced on
+# structuredContent
+SQUARESPACE_DIGITAL = json.loads(
+    (Path(__file__).parent / "fixtures" / "squarespace-digital-product.json").read_text()
+) | {"store": "paperandstuff.shop", "platform": "squarespace", "source": "format_json"}
+
+
+def test_squarespace_digital_product_is_priced_from_structured_content():
+    s = spy.summarize(SQUARESPACE_DIGITAL)
+    assert (s.min_price, s.max_price, s.currency) == (Decimal("10.00"), Decimal("10.00"), "USD")
+
+
+def test_squarespace_digital_product_on_sale_sells_at_its_sale_price():
+    content = SQUARESPACE_DIGITAL["structuredContent"] | {
+        "onSale": True,
+        "salePriceMoney": {"currency": "USD", "value": "7.50"},
+    }
+    s = spy.summarize(SQUARESPACE_DIGITAL | {"structuredContent": content})
+    assert (s.min_price, s.max_price) == (Decimal("7.50"), Decimal("7.50"))
+
+
+def test_squarespace_product_page_item_is_a_generic_product():
+    page_item = GENERIC_PRODUCT | {"platform": "squarespace", "source": "product_page"}
+    s = spy.summarize(page_item)
+    assert (s.kind, s.platform, s.id, s.title) == ("product", "squarespace", "HAT-1", "Hat & Scarf")
+    assert (s.min_price, s.max_price, s.currency) == (Decimal("12.50"), Decimal("20"), "USD")
+    assert (s.html_url, s.store, s.image_urls) == (
+        "https://j.test/products/hat",
+        "j.test",
+        ["https://j.test/hat.jpg"],
+    )
+
+
+def test_squarespace_currency_comes_from_any_variant():
+    variants = [{"priceMoney": {"value": "9"}}, _sq_variant("v2", "22.00")]
+    s = spy.summarize(SQUARESPACE_PRODUCT | {"structuredContent": {"variants": variants}})
+    assert (s.min_price, s.max_price, s.currency) == (Decimal("9"), Decimal("22.00"), "USD")
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        {"priceMoney": None},
+        {"priceMoney": {"value": "abc"}},
+        {"onSale": True, "salePriceMoney": {"value": "abc"}, "priceMoney": {"value": "9"}},
+        {"priceMoney": {"value": "NaN"}},
+        "not a variant",
+    ],
+)
+def test_squarespace_odd_prices_never_raise(variant):
+    item = SQUARESPACE_PRODUCT | {"structuredContent": {"variants": [variant]}}
+    s = spy.summarize(item)
+    expected = Decimal("9") if isinstance(variant, dict) and variant.get("onSale") else None
+    assert (s.min_price, s.max_price) == (expected, expected)
+
+
+def test_squarespace_summary_dict_is_not_a_squarespace_item():
+    from shopify_spy._flatten import flatten, item_platform
+
+    summary = spy.summarize(SQUARESPACE_PRODUCT).asdict()
+    assert flatten(summary) is None
+    assert item_platform(summary) is None
+
+
+def test_squarespace_item_types_are_exported():
+    from typing import get_args
+
+    assert "SquarespaceProductItem" in spy.__all__
+    hints = spy.SquarespaceProductItem.__annotations__
+    assert get_args(hints["platform"]) == ("squarespace",)
+    assert get_args(hints["source"]) == ("format_json",)
+    generic_hints = spy.GenericProductItem.__annotations__
+    assert get_args(generic_hints["platform"]) == ("generic", "squarespace")
+    assert get_args(generic_hints["source"]) == ("product_page",)

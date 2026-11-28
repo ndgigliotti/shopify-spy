@@ -24,6 +24,7 @@ from shopify_spy import _bigcommerce as bigcommerce
 from shopify_spy import _generic as generic
 from shopify_spy import _magento as magento
 from shopify_spy import _shopify as shopify
+from shopify_spy import _squarespace as squarespace
 from shopify_spy import _woocommerce as woocommerce
 from shopify_spy._fetch import (
     DEFAULT_IMPERSONATE,
@@ -59,6 +60,7 @@ ADAPTERS: dict[str, Callable[[StoreContext, Emit], Awaitable[bool]]] = {
     "magento": magento.run,
     "bigcommerce": bigcommerce.run,
     "generic": generic.run,
+    "squarespace": squarespace.run,
 }
 
 

@@ -8,14 +8,14 @@
 
 # Shopify Spy
 
-**Product and collection scraper for Shopify, WooCommerce, Magento, BigCommerce and other stores, built for scripts and AI coding agents.**
+**Product and collection scraper for Shopify, WooCommerce, Magento, BigCommerce, Squarespace and other stores, built for scripts and AI coding agents.**
 
 [![CI](https://github.com/ndgigliotti/shopify-spy/actions/workflows/ci.yml/badge.svg)](https://github.com/ndgigliotti/shopify-spy/actions/workflows/ci.yml)
 [![PyPI version](https://badge.fury.io/py/shopify-spy.svg)](https://badge.fury.io/py/shopify-spy)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Shopify Spy is a command-line tool and Python library for scraping product and collection data from ecommerce stores. It supports Shopify, WooCommerce, Magento, BigCommerce and other stores out of the box, using the first four platforms' public JSON and GraphQL endpoints and, for any other store, the schema.org Product data (JSON-LD or microdata) on the product pages their sitemaps list, so it needs no API keys or store access. It's designed to be driven by AI agents as much as by people: coding agents such as Claude Code, Codex and GitHub Copilot, and personal agents such as Hermes and OpenClaw, or any agent that can run a shell command or a Python script.
+Shopify Spy is a command-line tool and Python library for scraping product and collection data from ecommerce stores. It supports Shopify, WooCommerce, Magento, BigCommerce, Squarespace and other stores out of the box, using the first four platforms' public JSON and GraphQL endpoints and, for Squarespace and any other store, the schema.org Product data (JSON-LD or microdata) on the product pages their sitemaps list, so it needs no API keys or store access. It's designed to be driven by AI agents as much as by people: coding agents such as Claude Code, Codex and GitHub Copilot, and personal agents such as Hermes and OpenClaw, or any agent that can run a shell command or a Python script.
 
 ## Installation
 
@@ -51,6 +51,10 @@ spy scrape --platform magento https://www.example.com
 
 # Scrape a BigCommerce store
 spy scrape --platform bigcommerce https://www.example.com
+
+# Scrape a Squarespace store, from its product pages (one request per product)
+spy scrape --platform squarespace https://www.example.com --limit 100
+
 # Any other store, from its product pages' schema.org data (one request per product)
 spy scrape --platform generic https://www.example.com --limit 100
 
@@ -96,7 +100,7 @@ An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an i
   - `--help` prints plain, untruncated text when piped, with every default, examples, where results go and what each exit code means.
   - Items are plain dicts with typed definitions, and `help(spy.scrape)` documents every library option, so an agent can write a script without reading the source.
   - `--peek` prints one item to stdout for a quick look at its shape; warnings go to stderr, so stdout stays valid JSONL.
-  - Every run writes a machine-readable status file with each store's status, the library suggests a fix for some failures (such as a likely wrong platform), and the exit code says whether any store produced items.
+  - Every run writes a machine-readable status file with each store's status and a suggested fix for some failures (such as a likely wrong platform), and the exit code says whether any store produced items.
 - **Failure diagnostics.** A failed store gets a status saying what went wrong (403, 404, robots.txt, 429 rate limits, 5xx errors, TLS errors, timeout, no response). When a run returns 0 items, the tool explains the likely cause and suggests flags to try, including the other `--platform` when a store looks like it runs on it. See [Troubleshooting](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.1/docs/troubleshooting.md).
 - **Python library.** `import shopify_spy` gives the same scraping engine as the CLI, with items as typed plain dicts and failures that are never silent.
 - **Spreadsheet-ready output.** JSONL, JSON, CSV, Excel and XML, with a unified schema shared by every platform.
@@ -111,6 +115,7 @@ An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an i
 | WooCommerce | `/wp-json/wc/store/v1/products`, then each page's variations (`?type=variation`); product pages' structured data as a fallback | No authentication required |
 | Magento | storefront GraphQL `products` query at `/graphql` | No authentication required; default store view |
 | BigCommerce | Storefront GraphQL `site.products` at `/graphql`, with the public API token from the homepage | Stencil storefronts whose theme exposes the token, and headless ones whose page names its `mybigcommerce.com` endpoint; default currency |
+| Squarespace | product pages from the sitemap, schema.org `Product` JSON-LD or microdata; with `--ignore-robots`, collection pages' `?format=json` | Squarespace's robots.txt disallows `?format=json`, so product pages are read by default, one request per product |
 | Generic | product pages from the sitemaps, schema.org `Product` JSON-LD or microdata | Best-effort fallback; one request per product |
 
 ## Documentation

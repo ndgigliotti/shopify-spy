@@ -162,7 +162,9 @@ def test_magento_query_string_rule_hint(tmp_path, stores):
     host = urllib.parse.urlsplit(url).netloc
     result, status = _run_verbose(tmp_path, [url], "--platform", "magento")
     assert status["urls"][0]["status"] == "blocked by robots.txt"
-    assert f"{host}'s robots.txt disallows URLs with query strings" in result.stdout
+    hint = "the store's robots.txt disallows URLs with query strings"
+    assert f"{host}: {hint}" in result.stdout
+    assert status["urls"][0]["hint"].startswith(hint)
 
 
 def test_magento_variant_rows_in_csv(tmp_path, stores):

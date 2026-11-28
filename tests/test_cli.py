@@ -7,6 +7,7 @@ accounting. Plan references (§, D) are to .context/httpx-library-rewrite.md.
 
 import asyncio
 import csv
+import dataclasses
 import json
 import sys
 from dataclasses import dataclass, field
@@ -24,7 +25,7 @@ from shopify_spy._fetch import FakeFetcher, FetchConnectionError, FetchTLSError,
 from shopify_spy._flatten import COLUMNS
 from shopify_spy._results import StoreResult, StoreStatus, run_finish_reason
 from shopify_spy._utils import is_valid_url
-from shopify_spy.cli import app, apply_cli_overrides, get_urls
+from shopify_spy.cli import app, apply_cli_overrides, get_urls, summary_hints
 
 from .conftest import runner, strip_ansi
 from .flow_support import bc_token, bigcommerce_api, magento_url, product_page
@@ -229,6 +230,7 @@ def test_cli_scrape_help_platform_values():
     assert "magento" in output
     assert "bigcommerce" in output
     assert "generic" in output
+    assert "squarespace" in output
 
 
 def test_cli_scrape_help_new_flags():
@@ -313,12 +315,23 @@ def test_cli_scrape_warns_shopify_only_flags_generic(flag, warning):
     assert warning in strip_ansi(result.stderr)
 
 
+@pytest.mark.parametrize(
+    ("flag", "warning"),
+    [
+        ("--collections", "--collections has no effect with Squarespace"),
+        ("--no-products", "--no-products has no effect with Squarespace (Squarespace always"),
+    ],
+)
+def test_cli_scrape_warns_shopify_only_flags_squarespace(flag, warning):
+    result = runner.invoke(app, ["scrape", "--platform", "squarespace", flag])
+    assert warning in strip_ansi(result.stderr)
+
+
 def test_cli_init_lists_platforms(tmp_path):
     config_file = tmp_path / "test-config.yaml"
     runner.invoke(app, ["init", str(config_file)])
-    assert (
-        "# Platform: shopify, woocommerce, magento, bigcommerce, generic" in config_file.read_text()
-    )
+    platforms = "# Platform: shopify, woocommerce, magento, bigcommerce, generic, squarespace"
+    assert platforms in config_file.read_text()
 
 
 @pytest.mark.parametrize(
@@ -774,6 +787,7 @@ def test_status_file_lists_skipped_urls(cli):
         "code": "invalid_url",
         "products_from": None,
         "identity_changes": 0,
+        "hint": None,
     }
 
 
@@ -1005,6 +1019,7 @@ def test_multi_url_store_that_failed(cli):
         "code": "error",
         "products_from": None,
         "identity_changes": 0,
+        "hint": None,
     }
 
 
@@ -1040,6 +1055,7 @@ def test_store_that_failed_after_scraping_items(cli):
         "code": "error",
         "products_from": None,
         "identity_changes": 0,
+        "hint": None,
     }
     assert data["finish_reason"] == "crawler_failed"
 
@@ -1119,6 +1135,7 @@ def test_diagnose_items(cli):
         "code": "ok",
         "products_from": None,
         "identity_changes": 0,
+        "hint": None,
     }
 
 
@@ -1236,7 +1253,8 @@ def test_diagnose_magento_query_string_rule(cli):
     run = cli(routes, "--platform", "magento", "store.com")
 
     assert _single_status(run) == "blocked by robots.txt"
-    assert "store.com's robots.txt disallows URLs with query strings" in run.stdout
+    assert "store.com: the store's robots.txt disallows URLs with query strings" in run.stdout
+    assert "--ignore-robots" not in run.stdout  # the store's hint replaces the generic one
 
 
 def test_ignore_robots_bypasses_block(cli):
@@ -1478,20 +1496,109 @@ def test_diagnose_tls_error_hints_insecure(cli):
     assert "--insecure" in run.stdout
 
 
+def test_proxy_that_refuses_gets_proxy_hint(cli, tmp_path, monkeypatch, recording_proxy):
+    """#81: with a proxy in use, an unreachable store points at the proxy (real transport)."""
+    proxy = recording_proxy(reject_connect=True)
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("network:\n  retries: 0\n")
+    monkeypatch.setattr(cli_module, "FETCHER_FACTORY", None)
+    out = tmp_path / "proxied"
+    result = runner.invoke(
+        app,
+        ["scrape", "--no-throttle", "-c", str(config_file), "--proxy", proxy.url]
+        + ["-o", str(out), "https://store.test"],
+    )
+    run = Run(result, out, tmp_path / "logs")
+
+    assert run.exit_code == 1
+    assert run.status()["urls"][0]["code"] == "no_response"
+    hint = "requests went through a proxy; check that it is reachable"
+    assert f"store.test: {hint}" in run.stdout
+    assert run.status()["urls"][0]["hint"] == hint
+    assert "No responses received" not in run.stdout
+
+
+def _failed_store(host, status, *, via_proxy=False, by_status=None):
+    return StoreResult(
+        input_url=host,
+        url=f"https://{host}",
+        store=host,
+        platform="shopify",
+        items=0,
+        status=status,
+        complete=True,
+        finish_reason="finished",
+        responses_by_status=by_status or {},
+        via_proxy=via_proxy,
+    )
+
+
+def test_summary_hints_proxy_407():
+    stores = [_failed_store("a.com", StoreStatus.no_response, via_proxy=True, by_status={407: 2})]
+    assert summary_hints(stores, Config()) == [
+        "a.com: the proxy refused its credentials (407); check the proxy URL"
+    ]
+
+
+def test_summary_hints_proxy_tls_error_skips_insecure():
+    stores = [_failed_store("a.com", StoreStatus.tls_error, via_proxy=True)]
+    hints = summary_hints(stores, Config())
+    assert hints == ["a.com: requests went through a proxy; check that it is reachable"]
+
+
+def test_summary_hints_without_proxy_keep_generic_hints():
+    stores = [
+        _failed_store("a.com", StoreStatus.no_response),
+        _failed_store("b.com", StoreStatus.tls_error),
+    ]
+    hints = summary_hints(stores, Config())
+    assert len(hints) == 2
+    assert "--insecure" in hints[0]
+    assert hints[1].startswith("No responses received")
+
+
+def test_summary_hints_generic_hint_only_for_stores_without_one():
+    stores = [
+        _failed_store("a.com", StoreStatus.no_response, via_proxy=True),
+        _failed_store("b.com", StoreStatus.no_response),
+    ]
+    hints = summary_hints(stores, Config())
+    assert hints[0].startswith("No responses received")
+    assert hints[1] == "a.com: requests went through a proxy; check that it is reachable"
+
+
+def test_summary_hints_skip_products_from_hint_of_errored_store_with_items():
+    store = dataclasses.replace(
+        _failed_store("store.com", StoreStatus.error),
+        items=50,
+        products_from="acme.myshopify.com",
+    )
+    assert not any("products came from" in h for h in summary_hints([store], Config()))
+
+
+def test_mixed_run_prints_failed_store_hint(cli):
+    routes = merge(shop("ok.com", 2), {"https://woo.com/wp-json/": {"namespaces": ["wc/store/v1"]}})
+    run = cli(routes, "https://ok.com", "https://woo.com")
+
+    assert run.exit_code == 0
+    assert "woo.com: looks like WooCommerce; use the woocommerce platform" in run.stdout
+    assert "ok.com: 2 items" in run.stdout
+
+
 def test_wrong_platform_hint_printed(cli):
     """A Shopify run against a WooCommerce store prints the probe's hint (§4.3)."""
     routes = {"https://store.com/wp-json/": {"namespaces": ["wc/store/v1"]}}
     run = cli(routes, "store.com")
 
     assert run.exit_code == 1
-    assert "store.com looks like WooCommerce; use --platform woocommerce." in run.stdout
+    assert "store.com: looks like WooCommerce; use the woocommerce platform" in run.stdout
 
 
 def test_wrong_platform_hint_woocommerce_run(cli):
     routes = {"https://store.com/products.json": bulk(1)}
     run = cli(routes, "--platform", "woocommerce", "store.com")
 
-    assert "store.com looks like Shopify; use --platform shopify." in run.stdout
+    assert "store.com: looks like Shopify; use the shopify platform" in run.stdout
 
 
 # --- Status file tests ---
@@ -1513,6 +1620,7 @@ def test_status_file_written_on_success(cli):
             "code": "ok",
             "products_from": None,
             "identity_changes": 0,
+            "hint": None,
         }
     ]
 
@@ -1535,6 +1643,14 @@ def test_status_file_multi_url(cli):
     assert data["items_scraped"] == 10
     assert data["urls"][0]["status"] == "ok"
     assert data["urls"][1]["status"] == "403 Forbidden"
+
+
+def test_status_file_records_hint(cli):
+    routes = {"https://store.com/wp-json/": {"namespaces": ["wc/store/v1"]}}
+    run = cli(routes, "store.com")
+
+    [entry] = run.status()["urls"]
+    assert entry["hint"] == "looks like WooCommerce; use the woocommerce platform"
 
 
 def test_no_status_file_in_peek_mode(cli):

@@ -8,6 +8,9 @@
   after a refusal on or off (default on), and the status file's
   `identity_changes` and `StoreResult.identity_changes` count the switches per
   store.
+- The status file has each store's `hint`, the same text as `StoreResult.hint`
+  (`null` when there is none)
+  ([#120](https://github.com/ndgigliotti/shopify-spy/issues/120)).
 - A `magento` platform (`--platform magento`, `platform="magento"`) for Magento
   Open Source and Adobe Commerce 2.4 stores, read through the storefront GraphQL
   API at `/graphql` without a token. Items are the GraphQL products plus `store`,
@@ -41,6 +44,20 @@
   default on a throttled store). Its hint names Shopify, WooCommerce or Magento when
   the store answers like one
   ([#93](https://github.com/ndgigliotti/shopify-spy/issues/93)).
+- A `squarespace` platform (`--platform squarespace`, `platform="squarespace"`)
+  for Squarespace Commerce stores. Squarespace's robots.txt disallows its
+  `?format=json` URLs, so by default it reads the product pages the store's sitemap
+  lists, as `generic` does, and never requests a `format=json` URL; those items are
+  `generic`-shaped with `platform: "squarespace"` and `source: "product_page"`. With
+  `--ignore-robots` (`respect_robots_txt=False`), it reads each collection's
+  `?format=json` pages instead, giving the Squarespace product records with every
+  variant, price and stock (`SquarespaceProductItem`, `source: "format_json"`), and
+  then reads the listed product pages its collections didn't give, as by default. The log says
+  which source each store used, and the unified schema has a row per variant (a
+  digital product, which has none, gets one row priced from its `structuredContent`). A
+  store read with `--ignore-robots` ends `partial` when a collection page or one of
+  those product pages can't be read
+  ([#91](https://github.com/ndgigliotti/shopify-spy/issues/91)).
 
 ### Changed
 
@@ -112,6 +129,18 @@
   `scripts/update_user_agents.py`, which refreshed it. Without `--user-agent`,
   requests carry the browser profile's own user agent; with it, exactly the one
   you set, so Shopify Spy never picks one itself.
+
+### Fixed
+
+- The CLI's end-of-run summary prints each store's `StoreResult.hint`, so a store
+  that never answered through a proxy (`--proxy`, `network.proxy` or a proxy
+  environment variable) gets the hint to check the proxy, or its credentials after
+  a 407, instead of the network or `--insecure` advice
+  ([#81](https://github.com/ndgigliotti/shopify-spy/issues/81)). The summary of a
+  run that scraped items also prints the hints of stores that failed or produced
+  nothing, and a store's hint replaces the status hint it would otherwise share
+  with other stores. The wrong-platform hint now reads the same in the CLI and the
+  library (`looks like WooCommerce; use the woocommerce platform`).
 
 ## 0.5.1
 

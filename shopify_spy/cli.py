@@ -259,12 +259,13 @@ def scrape(
             "-p",
             help="The store's platform "
             f"(default: {_DEFAULTS.scrape.platform.value}). shopify, woocommerce, magento and "
-            "bigcommerce read the platform's own API. generic is for any other store (Wix, "
-            "Squarespace, custom sites): it reads schema.org product data (JSON-LD or "
-            "microdata) from each product page the sitemaps list, one request per product, "
-            "so it's slow; use --limit for a sample. A store that fails because it looks like "
-            "Shopify, WooCommerce or Magento gets a hint naming that platform (in the end-of-run "
-            "summary when nothing was scraped, and in the library's StoreResult.hint).",
+            "bigcommerce read the platform's own API. squarespace reads a Squarespace store's "
+            "product pages, or with --ignore-robots its collections' ?format=json data. "
+            "generic is for any other store (Wix, custom sites): it reads schema.org product "
+            "data (JSON-LD or microdata) from each product page the sitemaps list, one request "
+            "per product, so it's slow; use --limit for a sample. A store that fails because it "
+            "looks like Shopify, WooCommerce or Magento gets a hint naming that platform, in the "
+            "end-of-run summary and the status file.",
             rich_help_panel=SCRAPE_PANEL,
         ),
     ] = None,
@@ -272,8 +273,8 @@ def scrape(
         bool | None,
         typer.Option(
             "--products/--no-products",
-            help="Scrape products. Shopify only; WooCommerce, Magento, BigCommerce and "
-            "generic always do "
+            help="Scrape products. Shopify only; WooCommerce, Magento, BigCommerce, generic and "
+            "Squarespace always do "
             f"(default: {_on_off(_DEFAULTS.scrape.products)}).",
             rich_help_panel=SCRAPE_PANEL,
         ),
@@ -995,6 +996,8 @@ def _print_done(
     if multi:
         for s in stores:
             console.print(f"  {escape(_host(s.input_url))}: {_display_status(s)}")
+    for hint in _store_hints(stores):
+        console.print(f"  {hint}")
 
 
 def _display_status(store: StoreResult) -> str:
@@ -1007,8 +1010,28 @@ def _display_status(store: StoreResult) -> str:
     return store.status.label
 
 
+def _store_hints(stores: list[StoreResult]) -> list[str]:
+    """``StoreResult.hint`` of each store that failed or produced nothing, with its host.
+
+    A store's products_from hint is left out once it has items, since the summary
+    already shows where they came from, even when the store then failed.
+    """
+    return [
+        f"{escape(_host(s.input_url))}: {escape(s.hint)}"
+        for s in stores
+        if s.hint is not None and (s.items == 0 or (s.failed and s.products_from is None))
+    ]
+
+
 def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
-    """Return one hint per distinct zero-item status, in diagnosis order."""
+    """Return one hint per distinct zero-item status, in diagnosis order, then each
+    store's own hint.
+
+    A store with its own hint is left out of the status hints, so that a proxy that
+    failed, for one, isn't also blamed on the network or a certificate.
+    """
+    store_hints = _store_hints(stores)
+    stores = [s for s in stores if s.hint is None]
 
     def total(status: StoreStatus, codes: Container[int]) -> int:
         return sum(
@@ -1071,19 +1094,7 @@ def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
         hints.append("The store may be empty or the endpoint returned no products.")
     if StoreStatus.stopped in present:
         hints.append("Stopped before every store finished.")
-    for s in stores:
-        if s.query_disallowed and s.status == StoreStatus.robots_blocked:
-            hints.append(
-                f"{escape(_host(s.input_url))}'s robots.txt disallows URLs with query "
-                "strings, which covers the GraphQL query."
-            )
-        if s.suggested_platform:
-            name = _PLATFORM_NAMES.get(s.suggested_platform, s.suggested_platform)
-            hints.append(
-                f"{escape(_host(s.input_url))} looks like {name}; "
-                f"use --platform {s.suggested_platform}."
-            )
-    return hints
+    return hints + store_hints
 
 
 if __name__ == "__main__":

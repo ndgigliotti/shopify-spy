@@ -117,6 +117,14 @@ def test_load_config_generic(tmp_path):
     assert config.to_kwargs()["platform"] == "generic"
 
 
+def test_load_config_squarespace(tmp_path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("scrape:\n  platform: squarespace\n")
+    config = load_config_from_file(config_file)
+    assert config.scrape.platform == "squarespace"
+    assert config.to_kwargs()["platform"] == "squarespace"
+
+
 def test_load_config_is_utf8_whatever_the_locale(tmp_path):
     # Windows' default encoding is cp1252, and Notepad may add a byte-order mark
     config_file = tmp_path / "config.yaml"

@@ -7,6 +7,8 @@ import time
 import pytest
 
 import shopify_spy as spy
+from shopify_spy import _generic as generic
+from shopify_spy import _runner as runner
 from shopify_spy._fetch import FakeFetcher, FetchConnectionError, Seq
 from shopify_spy._generic import FETCH_CONCURRENCY, HINT_AFTER, PROBE_PAGES
 from shopify_spy._magento import STORE_CONFIG_PATH
@@ -747,7 +749,7 @@ def test_magento_hint():
     [s] = result.stores
     assert s.status == "error"
     assert s.suggested_platform == "magento"
-    assert s.hint == "looks like Magento; pass platform='magento'"
+    assert s.hint == "looks like Magento; use the magento platform"
     assert fetcher.count(f"{STORE}/products.json") == 1
     assert fetcher.count(f"{STORE}/wp-json/") == 1
     assert fetcher.count(STORE_CONFIG) == 1
@@ -893,3 +895,66 @@ def test_microdata_pages_become_items():
     assert by_url[url(1)]["offers"] == {"@type": "Offer", "price": "12.50", "priceCurrency": "EUR"}
     assert by_url[url(0)]["name"] == "Product 0"
     assert result.stores[0].status == "ok"
+
+
+# --- read_pages for another platform ---
+
+SHAPE = "/products/<slug>"
+OTHER_PAGES = [f"{STORE}/about", f"{STORE}/blog/post-1", "https://elsewhere.test/contact"]
+
+
+def is_product(loc):
+    return "/products/" in loc
+
+
+@pytest.fixture
+def read_pages(monkeypatch):
+    """Route platform="generic" through read_pages with these options."""
+
+    def use(**options):
+        async def adapter(ctx, emit):
+            return await generic.read_pages(ctx, emit, **options)
+
+        monkeypatch.setitem(runner.ADAPTERS, "generic", adapter)
+
+    return use
+
+
+def test_read_pages_reads_only_kept_pages(read_pages):
+    read_pages(platform="other", source="product_page", keep=is_product, product_shape=SHAPE)
+    routes = {**store(2), SITEMAP: urlset(OTHER_PAGES[0], url(0), *OTHER_PAGES[1:], url(1))}
+    items, result, fetcher = scrape_ld(routes)
+    assert sorted(i["html_url"] for i in items) == [url(0), url(1)]
+    assert {(i["platform"], i["source"]) for i in items} == {("other", "product_page")}
+    assert requested(fetcher) == [SITEMAP, url(0), url(1)]
+    [s] = result.stores
+    assert s.status == "ok"
+    assert s.complete  # neither the filtered pages nor the off-site one count against it
+
+
+def test_read_pages_without_source_adds_no_source_key(read_pages):
+    read_pages(platform="other")
+    items, _, _ = scrape_ld(store(1))
+    assert items[0]["platform"] == "other"
+    assert "source" not in items[0]
+
+
+def test_read_pages_with_every_page_filtered_is_an_error(read_pages):
+    read_pages(keep=is_product, product_shape=SHAPE)
+    _, result, fetcher = scrape_ld({SITEMAP: urlset(*OTHER_PAGES)})
+    [s] = result.stores
+    assert s.status == "error"
+    assert f"no product page ({SHAPE}) among the 3 pages listed ({SITEMAP})" in s.errors[0]
+    assert not any(page in requested(fetcher) for page in OTHER_PAGES)
+    assert_fast_exit(s)
+
+
+def test_read_pages_with_empty_sitemap_is_still_empty(read_pages):
+    read_pages(keep=is_product, product_shape=SHAPE)
+    _, result, _ = scrape_ld({SITEMAP: urlset()})
+    assert result.stores[0].status == "empty"
+
+
+async def test_read_pages_needs_product_shape_with_keep():
+    with pytest.raises(ValueError, match="product_shape"):
+        await generic.read_pages(None, None, keep=is_product)
