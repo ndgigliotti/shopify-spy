@@ -1,7 +1,9 @@
 """Tests for StoreSession and HostRegistry against FakeFetcher."""
 
 import asyncio
+import email.utils
 import ipaddress
+import time
 import urllib.parse
 
 import pytest
@@ -726,16 +728,218 @@ async def test_429_without_retries_left_honors_retry_after():
     assert session.registry.slot(STORE).paused_until - now() >= 25
 
 
-async def test_retry_after_capped_by_max_delay():
-    session, _ = make_session(
+async def test_retry_after_over_max_delay_is_not_retried_early():
+    session, fetcher = make_session(
         {f"{STORE}/p": Seq([(503, "", {"Retry-After": "30"}), (200, "ok")])},
         robots=False,
         retry=RetryPolicy(retries=1, backoff=True, base_delay=0.0, max_delay=0.1),
     )
-    loop = asyncio.get_running_loop()
-    start = loop.time()
+    assert (await get(session, f"{STORE}/p")).status == 503
+    assert fetcher.count(f"{STORE}/p") == 1
+
+
+# --- Long Retry-After -----------------------------------------------------------------
+
+
+def long_retry_session(routes, retry=None, **kwargs):
+    return make_session(
+        routes,
+        robots=False,
+        retry=retry or RetryPolicy(retries=2, backoff=True, base_delay=0.0),
+        **kwargs,
+    )
+
+
+async def test_long_retry_after_429_is_not_retried_and_pauses_the_host(caplog):
+    session, fetcher = long_retry_session(
+        {f"{STORE}/p": Seq([(429, "", {"Retry-After": "120"}), (200, "ok")])}
+    )
+    deadline = session.bail_deadline = now() + 30
+    caplog.set_level("INFO", logger="shopify_spy")
+    response = await get(session, f"{STORE}/p")
+    assert response.status == 429
+    assert fetcher.count(f"{STORE}/p") == 1
+    assert session.stats.rate_limits == 1
+    assert session.registry.slot(STORE).paused_until >= now() + 119
+    assert session.bail_deadline == deadline
+    assert not [r for r in caplog.records if r.getMessage().startswith("Retrying")]
+    pauses = [r for r in caplog.records if r.getMessage().startswith("Pausing requests to")]
+    assert len(pauses) == 1
+    assert pauses[0].levelname == "WARNING"
+    assert STORE in pauses[0].getMessage()
+
+
+async def test_long_retry_after_on_the_last_attempt_pauses_for_all_of_it(caplog):
+    session, _ = long_retry_session(
+        {f"{STORE}/p": (429, "", {"Retry-After": "600"})}, retry=RetryPolicy(retries=0)
+    )
+    deadline = session.bail_deadline = now() + 30
+    caplog.set_level("WARNING", logger="shopify_spy")
+    assert (await get(session, f"{STORE}/p")).status == 429
+    assert session.registry.slot(STORE).paused_until >= now() + 600 - 1
+    assert session.bail_deadline == deadline
+    assert len([r for r in caplog.records if r.levelname == "WARNING"]) == 1
+
+
+async def test_huge_retry_after_returns_the_429():
+    # 400 digits parse to inf, which a wall-clock "until" time can't format
+    session, _ = long_retry_session({f"{STORE}/p": (429, "", {"Retry-After": "1" * 400})})
+    assert (await get(session, f"{STORE}/p")).status == 429
+    assert session.registry.slot(STORE).paused_until == float("inf")
+
+
+async def test_long_retry_after_503_is_not_retried():
+    session, fetcher = long_retry_session(
+        {f"{STORE}/p": Seq([(503, "", {"Retry-After": "3600"}), (200, "ok")])}
+    )
+    assert (await get(session, f"{STORE}/p")).status == 503
+    assert fetcher.count(f"{STORE}/p") == 1
+    assert session.registry.slot(STORE).paused_until >= now() + 3500
+
+
+async def test_retry_after_over_bail_time_on_500_is_not_retried_or_paused(caplog):
+    session, fetcher = long_retry_session(
+        {f"{STORE}/p": Seq([(500, "", {"Retry-After": "10"}), (200, "ok")])}
+    )
+    session.bail_deadline = now() + 2
+    caplog.set_level("INFO", logger="shopify_spy")
+    assert (await get(session, f"{STORE}/p")).status == 500
+    assert fetcher.count(f"{STORE}/p") == 1
+    assert session.registry.slot(STORE).paused_until == 0.0
+    declined = [r for r in caplog.records if r.getMessage().startswith("Not retrying")]
+    assert len(declined) == 1
+    assert declined[0].levelname == "INFO"
+
+
+@pytest.mark.parametrize("status", [200, 404])
+async def test_retry_after_on_a_final_response_is_ignored(status, caplog):
+    session, fetcher = long_retry_session({f"{STORE}/p": (status, "", {"Retry-After": "120"})})
+    caplog.set_level("INFO", logger="shopify_spy")
+    assert (await get(session, f"{STORE}/p")).status == status
+    assert fetcher.count(f"{STORE}/p") == 1
+    assert session.registry.slot(STORE).paused_until == 0.0
+    assert not [r for r in caplog.records if "etry" in r.getMessage()]
+
+
+async def test_long_retry_after_on_an_image_pauses_the_image_host():
+    image_host = "https://cdn.test"
+    session, fetcher = long_retry_session(
+        {f"{image_host}/a.jpg": (429, "", {"Retry-After": "600"})}
+    )
+    assert (await get(session, f"{image_host}/a.jpg", kind=IMAGE)).status == 429
+    assert fetcher.count(f"{image_host}/a.jpg") == 1
+    assert session.registry.slot(image_host).paused_until >= now() + 599
+    assert session.stats.rate_limits == 0
+
+
+async def test_long_http_date_retry_after_is_not_retried():
+    later = email.utils.formatdate(time.time() + 3600, usegmt=True)
+    session, fetcher = long_retry_session(
+        {f"{STORE}/p": Seq([(429, "", {"Retry-After": later}), (200, "ok")])}
+    )
+    assert (await get(session, f"{STORE}/p")).status == 429
+    assert fetcher.count(f"{STORE}/p") == 1
+    assert session.stats.rate_limits == 1
+    assert session.registry.slot(STORE).paused_until >= now() + 3500
+
+
+async def test_retry_after_at_the_limit_is_waited_out():
+    session, fetcher = long_retry_session(
+        {f"{STORE}/p": Seq([(429, "", {"Retry-After": "1"}), (200, "ok")])},
+        retry=RetryPolicy(retries=1, backoff=True, base_delay=0.0, max_delay=1.0),
+    )
+    start = now()
     assert (await get(session, f"{STORE}/p")).status == 200
-    assert 0.05 <= loop.time() - start < 0.5
+    assert fetcher.count(f"{STORE}/p") == 2
+    assert now() - start >= 0.9
+
+
+async def test_retry_after_over_the_limit_returns_at_once():
+    session, fetcher = long_retry_session(
+        {f"{STORE}/p": Seq([(429, "", {"Retry-After": "2"}), (200, "ok")])},
+        retry=RetryPolicy(retries=1, backoff=True, base_delay=0.0, max_delay=1.0),
+    )
+    start = now()
+    assert (await get(session, f"{STORE}/p")).status == 429
+    assert fetcher.count(f"{STORE}/p") == 1
+    assert now() - start < 0.5
+
+
+# --- Crawl-delay ----------------------------------------------------------------------
+
+
+def crawl_delay_robots(seconds):
+    return (200, f"User-agent: *\nCrawl-delay: {seconds}\n")
+
+
+async def test_crawl_delay_applied_to_the_slot_and_logged_once(caplog):
+    caplog.set_level("INFO", logger="shopify_spy")
+    routes = {f"{STORE}/robots.txt": crawl_delay_robots(5)}
+    first, _ = make_session(routes)
+    second, _ = make_session(routes, registry=first.registry)
+    async with asyncio.timeout(2):
+        await first.registry.robots(f"{STORE}/a", first)
+        await first.registry.robots(f"{STORE}/b", second)
+    assert first.registry.slot(STORE).crawl_delay == 5.0
+    records = [r for r in caplog.records if "Crawl-delay" in r.getMessage()]
+    assert len(records) == 1
+    assert records[0].levelname == "INFO"
+    assert records[0].getMessage() == f"Using robots.txt Crawl-delay of 5s for {STORE}"
+
+
+async def test_crawl_delay_applied_to_each_slot_that_reaches_the_origin(caplog):
+    caplog.set_level("INFO", logger="shopify_spy")
+    shop = "https://a.myshopify.com"
+    session, fetcher = make_session({f"{shop}/robots.txt": crawl_delay_robots(5)})
+    registry = session.registry
+    async with asyncio.timeout(2):
+        await registry.robots(f"{shop}/p", session, MYSHOPIFY)
+        await registry.robots(f"{shop}/q", session)
+    assert registry.slot(shop, MYSHOPIFY.slot).crawl_delay == 5.0
+    assert registry.slot(shop).crawl_delay == 5.0
+    assert fetcher.count(f"{shop}/robots.txt") == 1
+    assert len([r for r in caplog.records if "Crawl-delay" in r.getMessage()]) == 1
+
+
+async def test_crawl_delay_spaces_requests_with_throttle_off():
+    session, _ = make_session(
+        {
+            f"{STORE}/robots.txt": crawl_delay_robots(0.3),
+            f"{STORE}/a": (200, "ok"),
+            f"{STORE}/b": (200, "ok"),
+        }
+    )
+    loop = asyncio.get_running_loop()
+    await get(session, f"{STORE}/a")
+    t1 = loop.time()
+    await get(session, f"{STORE}/b")
+    assert loop.time() - t1 >= 0.29
+
+
+async def test_crawl_delay_capped_at_max_delay(caplog):
+    caplog.set_level("INFO", logger="shopify_spy")
+    registry = HostRegistry(
+        concurrent_requests=16,
+        throttle=ThrottleSettings(enabled=False, max_delay=60.0),
+        respect_robots_txt=True,
+    )
+    session, _ = make_session({f"{STORE}/robots.txt": crawl_delay_robots(600)}, registry=registry)
+    async with asyncio.timeout(2):
+        await registry.robots(f"{STORE}/a", session)
+    assert registry.slot(STORE).crawl_delay == 60.0
+    records = [r for r in caplog.records if "Crawl-delay" in r.getMessage()]
+    assert len(records) == 1
+    assert records[0].levelname == "WARNING"
+    assert "600s" in records[0].getMessage() and "60s" in records[0].getMessage()
+
+
+async def test_no_crawl_delay_when_robots_ignored():
+    session, fetcher = make_session(
+        {f"{STORE}/robots.txt": crawl_delay_robots(5), f"{STORE}/a": (200, "ok")}, robots=False
+    )
+    await get(session, f"{STORE}/a")
+    assert fetcher.count(f"{STORE}/robots.txt") == 0
+    assert session.registry.slot(STORE).crawl_delay == 0.0
 
 
 # --- Stats ----------------------------------------------------------------------------
@@ -1006,3 +1210,34 @@ async def test_kind_without_success_counts_responses_not_successes():
     assert session.stats.successes == 0
     assert session.stats.responses == 1
     assert session.stats.by_status == {200: 1}
+
+
+# --- image_delay ----------------------------------------------------------------------
+
+
+def throttled_session():
+    registry = HostRegistry(
+        concurrent_requests=16,
+        throttle=ThrottleSettings(start_delay=0.0, min_delay=0.4, image_delay=0.1),
+        respect_robots_txt=False,
+    )
+    return make_session(
+        {f"{STORE}/a": (200, "x"), f"{STORE}/b": (200, "x")},
+        registry=registry,
+    )[0]
+
+
+async def test_image_requests_are_spaced_by_image_delay():
+    session = throttled_session()
+    started = now()
+    await get(session, f"{STORE}/a", kind=IMAGE)
+    await get(session, f"{STORE}/b", kind=IMAGE)
+    assert 0.09 <= now() - started < 0.35
+
+
+async def test_store_requests_are_spaced_by_min_delay():
+    session = throttled_session()
+    started = now()
+    await get(session, f"{STORE}/a")
+    await get(session, f"{STORE}/b")
+    assert now() - started >= 0.39

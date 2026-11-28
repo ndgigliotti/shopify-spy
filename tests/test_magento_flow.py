@@ -276,6 +276,32 @@ def test_robots_txt_blocks_graphql():
     assert items == []
     assert fetcher.count(magento_url(1)) == 0
     assert result.stores[0].status == "robots_blocked"
+    assert not result.stores[0].query_disallowed
+    assert result.stores[0].hint is None
+
+
+def test_robots_txt_blocking_query_strings_gets_a_hint():
+    routes = {
+        f"{STORE}/robots.txt": (200, "User-agent: *\nDisallow: /*?"),
+        magento_url(1): page(3),
+    }
+    items, result, fetcher = scrape_mg(routes)
+    store = result.stores[0]
+    assert items == []
+    assert fetcher.count(magento_url(1)) == 0
+    assert store.status == "robots_blocked"
+    assert store.query_disallowed
+    assert "disallows URLs with query strings" in store.hint
+
+
+def test_query_string_rule_ignored_with_robots_off():
+    routes = {
+        f"{STORE}/robots.txt": (200, "User-agent: *\nDisallow: /*?"),
+        magento_url(1): page(3),
+    }
+    items, result, _ = scrape_mg(routes, respect_robots_txt=False)
+    assert len(items) == 3
+    assert not result.stores[0].query_disallowed
 
 
 def test_repeated_page_stops(caplog):

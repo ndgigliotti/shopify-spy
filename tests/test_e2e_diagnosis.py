@@ -76,6 +76,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     redirect_to = ""  # redirect_to_loopback: the origin to send every request to
     hits: dict
     agents: list  # user agents in the order first seen
+    arrivals: list  # (path with query, monotonic arrival time)
 
     def log_message(self, *args):
         pass
@@ -109,6 +110,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802
         path = self.path.split("?")[0]
         count = self.hits[path] = self.hits.get(path, 0) + 1
+        self.arrivals.append((self.path, time.monotonic()))
         self._record_agent()
         scenario = SCENARIOS.get(self.scenario)
         if scenario is None:
@@ -199,6 +201,23 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         # Stupell (#30): 429s without Retry-After; retries wait until --bail
         return self._send(404) if path == "/robots.txt" else self._send(429)
 
+    def _long_retry_after(self, path, count):
+        # A Retry-After longer than we wait before a retry: not retried early
+        if path == "/products.json":
+            return self._send(429, headers={"Retry-After": "120"})
+        return self._send(404)
+
+    def _crawl_delay(self, path, count):
+        if path == "/robots.txt":
+            return self._send(200, b"User-agent: *\nCrawl-delay: 1.5\n")
+        if path == "/products.json":
+            # A full page 1, so the adapter asks for page 2
+            page = []
+            if "page=1" in urllib.parse.urlsplit(self.path).query.split("&"):
+                page = [{"id": i, "handle": f"p{i}", "title": f"P{i}"} for i in range(250)]
+            return self._send(200, json.dumps({"products": page}).encode())
+        return self._send(404)
+
     def _forbidden_then_rate_limited(self, path, count):
         if path == "/robots.txt":
             return self._send(404)
@@ -248,6 +267,8 @@ SCENARIOS = {
     "user_agent_rate_limited": _Handler._user_agent_rate_limited,
     "rate_limited_no_retry_after": _Handler._rate_limited_no_retry_after,
     "forbidden_then_rate_limited": _Handler._forbidden_then_rate_limited,
+    "long_retry_after": _Handler._long_retry_after,
+    "crawl_delay": _Handler._crawl_delay,
     "woo_variations_ok": _Handler._woo_variations,
     "woo_variations_403": _Handler._woo_variations,
     "woo_variations_hang": _Handler._woo_variations,
@@ -260,7 +281,7 @@ def stores():
     servers = {}
 
     def start(scenario):
-        attrs = {"scenario": scenario, "hits": {}, "agents": []}
+        attrs = {"scenario": scenario, "hits": {}, "agents": [], "arrivals": []}
         handler = type(f"H_{scenario}", (_Handler,), attrs)
         server = http.server.ThreadingHTTPServer(("127.0.0.1", _free_port()), handler)
         server.daemon_threads = True
@@ -317,6 +338,7 @@ EXPECTED_SHOPIFY = {
     "user_agent_rate_limited": "ok",
     "unavailable": "unavailable (5xx)",
     "forbidden_then_rate_limited": "403 Forbidden",
+    "long_retry_after": "rate limited (429)",
 }
 
 
@@ -325,6 +347,19 @@ def test_shopify_diagnosis(tmp_path, stores):
     statuses = _run(tmp_path, list(urls.values()))
     actual = {scenario: statuses[url] for scenario, url in urls.items()}
     assert actual == EXPECTED_SHOPIFY
+    # The 120 s Retry-After isn't retried after 60 s, nor waited out past --bail
+    assert stores.servers["long_retry_after"].RequestHandlerClass.hits["/products.json"] == 1
+
+
+def test_crawl_delay_spaces_requests_without_throttle(tmp_path, stores):
+    """robots.txt Crawl-delay still applies with --no-throttle."""
+    url = stores("crawl_delay")
+    statuses = _run(tmp_path, [url], "--no-throttle")
+    assert statuses[url] == "ok"
+    arrivals = stores.servers["crawl_delay"].RequestHandlerClass.arrivals
+    pages = [t for path, t in arrivals if path.startswith("/products.json")]
+    assert len(pages) == 2
+    assert pages[1] - pages[0] >= 1.4
 
 
 def test_woocommerce_single_request_robots_redirect(tmp_path, stores):
@@ -356,7 +391,9 @@ def test_woocommerce_failed_variation_listing(tmp_path, stores, scenario):
     """A refused or hanging variation listing leaves the store ok, with the listing's
     entries; a hang gives up before --bail."""
     url = stores(scenario)
-    statuses = _run(tmp_path, [url], "--platform", "woocommerce")
+    # Several requests to one host before the first item: at the default 1 s minimum
+    # they come close to the short e2e --bail on a slow runner
+    statuses = _run(tmp_path, [url], "--platform", "woocommerce", "--min-delay", "0")
     assert statuses[url] == "ok"
     [output] = tmp_path.rglob("*.jsonl")
     [item] = [json.loads(line) for line in output.read_text().splitlines()]
@@ -366,7 +403,9 @@ def test_woocommerce_failed_variation_listing(tmp_path, stores, scenario):
 def test_woocommerce_variation_rows_in_csv(tmp_path, stores):
     """The CLI's CSV gives each variation row its own price, SKU and stock."""
     url = stores("woo_variations_ok")
-    statuses = _run(tmp_path, [url], "--platform", "woocommerce", "--format", "csv")
+    statuses = _run(
+        tmp_path, [url], "--platform", "woocommerce", "--format", "csv", "--min-delay", "0"
+    )
     assert statuses[url] == "ok"
     [output] = tmp_path.rglob("*.csv")
     rows = list(csv.DictReader(output.open(newline="", encoding="utf-8")))

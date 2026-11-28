@@ -19,7 +19,7 @@ import shopify_spy._config as config_module
 import shopify_spy._runner as engine
 import shopify_spy._xlsx as xlsx_module
 from shopify_spy import cli as cli_module
-from shopify_spy._config import Config, Platform
+from shopify_spy._config import Config, Platform, load_config
 from shopify_spy._fetch import FakeFetcher, FetchConnectionError, FetchTLSError, Seq
 from shopify_spy._flatten import COLUMNS
 from shopify_spy._results import StoreResult, StoreStatus, run_finish_reason
@@ -475,6 +475,34 @@ def test_overrides_map_to_kwargs():
     assert kwargs["respect_robots_txt"] is False
     assert kwargs["bail"] == 0  # 0 = off; the library treats it like None
     assert kwargs["concurrent_requests"] == 2
+
+
+def test_min_delay_overrides_config(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("throttle:\n  min_delay: 2\n")
+    config = load_config(path)
+    assert _overrides(config).to_kwargs()["throttle_min_delay"] == 2.0
+    assert _overrides(config, min_delay=0.5).to_kwargs()["throttle_min_delay"] == 0.5
+
+
+def test_negative_min_delay_exits_with_an_error(cli):
+    run = cli(None, "--min-delay", "-1", "shop.test")
+    assert run.exit_code != 0
+    assert "min-delay" in run.result.output
+
+
+def test_image_delay_overrides_config(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("throttle:\n  image_delay: 2\n")
+    config = load_config(path)
+    assert _overrides(config).to_kwargs()["throttle_image_delay"] == 2.0
+    assert _overrides(config, image_delay=0.5).to_kwargs()["throttle_image_delay"] == 0.5
+
+
+def test_negative_image_delay_exits_with_an_error(cli):
+    run = cli(None, "--image-delay", "-1", "shop.test")
+    assert run.exit_code != 0
+    assert "image-delay" in run.result.output
 
 
 def test_get_urls_single_url():
@@ -1046,6 +1074,14 @@ def test_diagnose_robots(cli):
 
     assert _single_status(run) == "blocked by robots.txt"
     assert "--ignore-robots" in run.stdout
+
+
+def test_diagnose_magento_query_string_rule(cli):
+    routes = {"https://store.com/robots.txt": (200, "User-agent: *\nDisallow: /*?")}
+    run = cli(routes, "--platform", "magento", "store.com")
+
+    assert _single_status(run) == "blocked by robots.txt"
+    assert "store.com's robots.txt disallows URLs with query strings" in run.stdout
 
 
 def test_ignore_robots_bypasses_block(cli):

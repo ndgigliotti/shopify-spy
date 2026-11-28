@@ -109,6 +109,8 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
         page += 1
         # Past a redirect (http to https, apex to www), not through it on every page
         base = origin(response.url)
+    if page == 1 and ctx.session.stats.robots_disallowed:
+        await _note_query_disallowed(ctx, get_api_url(base, page, size))
     if page == 1 and size != PAGE_SIZE:
         raise MagentoError(
             f"{_endpoint(get_api_url(base))}: request failed after a page-size retry"
@@ -123,6 +125,16 @@ async def _get(ctx: StoreContext, url: str) -> Response | None:
     except RequestFailed as exc:
         logger.info("Magento GraphQL request failed: %s", exc)
         return None
+
+
+async def _note_query_disallowed(ctx: StoreContext, url: str) -> None:
+    """Record that robots.txt disallows the query URL but not ``/graphql`` itself,
+    as ``Disallow: /*?`` does, for the store's hint."""
+    session = ctx.session
+    rules = await session.registry.robots(url, session)
+    agent = session.robots_agent
+    if not rules.allowed(url, agent) and rules.allowed(_endpoint(url), agent):
+        ctx.query_disallowed = True
 
 
 async def _take_page(

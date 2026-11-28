@@ -276,7 +276,8 @@ def scrape(
         typer.Option(
             "--images/--no-images",
             help=f"Download product images into {_IMAGES_DIR} "
-            f"(default: {_on_off(_DEFAULTS.scrape.images)}).",
+            f"(default: {_on_off(_DEFAULTS.scrape.images)}). Downloads from one host are "
+            "spaced by --image-delay.",
             rich_help_panel=SCRAPE_PANEL,
         ),
     ] = None,
@@ -350,7 +351,34 @@ def scrape(
         bool | None,
         typer.Option(
             "--throttle/--no-throttle",
-            help=f"Auto-throttle requests (default: {_on_off(_DEFAULTS.throttle.enabled)}).",
+            help="Auto-throttle requests; --no-throttle drops the adaptive delay, "
+            "--min-delay and --image-delay, but robots.txt Crawl-delay and Retry-After "
+            "pauses still apply "
+            f"(default: {_on_off(_DEFAULTS.throttle.enabled)}).",
+            rich_help_panel=NETWORK_PANEL,
+        ),
+    ] = None,
+    min_delay: Annotated[
+        float | None,
+        typer.Option(
+            "--min-delay",
+            min=0.0,
+            metavar="SECONDS",
+            help="Minimum seconds between page and API requests to one host while "
+            "throttling; 1 means at most 1 request per second "
+            f"(default: {_DEFAULTS.throttle.min_delay:g}).",
+            rich_help_panel=NETWORK_PANEL,
+        ),
+    ] = None,
+    image_delay: Annotated[
+        float | None,
+        typer.Option(
+            "--image-delay",
+            min=0.0,
+            metavar="SECONDS",
+            help="Minimum seconds between image downloads from one host while "
+            "throttling; 0.25 means at most 4 per second "
+            f"(default: {_DEFAULTS.throttle.image_delay:g}).",
             rich_help_panel=NETWORK_PANEL,
         ),
     ] = None,
@@ -443,6 +471,8 @@ def scrape(
         schema=schema,
         concurrent=concurrent,
         throttle=throttle,
+        min_delay=min_delay,
+        image_delay=image_delay,
         limit=limit,
         user_agent=user_agent,
         ignore_robots=ignore_robots,
@@ -564,6 +594,8 @@ def apply_cli_overrides(
     insecure: bool = False,
     max_stores: int | None = None,
     proxy: str | None = None,
+    min_delay: float | None = None,
+    image_delay: float | None = None,
 ) -> Config:
     """Apply CLI argument overrides to config. ``None`` keeps the config value."""
     scrape_dict = config.scrape.model_dump() | _given(
@@ -588,7 +620,9 @@ def apply_cli_overrides(
         network_dict["respect_robots_txt"] = False
     if insecure:
         network_dict["verify_tls"] = False
-    throttle_dict = config.throttle.model_dump() | _given(enabled=throttle)
+    throttle_dict = config.throttle.model_dump() | _given(
+        enabled=throttle, min_delay=min_delay, image_delay=image_delay
+    )
 
     return Config(
         scrape=scrape_dict,
@@ -964,6 +998,11 @@ def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
     if StoreStatus.stopped in present:
         hints.append("Stopped before every store finished.")
     for s in stores:
+        if s.query_disallowed and s.status == StoreStatus.robots_blocked:
+            hints.append(
+                f"{escape(_host(s.input_url))}'s robots.txt disallows URLs with query "
+                "strings, which covers the GraphQL query."
+            )
         if s.suggested_platform:
             name = _PLATFORM_NAMES.get(s.suggested_platform, s.suggested_platform)
             hints.append(
