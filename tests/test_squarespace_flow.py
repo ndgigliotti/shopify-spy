@@ -382,14 +382,21 @@ def test_pagination_pointing_back_ends_the_collection():
     assert result.stores[0].status == "ok"
 
 
-def test_pagination_to_another_host_is_not_followed():
+@pytest.mark.parametrize(
+    "pagination",
+    [
+        {"nextPage": True, "nextPageUrl": "https://other.test/shop"},
+        {"nextPage": True, "nextPageOffset": 123},
+        {"nextPage": True, "nextPageUrl": "http://[::1"},
+    ],
+    ids=["another-host", "no-url", "malformed"],
+)
+def test_a_next_page_that_cant_be_followed_is_partial(pagination):
     routes = store(1)
-    routes[json_url("/shop")] = collection(
-        record("tee"), pagination={"nextPage": True, "nextPageUrl": "https://other.test/shop"}
-    )
+    routes[json_url("/shop")] = collection(record("tee"), pagination=pagination)
     _, result, fetcher = scrape_json(routes)
-    assert not [u for u in requested(fetcher) if "other.test" in u]
-    assert result.stores[0].status == "ok"
+    assert requested(fetcher) == [SITEMAP, json_url("/shop")]
+    assert result.stores[0].status == "partial"
 
 
 def test_a_product_in_two_collections_is_emitted_once():

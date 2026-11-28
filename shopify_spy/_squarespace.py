@@ -230,23 +230,15 @@ class _JsonSource:
         await self._emit(_item(record, self.ctx))
 
     def _next_url(self, pagination: Any) -> str | None:
-        """The next page's ``?format=json`` URL from a page's ``pagination``."""
+        """The next page's ``?format=json`` URL from a page's ``pagination``; a next
+        page that can't be followed leaves the collection incomplete."""
         if not isinstance(pagination, dict) or not pagination.get("nextPage"):
             return None
         next_url = pagination.get("nextPageUrl")
-        if not isinstance(next_url, str):
-            return None
-        try:
-            url = urllib.parse.urljoin(self.ctx.url, next_url)
-            parts = urllib.parse.urlsplit(url)
-        except ValueError:
-            return None
-        if hostname(url) != hostname(self.ctx.url):
-            return None
-        if "format" in urllib.parse.parse_qs(parts.query, keep_blank_values=True):
-            return url
-        query = f"{parts.query}&format=json" if parts.query else "format=json"
-        return urllib.parse.urlunsplit(parts._replace(query=query))
+        if (url := _format_json_url(self.ctx.url, next_url)) is None:
+            logger.info("Not following a collection's next page on %s: %r", self.ctx.url, next_url)
+            self.incomplete = True
+        return url
 
     def reason(self) -> str:
         """Why no collection gave an item: an unreadable page, else the outcomes."""
@@ -321,6 +313,24 @@ class _FallbackPages(generic._Pages):
 
     def reason(self) -> str:
         return f"{self.json_reason}; {super().reason()}"
+
+
+def _format_json_url(base: str, next_url: Any) -> str | None:
+    """``next_url`` resolved against ``base`` with ``format=json``, or None if it isn't
+    a URL on ``base``'s host."""
+    if not isinstance(next_url, str):
+        return None
+    try:
+        url = urllib.parse.urljoin(base, next_url)
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return None
+    if hostname(url) != hostname(base):
+        return None
+    if "format" in urllib.parse.parse_qs(parts.query, keep_blank_values=True):
+        return url
+    query = f"{parts.query}&format=json" if parts.query else "format=json"
+    return urllib.parse.urlunsplit(parts._replace(query=query))
 
 
 def _is_product(record: Any) -> bool:
