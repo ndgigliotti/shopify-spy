@@ -76,6 +76,7 @@ class ScrapeOptions(BaseModel):
     throttle_max_delay: float = Field(default=60.0, ge=0)
     throttle_min_delay: float = Field(default=1.0, ge=0)
     throttle_image_delay: float = Field(default=0.25, ge=0)
+    throttle_jitter: float = Field(default=0.5, ge=0, le=1)
     throttle_target_concurrency: float = Field(default=1.0, ge=0.1)
     on_failure: Literal["raise", "warn", "ignore"] = "raise"
     strict: bool = False
@@ -163,6 +164,7 @@ def _config(opts: ScrapeOptions, backoff: bool) -> RunConfig:
             max_delay=opts.throttle_max_delay,
             min_delay=opts.throttle_min_delay,
             image_delay=opts.throttle_image_delay,
+            jitter=opts.throttle_jitter,
             target_concurrency=opts.throttle_target_concurrency,
         ),
         backoff=backoff,
@@ -513,6 +515,10 @@ _SCRAPE_DOC = """
             shortest between image downloads from one host. Neither applies with
             ``throttle=False``, while robots.txt Crawl-delay and Retry-After pauses
             still do.
+        throttle_jitter: Random spread of the gaps between requests to one host,
+            0 (exact) to 1 (default {throttle_jitter}): a gap at the minimum is 1 to
+            1 + jitter times it, a longer adaptive delay 1 - jitter to 1 + jitter
+            times that delay, never below the minimum.
         on_failure: What to do when stores fail, checked once iteration ends:
             "raise" (default) raises ScrapeFailed if every store failed; "warn"
             issues a ScrapeWarning; "ignore" leaves it to ``run.result``.

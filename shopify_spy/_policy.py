@@ -44,6 +44,7 @@ class ThrottleSettings:
     # Minimum gaps between request starts while enabled (pages and API, images)
     min_delay: float = 1.0
     image_delay: float = 0.25
+    jitter: float = 0.5  # spread of the spacing between request starts, 0 to 1
     target_concurrency: float = 1.0
 
 
@@ -53,12 +54,13 @@ class HostSlot:
     The throttle algorithm is adapted from Scrapy's AutoThrottle extension and
     download slots (https://github.com/scrapy/scrapy, BSD-3-Clause).
 
-    One request leaves the slot per gate pass; while throttling is enabled, passes are
-    spaced by ``uniform(0.5, 1.5)`` times the larger of the delay and the minimum gap
-    since the previous request, but never closer than the minimum gap: robots.txt
-    Crawl-delay and ``min_delay`` (``image_delay`` for an image download). Those are
-    floors on the spacing, not on the adaptive delay. Without throttling, only the
-    Crawl-delay spaces requests, unjittered.
+    One request leaves the slot per gate pass. While throttling is enabled, passes are
+    spaced since the previous request by the larger of the delay and the minimum gap
+    times ``uniform(low, 1 + jitter)``, where ``low`` is the larger of ``1 - jitter``
+    and the minimum gap divided by that pace (``jitter`` defaults to 0.5). The minimum
+    gap is the larger of robots.txt Crawl-delay and ``min_delay`` (``image_delay`` for an
+    image download); it floors the spacing, not the adaptive delay. Without throttling,
+    only the Crawl-delay spaces requests, unjittered.
 
     Rate limits work like TCP congestion control: a rate limit doubles a delay floor
     (multiplicative decrease of the rate) and each answered request lowers it a
@@ -108,11 +110,13 @@ class HostSlot:
                 await asyncio.sleep(pause)
             if self.last_seen is not None:
                 spacing = self._min_gap(image)
-                # Jitter from the minimum gap too, or a delay below it sends on a fixed
-                # beat; --no-throttle keeps just the Crawl-delay
+                # Never draw below the minimum gap, so sends don't pile on the floor and
+                # a delay just above it isn't faster on average than one just below;
+                # --no-throttle keeps just the Crawl-delay
+                pace = max(self.delay, spacing)
                 if self.throttle.enabled:
-                    pace = max(self.delay, spacing)
-                    spacing = max(pace * random.uniform(0.5, 1.5), spacing)
+                    jitter = self.throttle.jitter
+                    spacing = random.uniform(max(pace * (1 - jitter), spacing), pace * (1 + jitter))
                 wait = spacing - (now() - self.last_seen)
                 if wait > 0:
                     await asyncio.sleep(wait)
