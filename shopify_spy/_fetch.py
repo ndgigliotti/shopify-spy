@@ -466,6 +466,8 @@ def ca_locations(trust_env: bool = True) -> tuple[str | None, str | None]:
 
     Raises ValueError, naming the variable, for a file that can't be opened: httpx
     would fail building its client and curl on every request, each its own way.
+    So does a directory with no hashed certificate, which httpx would trust nothing
+    from and curl would back with libcurl's built-in bundle (see _curl_ca_options).
     """
     if not trust_env:
         return None, None
@@ -480,7 +482,10 @@ def ca_locations(trust_env: bool = True) -> tuple[str | None, str | None]:
                     f"({exc.strerror or exc})"
                 ) from None
             break
-    return cafile or None, os.environ.get("SSL_CERT_DIR") or None
+    capath = os.environ.get("SSL_CERT_DIR") or None
+    if capath is not None:
+        _hashed_cert_in(capath)
+    return cafile or None, capath
 
 
 def _ssl_context(trust_env: bool) -> ssl.SSLContext:
@@ -629,27 +634,29 @@ def _curl_ca_options(trust_env: bool) -> dict[Any, Any]:
     A CA file stands in as the directory (nothing can be found under a file), and
     a certificate from the directory as the file (the directory trusts it anyway).
     """
-    from curl_cffi import CurlOpt, ffi
+    from curl_cffi import CurlOpt
 
     cafile, capath = ca_locations(trust_env)
     if cafile is None:
         cafile = _hashed_cert_in(capath) if capath else certifi.where()
-    info = cafile or ffi.NULL  # NULL only for a directory without one
     path = capath or cafile
     return {
-        CurlOpt.CAINFO: info,
+        CurlOpt.CAINFO: cafile,
         CurlOpt.CAPATH: path,
-        CurlOpt.PROXY_CAINFO: info,
+        CurlOpt.PROXY_CAINFO: cafile,
         CurlOpt.PROXY_CAPATH: path,
     }
 
 
-def _hashed_cert_in(directory: str) -> str | None:
-    """A PEM certificate the directory serves under its hashed name, if any."""
+def _hashed_cert_in(directory: str) -> str:
+    """A PEM certificate the directory serves under its hashed name.
+
+    Raises ValueError naming SSL_CERT_DIR when there is none, or no directory.
+    """
     try:
         names = sorted(os.listdir(directory))
     except OSError:
-        return None
+        names = []
     for name in names:
         if re.fullmatch(r"[0-9a-f]{8}\.\d+", name):
             path = os.path.join(directory, name)
@@ -659,7 +666,10 @@ def _hashed_cert_in(directory: str) -> str | None:
                         return path
             except OSError:
                 continue
-    return None
+    raise ValueError(
+        f"SSL_CERT_DIR in the environment: no CA certificate under a hashed name in "
+        f"{directory!r} (lay it out with openssl rehash)"
+    )
 
 
 class CurlCffiFetcher:

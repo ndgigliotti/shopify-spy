@@ -602,9 +602,14 @@ async def test_ca_from_the_environment_replaces_the_default(
 
 
 @pytest.mark.parametrize("transport", ["curl", "httpx"])
-async def test_unreadable_ca_file_fails_the_same_way(tls_server, tmp_path, ca_env, transport):
-    ca_env.setenv("REQUESTS_CA_BUNDLE", str(tmp_path / "nonexistent.pem"))
-    with pytest.raises(ValueError, match="^REQUESTS_CA_BUNDLE in the environment"):
+@pytest.mark.parametrize("variable", ["REQUESTS_CA_BUNDLE", "SSL_CERT_DIR"])
+async def test_unusable_ca_location_fails_the_same_way(
+    tls_server, tmp_path, ca_env, transport, variable
+):
+    """A missing file, or a directory with no hashed certificate."""
+    location = tmp_path if variable == "SSL_CERT_DIR" else tmp_path / "nonexistent.pem"
+    ca_env.setenv(variable, str(location))
+    with pytest.raises(ValueError, match=f"^{variable} in the environment"):
         await fetch(f"{tls_server}/ok", transport)
 
 

@@ -515,7 +515,8 @@ _SCRAPE_DOC = """
         verify_tls: Verify TLS certificates (default {verify_tls}), against certifi's
             bundle, or instead the CA file in SSL_CERT_FILE, else REQUESTS_CA_BUNDLE,
             else CURL_CA_BUNDLE, and the directory in SSL_CERT_DIR, read at run time;
-            a CA file that can't be read raises ValueError.
+            a CA file that can't be read, or a directory with no hashed certificate,
+            raises ValueError.
         proxy: A fixed proxy URL for every request: http://, https:// or socks5://.
             It overrides HTTPS_PROXY, HTTP_PROXY and ALL_PROXY, which are otherwise
             honored (with NO_PROXY); an explicit proxy ignores NO_PROXY. Credentials

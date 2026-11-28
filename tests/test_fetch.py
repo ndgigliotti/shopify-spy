@@ -511,6 +511,7 @@ def test_ca_locations_precedence(ca_env, tmp_path, env, expected):
     for name in "abc":
         (tmp_path / name).write_text("")
     (tmp_path / "d").mkdir()
+    (tmp_path / "d" / "89abcdef.0").write_text("-----BEGIN CERTIFICATE-----\n")
     for name, value in env.items():
         ca_env.setenv(name, value and str(tmp_path / value))
     assert ca_locations() == tuple(value and str(tmp_path / value) for value in expected)
@@ -528,8 +529,26 @@ def test_unreadable_ca_file_names_the_variable(ca_env, tmp_path, variable, missi
     assert ca_locations(trust_env=False) == (None, None)
 
 
+@pytest.mark.parametrize("layout", ["missing", "empty", "unhashed"])
+@pytest.mark.parametrize("with_file", [False, True])
+def test_ca_directory_without_a_hashed_certificate_is_an_error(ca_env, tmp_path, layout, with_file):
+    """Never left for curl to back with libcurl's built-in bundle."""
+    directory = tmp_path / "dir"
+    if layout != "missing":
+        directory.mkdir()
+    if layout == "unhashed":
+        (directory / "ca.pem").write_text("-----BEGIN CERTIFICATE-----\n")
+    if with_file:
+        (tmp_path / "ca.pem").write_text("")
+        ca_env.setenv("SSL_CERT_FILE", str(tmp_path / "ca.pem"))
+    ca_env.setenv("SSL_CERT_DIR", str(directory))
+    with pytest.raises(ValueError, match="^SSL_CERT_DIR in the environment: no CA certificate"):
+        ca_locations()
+    assert ca_locations(trust_env=False) == (None, None)
+
+
 async def _curl_ca(**kwargs) -> dict:
-    from curl_cffi import CurlOpt, ffi
+    from curl_cffi import CurlOpt
 
     names = {
         CurlOpt.CAINFO: "cainfo",
@@ -539,8 +558,7 @@ async def _curl_ca(**kwargs) -> dict:
     }
     async with CurlCffiFetcher("chrome", **kwargs) as fetcher:
         options = fetcher._session("chrome").curl_options
-    found = {names[key]: value for key, value in options.items() if key in names}
-    return {key: None if value == ffi.NULL else value for key, value in found.items()}
+    return {names[key]: value for key, value in options.items() if key in names}
 
 
 def _both(cafile, capath) -> dict:
@@ -553,6 +571,7 @@ async def test_curl_session_reads_the_ca_file_when_it_opens(ca_env, tmp_path):
     (tmp_path / "file.pem").write_text("")
     ca_env.setenv("REQUESTS_CA_BUNDLE", cafile)
     assert await _curl_ca() == _both(cafile, cafile)
+    (tmp_path / "89abcdef.0").write_text("-----BEGIN CERTIFICATE-----\n")
     ca_env.setenv("SSL_CERT_DIR", str(tmp_path))
     assert await _curl_ca() == _both(cafile, str(tmp_path))
 
@@ -564,8 +583,6 @@ async def test_curl_session_reads_the_ca_directory_when_it_opens(ca_env, tmp_pat
     (tmp_path / "89abcdef.0").write_text("-----BEGIN CERTIFICATE-----\n")
     ca_env.setenv("SSL_CERT_DIR", str(tmp_path))
     assert await _curl_ca() == _both(str(tmp_path / "89abcdef.0"), str(tmp_path))
-    (tmp_path / "89abcdef.0").unlink()
-    assert await _curl_ca() == _both(None, str(tmp_path))
 
 
 @pytest.mark.parametrize("kwargs", [{}, {"trust_env": False}])
