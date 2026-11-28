@@ -159,6 +159,10 @@
   `--ignore-robots` run falls back to them; before, only the pages read after the
   collections counted. A generic store's sitemaps can list pages that aren't
   products, so they still don't count there.
+- A `ProductGroup` that lists some variants in `hasVariant` while others name it
+  in `isVariantOf` keeps all of them, without repeats by `@id` or `sku`, for
+  generic, Squarespace and WooCommerce product-page items; before, the
+  `isVariantOf` ones were dropped when `hasVariant` was set.
 
 ## 0.5.1
 

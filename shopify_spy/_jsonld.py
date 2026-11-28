@@ -142,7 +142,8 @@ def parse_product_page(
     The Product is a copy whose ``{"@id": ...}`` references are replaced by the
     nodes they name, from any of the page's scripts, and whose schema.org terms
     lose their namespace (``schema:name`` is ``name``). A group's variants written
-    as separate Products that name it in ``isVariantOf`` become its ``hasVariant``.
+    as separate Products that name it in ``isVariantOf`` join its ``hasVariant``,
+    unless an entry there has the same ``@id`` or ``sku``.
 
     With several products on the page (related products, say), the one whose
     ``url`` or ``@id`` is the page wins (or, failing that, the only one that is the
@@ -182,8 +183,16 @@ def _pick(
     if found is None:
         return None
     product = graph.resolve(found)
-    if variants.get(id(found)) and not product.get("hasVariant"):
-        product["hasVariant"] = [graph.resolve(v) for v in variants[id(found)]]
+    if variants.get(id(found)):
+        listed = product.get("hasVariant")
+        merged = listify(listed) if listed is not None else []
+        known = {key for v in merged for key in graph.variant_keys(v)}
+        for variant in variants[id(found)]:
+            keys = graph.variant_keys(variant)
+            if not keys & known:
+                merged.append(graph.resolve(variant))
+            known |= keys
+        product["hasVariant"] = merged
     return product
 
 
@@ -249,6 +258,18 @@ class _Graph:
             else:
                 variants.setdefault(id(group), []).append(product)
         return kept, variants
+
+    def variant_keys(self, variant: Any) -> set[str]:
+        """What identifies a variant across ``hasVariant`` and ``isVariantOf``: its
+        ``@id`` and ``sku``. Not its ``url``, which variants can share with the page."""
+        if not isinstance(variant, dict):
+            return set()
+        keys = set()
+        if isinstance(ref := variant.get("@id"), str) and ref.strip():
+            keys.add(f"@id:{self.key(ref)}")
+        if (sku := text(variant.get("sku"))) and sku.strip():
+            keys.add(f"sku:{sku.strip()}")
+        return keys
 
     def page_product(self, products: list[dict[str, Any]]) -> dict[str, Any] | None:
         """The product whose ``url`` or ``@id`` is the page, else the only one that

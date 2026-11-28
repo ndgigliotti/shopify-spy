@@ -267,10 +267,11 @@ def test_variants_naming_their_group_become_its_variants():
         assert found == group | {"hasVariant": [small, medium]}
 
 
-def test_variants_naming_their_group_keep_its_own_variants():
+def test_variants_naming_their_group_join_its_own_variants():
     lone = {"@type": "Product", "isVariantOf": {"@id": "#g"}, "sku": "X"}
     group = GROUP | {"@id": "#g"}
-    assert parse(ld_page(group, lone), groups=True, fallback=False) == group
+    found = parse(ld_page(group, lone), groups=True, fallback=False)
+    assert found == group | {"hasVariant": [*GROUP["hasVariant"], lone]}
 
 
 @pytest.mark.parametrize(
@@ -309,3 +310,20 @@ def test_bigcommerce_gtin12_in_the_row():
     found = parse((FIXTURES / "andoverfabrics-empty-value.html").read_text(), ANDOVER)
     (row,) = flatten(found | {"store": "andoverfabrics.com", "platform": "generic"})
     assert (row["gtin"], row["sku"], row["available"]) == ("199716017379", "A-10420-B", False)
+
+
+def test_has_variant_and_is_variant_of_are_merged():
+    small = {"@type": "Product", "@id": "#s", "isVariantOf": {"@id": "#g"}, "sku": "S"}
+    large = {"@type": "Product", "@id": "#l", "isVariantOf": {"@id": "#g"}, "sku": "L"}
+    group = {"@type": "ProductGroup", "@id": "#g", "name": "Tee", "hasVariant": [{"@id": "#s"}]}
+    found = parse(ld_page({"@graph": [group, small, large]}), groups=True, fallback=False)
+    assert [v["sku"] for v in found["hasVariant"]] == ["S", "L"]
+
+
+def test_merged_variants_are_deduplicated_by_sku():
+    inline = {"@type": "Product", "sku": "S", "offers": {"price": "1"}}
+    small = {"@type": "Product", "isVariantOf": {"@id": "#g"}, "sku": "S"}
+    large = {"@type": "Product", "isVariantOf": {"@id": "#g"}, "sku": "L"}
+    group = {"@type": "ProductGroup", "@id": "#g", "hasVariant": inline}
+    found = parse(ld_page(group, small, large), groups=True, fallback=False)
+    assert found["hasVariant"] == [inline, large]
