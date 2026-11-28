@@ -306,6 +306,15 @@ def test_pause_doubles_from_min_delay_when_the_delay_is_below_it(clock, min_dela
     assert s.delay == s.floor == 2 * min_delay
 
 
+@pytest.mark.parametrize(("image_delay", "doubled"), [(0.25, 1.0), (5.0, 10.0)])
+def test_pause_doubles_an_image_download_from_image_delay(clock, image_delay, doubled):
+    # An image slot was spaced by image_delay, so that is the pace to double
+    s = slot(start_delay=1.0, min_delay=5.0, image_delay=image_delay)
+    s.delay = 0.2
+    s.pause(0, image=True)
+    assert s.delay == s.floor == doubled
+
+
 @pytest.mark.parametrize("pause", [5.0, 0.0], ids=["backoff", "no-pause"])
 def test_refusals_without_an_answer_between_double_once(clock, pause):
     # In-flight stragglers and a cooldown that refuses everything are one signal:

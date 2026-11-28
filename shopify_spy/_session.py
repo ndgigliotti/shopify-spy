@@ -479,6 +479,7 @@ class StoreSession:
         self,
         url: str,
         slot: HostSlot,
+        image: bool,
         attempt: int,
         retry_after: float | None,
         rate_limited: bool,
@@ -494,11 +495,11 @@ class StoreSession:
             if will_retry:
                 return False
             if rate_limited:  # no retry left, but the host still has to back off
-                slot.pause(self._retry_delay(attempt, retry_after, True)[0])
+                slot.pause(self._retry_delay(attempt, retry_after, True)[0], image)
             return True
         assert retry_after is not None
         if rate_limited:
-            slot.pause(retry_after)
+            slot.pause(retry_after, image)
             logger.warning(
                 "Pausing requests to %s for %.0fs on Retry-After; not retrying %s",
                 origin(url),
@@ -575,7 +576,7 @@ class StoreSession:
                         response.status, attempt
                     )
                     if self._ends_request(
-                        url, slot, attempt, retry_after, rate_limited, will_retry
+                        url, slot, kind.image, attempt, retry_after, rate_limited, will_retry
                     ):
                         return response
                     # A concurrent refusal of the same agent may have swapped it already
@@ -610,7 +611,7 @@ class StoreSession:
                     reason = name
                 delay, excused_until = self._retry_delay(attempt, retry_after, rate_limited)
                 if rate_limited:
-                    slot.pause(delay)
+                    slot.pause(delay, kind.image)
                 attempt += 1
                 logger.info("Retrying %s (attempt %d, %s) in %.1fs", url, attempt, reason, delay)
                 await self._sleep_before_retry(delay, excused_until)

@@ -135,21 +135,22 @@ class HostSlot:
             return
         self.delay = new
 
-    def pause(self, seconds: float) -> None:
+    def pause(self, seconds: float, image: bool = False) -> None:
         """Hold every request to this host for ``seconds`` and slow it down.
 
         For a rate limit: otherwise only the limited request waits, while the host's
         other requests keep arriving and use up their own retries. The doubled delay
         becomes the host's floor, so AutoThrottle can't jump straight back to the
-        rate that was refused. It doubles again only once the host has answered at
-        the slower rate (see the class docstring).
+        rate that was refused (``image`` if an image download was refused). It doubles
+        again only once the host has answered at the slower rate (see the class
+        docstring).
         """
         self.paused_until = max(self.paused_until, now() + seconds)
         if not self.answered_since_slowdown:
             return
         if self.throttle.enabled:
-            # Double the refused pace: min_delay can hold the spacing above the delay
-            pace = max(self.delay, self._min_gap())
+            # Double the refused pace: the minimum gap can hold the spacing above the delay
+            pace = max(self.delay, self._min_gap(image))
             doubled = max(pace * 2, self.throttle.start_delay, self.MIN_RATE_LIMITED_DELAY)
             self.delay = self.floor = min(doubled, self.throttle.max_delay)
         self.slowed_at = now()
