@@ -56,7 +56,7 @@ class ScrapeOptions(BaseModel):
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
-    platform: Literal["shopify", "woocommerce", "magento", "bigcommerce"] = "shopify"
+    platform: Literal["shopify", "woocommerce", "magento", "bigcommerce", "jsonld"] = "shopify"
     products: bool = True
     collections: bool = False
     images: bool = False
@@ -89,8 +89,8 @@ def _prepare(
     backoff = options.pop("_backoff", True)
     if options.get("platform") == "auto":
         raise ValueError(
-            "auto-detection isn't supported yet; use 'shopify', 'woocommerce', 'magento' "
-            "or 'bigcommerce'"
+            "auto-detection isn't supported yet; "
+            "use 'shopify', 'woocommerce', 'magento', 'bigcommerce' or 'jsonld'"
         )
     proxy = options.get("proxy")
     if proxy is not None and not isinstance(proxy, str):
@@ -447,7 +447,7 @@ _SCRAPE_DOC = """
     Args:
         urls: A store URL or an iterable of them. Only the host matters; paths are
             ignored. One platform per call.
-        platform: "shopify", "woocommerce", "magento" or "bigcommerce" (default
+        platform: "shopify", "woocommerce", "magento", "bigcommerce" or "jsonld" (default
             {platform}). When a WooCommerce store's Store API is unavailable, its
             product pages are read instead: partial items in the Store API's shape
             with ``source="product_page"``. Magento stores are read through the
@@ -456,9 +456,13 @@ _SCRAPE_DOC = """
             read through the Storefront GraphQL API at ``/graphql`` (or the
             ``mybigcommerce.com`` endpoint a headless storefront's page names), with
             the public API token the storefront's homepage carries, in the default
-            currency; there are no BigCommerce collections.
+            currency; there are no BigCommerce collections. JSON-LD stores are
+            read from the product pages listed in their sitemaps: each page with
+            schema.org Product JSON-LD (or microdata) becomes an item, at one request per
+            product. It is a best-effort fallback for platforms without an
+            adapter, so ``max_items_per_store`` and the throttle matter.
         products: Scrape products (default {products}). Shopify only; WooCommerce,
-            Magento and BigCommerce always scrape products.
+            Magento, BigCommerce and JSON-LD always scrape products.
         collections: Also scrape collections (default {collections}). Shopify only.
         images: Download product images into ``images_dir/full/`` (default {images}).
             Requires ``images_dir``. Each item gains ``scraped_images`` records
@@ -527,20 +531,25 @@ _SCRAPE_DOC = """
     (429), not found, unavailable (5xx), times out, can't be reached, or errors
     (status ``error``: an unexpected error, a Magento store whose ``/graphql``
     answered without products, with the GraphQL message in ``StoreResult.errors``,
-    or a BigCommerce store without a token on its homepage, or whose ``/graphql``
-    answered without products);
-    ``run.result.failed`` lists them with a status and, sometimes, a ``hint`` (e.g.
-    a likely wrong ``platform``). An empty store is not a failure. A store's
-    ``hint`` and ``products_from`` also name the ``myshopify.com`` domain a headless
-    store's products came from. Invalid URLs and options raise ValueError at call
-    time. Requests to non-public addresses (loopback, private networks, cloud
-    metadata) are refused with a warning unless the store's own URL is on one.
+    a BigCommerce store without a token on its homepage, or whose ``/graphql``
+    answered without products, or a JSON-LD store whose pages have no Product
+    data); ``run.result.failed`` lists them with a status and, sometimes, a
+    ``hint`` (e.g. a likely wrong ``platform``). A store stopped by ``bail`` can
+    also end ``error`` with a reason when its adapter recorded one (JSON-LD pages
+    checked without Product data). An empty store is not a failure. A store's
+    ``hint`` and ``products_from`` also name the ``myshopify.com`` domain a
+    headless store's products came from. Invalid URLs and options raise
+    ValueError at call time. Requests to non-public addresses (loopback, private
+    networks, cloud metadata) are refused with a warning unless the store's own
+    URL is on one.
 
     Items are each platform's native shape plus ``store``, ``platform``
-    ("shopify", "woocommerce", "magento" or "bigcommerce") and ``image_urls``
-    (Magento and BigCommerce items also get ``html_url``; see
-    ``ShopifyProductItem``, ``WooCommerceProductItem``, ``MagentoProductItem``,
-    ``BigCommerceProductItem``); ``write_items(..., schema="unified")`` flattens them
+    ("shopify", "woocommerce", "magento", "bigcommerce" or "jsonld") and
+    ``image_urls`` (Magento, BigCommerce and JSON-LD items also get ``html_url``;
+    a JSON-LD item is the page's schema.org Product or ProductGroup node, with
+    ``@type``, ``name``, ``offers`` and so on; see ``ShopifyProductItem``,
+    ``WooCommerceProductItem``, ``MagentoProductItem``, ``BigCommerceProductItem``,
+    ``JsonLdProductItem``); ``write_items(..., schema="unified")`` flattens them
     into one row per variant with the same columns on every platform.
 
     Nothing is written to disk unless ``images=True``, and no config file is read.

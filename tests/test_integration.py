@@ -46,4 +46,13 @@ def test_bigcommerce_store_live():
     item = spy.scrape(store, platform="bigcommerce", max_items_per_store=1).first()
     assert item["name"]
     assert item["store"] == "eshopping-industrial-demo.mybigcommerce.com"
+
+
+def test_jsonld_store_live():
+    # A BigCommerce demo store: its /xmlsitemap.php lists product pages with JSON-LD
+    url = "https://cornerstone-light-demo.mybigcommerce.com"
+    item = spy.scrape(url, platform="jsonld", max_items_per_store=1).first()
+    assert item["name"]
+    assert item["store"] == "cornerstone-light-demo.mybigcommerce.com"
+    assert item["html_url"].startswith(f"{url}/")
     assert spy.summarize(item).currency

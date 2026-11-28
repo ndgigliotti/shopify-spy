@@ -22,6 +22,8 @@ spy scrape --platform magento https://www.example.com
 
 # Scrape a BigCommerce store
 spy scrape --platform bigcommerce https://www.example.com
+# Any other store, from its product pages' JSON-LD (one request per product)
+spy scrape --platform jsonld https://www.example.com --limit 100
 
 # Several stores, from arguments or a file
 spy scrape https://store1.com https://store2.com
@@ -41,7 +43,7 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 
 - `URL...`: one or more store URLs (optional with `--url-file`).
 - `--url-file, -f FILE`: a file of URLs, one per line; lines starting with `#` are comments.
-- `--platform, -p PLATFORM`: `shopify` (the default), `woocommerce`, `magento` or `bigcommerce`.
+- `--platform, -p PLATFORM`: `shopify` (the default), `woocommerce`, `magento`, `bigcommerce` or `jsonld`. `jsonld` reads the schema.org Product data on the product pages a store's sitemaps list, for platforms without their own adapter. It is a best-effort fallback at one request per product; see [JSON-LD stores](troubleshooting.md#json-ld-stores).
 - `--products / --no-products`: scrape products (default: yes; Shopify only).
 - `--collections / --no-collections`: scrape collections (default: no; Shopify only).
 - `--images / --no-images`: download product images into `<output>/images/full/` (default: no). Downloads from one host are at least `--image-delay` apart while throttling. See [Images](output.md#images).
@@ -95,7 +97,7 @@ A config file looks like this, and `spy init` writes one to start from:
 ```yaml
 # shopify-spy.yaml
 scrape:
-  platform: shopify   # Platform: shopify, woocommerce, magento, bigcommerce
+  platform: shopify   # Platform: shopify, woocommerce, magento, bigcommerce, jsonld
   products: true      # Scrape product data (Shopify only)
   collections: false  # Scrape collection data (Shopify only)
   images: false       # Download product images

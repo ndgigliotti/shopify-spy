@@ -29,7 +29,7 @@ import urllib.parse
 from typing import Any
 
 from shopify_spy._fetch import Response
-from shopify_spy._magento import _dig, _first_error, _probe_others
+from shopify_spy._magento import _dig, _first_error, probe_others
 from shopify_spy._session import Emit, RequestFailed, RequestKind, StoreContext
 from shopify_spy._utils import dicts, normalize_url, origin
 
@@ -67,7 +67,7 @@ VARIANT_PAGE_SIZE = 250  # BigCommerce's maximum for ``variants(first:)``
 MAX_VARIANTS = 2500
 
 _VARIANT_FIELDS = """
-  entityId sku isPurchasable
+  entityId sku gtin mpn upc isPurchasable
   prices {
     price { value currencyCode } basePrice { value currencyCode }
     salePrice { value currencyCode } retailPrice { value currencyCode }
@@ -85,7 +85,7 @@ _QUERY = " ".join(
 query Products($first: Int!, $after: String) { site { products(first: $first, after: $after) {
   pageInfo { hasNextPage endCursor }
   edges { node {
-    id entityId sku name path description createdAt { utc }
+    id entityId sku gtin mpn upc name path description createdAt { utc }
     brand { name }
     categories(first: 50) { edges { node { name } } }
     prices {
@@ -220,7 +220,7 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
             reason = (
                 " (not a Stencil storefront: a headless one such as Catalyst, or not BigCommerce)"
             )
-            await _probe_others(ctx)
+            await probe_others(ctx)
         raise BigCommerceError(f"{site}/: no Storefront API token on the homepage{reason}")
     api = None if stencil else find_endpoint(response.text, token)
     guessed = not stencil and api is None
@@ -364,7 +364,7 @@ class _Pager:
             # The complexity error's 2xx means diagnose() would call this empty
             raise BigCommerceError(f"{self.api}: HTTP {response.status} after a page-size retry")
         if self.page == 1 and response.status == 404:
-            await _probe_others(self.ctx)
+            await probe_others(self.ctx)
         return False
 
     def _failed(self, message: str) -> bool:

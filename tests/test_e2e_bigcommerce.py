@@ -44,12 +44,13 @@ def _simple(i):
     }
 
 
-def _variant(entity_id, sku, size, price, in_stock):
+def _variant(entity_id, sku, size, price, in_stock, **codes):
     values = {"edges": [{"node": {"entityId": entity_id, "label": size}}]}
     return {
         "node": {
             "entityId": entity_id,
             "sku": sku,
+            **codes,
             "isPurchasable": in_stock,
             "prices": {"price": _money(price), "basePrice": _money(50)},
             "inventory": {"isInStock": in_stock},
@@ -64,6 +65,9 @@ def _variant(entity_id, sku, size, price, in_stock):
 TEE = {
     "entityId": 100,
     "sku": "TEE",
+    "gtin": None,
+    "mpn": "TEE-MPN",
+    "upc": "012345678905",
     "name": "Tee",
     "path": "/tee/",
     "prices": {
@@ -72,13 +76,17 @@ TEE = {
         "priceRange": {"min": _money(40), "max": _money(50)},
     },
     "inventory": {"isInStock": True},
+    "reviewSummary": {"numberOfReviews": 4, "summationOfRatings": 18},
     "images": {"edges": []},
     "productOptions": {
         "edges": [{"node": {"entityId": 1, "displayName": "Size", "isVariantOption": True}}]
     },
     "variants": {
         "pageInfo": {"hasNextPage": False},
-        "edges": [_variant(101, "TEE-S", "S", 40, True), _variant(102, "TEE-L", "L", 50, False)],
+        "edges": [
+            _variant(101, "TEE-S", "S", 40, True, gtin="4006381333931", mpn="TEE-S-MPN"),
+            _variant(102, "TEE-L", "L", 50, False, gtin="", mpn=None),
+        ],
     },
 }
 CATALOG = [_simple(i) for i in range(6)] + [TEE]
@@ -236,3 +244,15 @@ def test_bigcommerce_variant_rows_in_csv(tmp_path, stores):
         ("101", "S", "TEE-S", "40", "50", "true", f"{url}/tee/"),
         ("102", "L", "TEE-L", "50", "", "false", f"{url}/tee/"),
     ]
+    # A variant's own gtin and mpn win; without them, the product's (its upc as gtin)
+    assert [
+        (r["gtin"], r["mpn"], r["average_rating"], r["review_count"])
+        for r in rows
+        if r["id"] == "100"
+    ] == [
+        ("4006381333931", "TEE-S-MPN", "4.50", "4"),
+        ("012345678905", "TEE-MPN", "4.50", "4"),
+    ]
+    assert {(r["gtin"], r["mpn"], r["review_count"]) for r in rows if r["id"] != "100"} == {
+        ("", "", "")
+    }
