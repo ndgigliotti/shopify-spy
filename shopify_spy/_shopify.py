@@ -272,14 +272,14 @@ async def _past_bulk(
         listed = {h for loc in locs if (h := _listed_handle(loc))} if walk.root_ok else None
         collections = await _collections(ctx, listing_emit, seen, paged.origin, listed, kind=kind)
         failed = await _fetch_documents(ctx, emit, _each(locs), seen)
-        return walk.root_ok and not failed, collections
+        return walk.root_ok and not walk.unread and not failed, collections
     if paged.outcome is Paging.CAPPED:
         # With an item limit the catalog may be far bigger than needed (millions of
         # products), so don't read the whole sitemap up front; it's streamed below
         collections = await _collections(ctx, listing_emit, seen, paged.origin, None, kind=kind)
     walk = _sitemap_walk(ctx)
     failed = await _fetch_documents(ctx, emit, _product_locs(walk), seen)
-    return (not seen or walk.root_ok) and not failed, collections
+    return (not seen or walk.root_ok) and not walk.unread and not failed, collections
 
 
 async def _page_products(

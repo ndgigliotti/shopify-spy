@@ -990,3 +990,18 @@ def test_unreadable_store_is_not_complete():
     assert items == []
     store = result.stores[0]
     assert (store.status, store.complete) == (spy.StoreStatus.unavailable, False)
+
+
+def test_failed_child_sitemap_makes_the_store_partial():
+    first, second = (f"{STORE}/sitemap_products_{n}.xml" for n in (1, 2))
+    routes = {
+        bulk_url(1): (404, ""),
+        SITEMAP: sitemapindex(first, second),
+        first: urlset(f"{STORE}/products/a"),
+        second: (503, "busy"),
+        f"{STORE}/products/a.json": {"product": {"id": 1, "handle": "a"}},
+    }
+    items, result, _ = scrape(routes)
+    assert [i["product"]["handle"] for i in items] == ["a"]
+    store = result.stores[0]
+    assert (store.status, store.complete) == (spy.StoreStatus.partial, False)

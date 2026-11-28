@@ -9,7 +9,7 @@ Every store ends with a status, which the CLI lists when a store fails and the [
 | `status` | `code` | Meaning |
 |---|---|---|
 | `ok` | `ok` | Items were scraped |
-| `ok` | `partial` | Items were scraped, but part of the catalog couldn't be reached (for a Shopify store, also a product its sitemap lists that failed with an error status other than 404 or 410, no response or an answer without a product, or a page of `/collections.json` with `--collections`), or, for a Squarespace store read with `--ignore-robots`, a collection page couldn't be read or a product page its sitemap lists, missing from its collections' data, couldn't be read either (see [Squarespace stores](#squarespace-stores)) |
+| `ok` | `partial` | Items were scraped, but part of the catalog couldn't be reached (for a Shopify store, also a child sitemap of its sitemap index that failed, answered an error status or didn't parse, a product its sitemap lists that failed with an error status other than 404 or 410, no response or an answer without a product, or a page of `/collections.json` with `--collections`), or, for a Squarespace store read with `--ignore-robots`, a collection page couldn't be read or a product page its sitemap lists, missing from its collections' data, couldn't be read either (see [Squarespace stores](#squarespace-stores)) |
 | `0 items` | `empty` | The store answered but had no products |
 | `timed out` | `timed_out` | No items within `--bail` seconds, not counting `Retry-After` waits |
 | `403 Forbidden` | `forbidden` | The store returned 403s and no successful response, also after switching browser profile (see [Retries and identities](#retries-and-identities)), or answered with a challenge page that only a real browser can pass |

@@ -69,7 +69,8 @@ class SitemapWalk:
     """Async-iterable page URLs from a sitemap, following indexes on the same host.
 
     The store's hosts are the sitemap URL's host plus wherever it redirected to.
-    ``root_ok`` becomes True once the top-level sitemap has been read.
+    ``root_ok`` becomes True once the top-level sitemap has been read; ``unread``
+    lists the child sitemaps that failed, answered an error status or didn't parse.
     ``follow(child_url)`` decides which child sitemaps of an index are read.
     ``kind`` is the request kind for every sitemap fetched.
     """
@@ -86,6 +87,7 @@ class SitemapWalk:
         self.sitemap_url = sitemap_url
         self.follow = follow or (lambda url: True)
         self.root_ok = False
+        self.unread: list[str] = []
         self.hosts = {hostname(sitemap_url)}
         self._visited: set[str] = set()
 
@@ -100,13 +102,19 @@ class SitemapWalk:
             response = await self.session.get(url, kind=self.kind)
         except RequestFailed as exc:
             logger.info("Sitemap request failed: %s", exc)
+            self._failed(url, depth)
             return
-        if response is None or not response.ok:
+        if response is None:  # robots.txt, or a redirect target already fetched
+            return
+        if not response.ok:
+            self._failed(url, depth)
             return
         root, locs = parse(response.body)
         if depth == 0:
             self.hosts.add(hostname(response.url))
             self.root_ok = root is not None
+        elif root is None:
+            self._failed(url, depth)
         if root == "sitemapindex":
             for loc in locs:
                 if hostname(loc) not in self.hosts:
@@ -117,6 +125,11 @@ class SitemapWalk:
         elif root == "urlset":
             for loc in locs:
                 yield loc
+
+    def _failed(self, url: str, depth: int) -> None:
+        if depth > 0:
+            logger.info("Child sitemap unread: %s", url)
+            self.unread.append(url)
 
 
 def iter_locs(
