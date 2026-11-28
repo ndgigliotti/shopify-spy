@@ -25,7 +25,7 @@ from typing import Any
 from shopify_spy import _jsonld as jsonld
 from shopify_spy import _sitemap as sitemap
 from shopify_spy._fetch import Response
-from shopify_spy._jsonld import OUT_OF_STOCK
+from shopify_spy._jsonld import OUT_OF_STOCK  # noqa: F401 (still importable from here)
 from shopify_spy._session import (
     FALLBACK,
     Emit,
@@ -507,16 +507,14 @@ def page_item(
     marks the item as partial and ``json_ld`` keeps the original.
     """
     found = jsonld.offers(product.get("offers"))
-    in_stock = None if found.availability is None else found.availability not in OUT_OF_STOCK
+    in_stock = jsonld.in_stock(found.availability)
     variants = jsonld.variants(product)
     if variants and not (found.current or found.bounds):
         # A ProductGroup (Yoast's, for a variable product) has its offers on its
         # variants; it's in stock if any of them is
         offers = [jsonld.listify(v.get("offers")) for v in variants]
         found = jsonld.offers([o for each in offers for o in each])
-        stock = [
-            a not in OUT_OF_STOCK for each in offers if (a := jsonld.offers(each).availability)
-        ]
+        stock = [jsonld.in_stock(a) for each in offers if (a := jsonld.offers(each).availability)]
         in_stock = any(stock) if stock else None
     prices = _prices(found.current, found.listed, found.bounds, found.currency)
     return {

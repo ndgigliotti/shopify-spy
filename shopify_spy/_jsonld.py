@@ -432,6 +432,11 @@ class Offers:
     availability: str | None = None  # the first offer's, e.g. "InStock"
 
 
+def in_stock(availability: str | None) -> bool | None:
+    """Whether an ``Offers.availability`` is in stock; None when it isn't given."""
+    return None if availability is None else availability not in OUT_OF_STOCK
+
+
 def offers(value: Any, *, nested: bool = True) -> Offers:
     """Read Offer and AggregateOffer prices, directly or in ``priceSpecification``.
 

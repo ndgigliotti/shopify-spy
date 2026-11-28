@@ -27,7 +27,6 @@ from typing import Any
 
 from shopify_spy import _jsonld as jsonld
 from shopify_spy._bigcommerce import image_list, nodes
-from shopify_spy._jsonld import OUT_OF_STOCK
 from shopify_spy._magento import _dig, gallery_urls
 from shopify_spy._summary import (
     bigcommerce_price,
@@ -452,7 +451,7 @@ def _jsonld_offer(value: Any, fallback: dict[str, Any] | None = None) -> dict[st
     offer = {
         "price": price,
         "compare_at_price": listed if _below(price, listed) else None,
-        "available": found.availability not in OUT_OF_STOCK if found.availability else None,
+        "available": jsonld.in_stock(found.availability),
     }
     if price is None and fallback is not None:
         offer["price"] = fallback.get("price")
