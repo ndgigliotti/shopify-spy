@@ -125,10 +125,11 @@ JsonLdProductItem = TypedDict(
         "brand": Any,
         "hasVariant": list[dict[str, Any]],
         "store": str,
-        "platform": Literal["jsonld"],
+        "platform": Literal["jsonld", "squarespace"],
         "html_url": str,
         "image_urls": list[str],
         "scraped_images": list[ScrapedImage],
+        "source": Literal["product_page"],
     },
     total=False,
 )
@@ -139,7 +140,50 @@ other nodes resolved (only the common properties are listed), plus ``store``,
 ``platform``, ``html_url`` and ``image_urls`` (and ``scraped_images`` with images
 enabled). schema.org has none of those four properties, so they can't collide.
 
+The ``squarespace`` platform gives this shape too when it reads product pages (with
+robots.txt obeyed, or when no ``?format=json`` collection gave a product), with
+``platform="squarespace"`` and ``source="product_page"``; ``jsonld`` items have no
+``source``.
+
 ``html_url`` is the page the node came from, without its fragment. ``image_urls``
 lists ``image`` and then each ``hasVariant`` entry's images not already listed.
 A ``ProductGroup`` keeps its ``hasVariant`` Products inside it. Prices are in
 ``offers``: an Offer, an AggregateOffer or a list of Offers."""
+
+
+class SquarespaceProductItem(TypedDict, total=False):
+    """A Squarespace product record from a collection's ``?format=json`` page, read
+    with robots.txt ignored: the record unchanged (only the common fields are listed),
+    plus ``store``, ``platform``, ``html_url``, ``image_urls`` and ``source`` (and
+    ``scraped_images`` with images enabled). The record format is undocumented.
+
+    Each ``structuredContent.variants`` entry has its ``id``, ``sku``, ``attributes``
+    (option name to value), ``onSale``, ``priceMoney`` and ``salePriceMoney``
+    (``{"currency", "value"}``, the value a decimal string), ``stock``
+    (``{"quantity", "unlimited"}``) and ``mainImage``. Dates (``addedOn``,
+    ``updatedOn``, ``publishOn``) are epoch milliseconds. ``html_url`` is the store
+    origin plus ``fullUrl``. ``image_urls`` lists the record's ``items`` images (else
+    its ``assetUrl``) and then each variant's ``mainImage`` not already listed.
+
+    Product pages give ``JsonLdProductItem`` instead, with ``source="product_page"``."""
+
+    id: str
+    title: str
+    urlId: str
+    fullUrl: str
+    body: str
+    excerpt: str
+    tags: list[str]
+    categories: list[str]
+    addedOn: int
+    updatedOn: int
+    publishOn: int
+    assetUrl: str
+    items: list[dict[str, Any]]
+    structuredContent: dict[str, Any]
+    store: str
+    platform: Literal["squarespace"]
+    html_url: str | None
+    image_urls: list[str]
+    scraped_images: list[ScrapedImage]
+    source: Literal["format_json"]

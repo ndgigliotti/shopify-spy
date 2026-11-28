@@ -1,5 +1,5 @@
-"""Scrape product and collection data from Shopify, WooCommerce, Magento, BigCommerce
-and other stores.
+"""Scrape product and collection data from Shopify, WooCommerce, Magento, BigCommerce,
+Squarespace and other stores.
 
 Scripts::
 
@@ -35,6 +35,7 @@ from shopify_spy._types import (
     MagentoProductItem,
     ShopifyCollectionItem,
     ShopifyProductItem,
+    SquarespaceProductItem,
     WooCommerceProductItem,
 )
 from shopify_spy._utils import read_url_file
@@ -56,6 +57,7 @@ __all__ = [
     "ScrapeWarning",
     "ShopifyCollectionItem",
     "ShopifyProductItem",
+    "SquarespaceProductItem",
     "StoreResult",
     "StoreStatus",
     "WooCommerceProductItem",
