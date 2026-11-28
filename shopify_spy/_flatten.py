@@ -36,7 +36,6 @@ from shopify_spy._summary import (
     is_jsonld,
     is_magento,
     jsonld_id,
-    jsonld_variants,
     magento_price,
     shopify_price_range,
     summarize,
@@ -369,7 +368,7 @@ def _magento_offer(item: dict[str, Any], fallback: dict[str, Any] | None = None)
 def _jsonld(item: dict[str, Any]) -> list[dict[str, Any]]:
     summary = summarize(item)
     images = jsonld.image_urls(item.get("image"), item.get("html_url"))
-    variants = jsonld_variants(item)
+    variants = jsonld.variants(item)
     offers = dicts(item.get("offers"))
     # Without variants, a list of offers is the variants: one per size, say
     per_offer = not variants and len(offers) > 1

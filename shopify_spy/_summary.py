@@ -210,16 +210,11 @@ def _magento(item: dict[str, Any]) -> ItemSummary:
     )
 
 
-def jsonld_variants(item: dict[str, Any]) -> list[dict[str, Any]]:
-    """A ProductGroup's ``hasVariant`` Products (see ``_jsonld.variants``)."""
-    return jsonld.variants(item)
-
-
 def jsonld_prices(item: dict[str, Any]) -> tuple[Decimal | None, Decimal | None, str | None]:
     """The lowest and highest price and the currency across a JSON-LD product's
     ``offers`` and its variants' ``offers``, or Nones."""
     found = [jsonld.offers(item.get("offers"))]
-    found += [jsonld.offers(v.get("offers")) for v in jsonld_variants(item)]
+    found += [jsonld.offers(v.get("offers")) for v in jsonld.variants(item)]
     # An offer set without a price of its own (an AggregateOffer) gives its bounds
     amounts = [a for o in found for a in (o.current or o.bounds)]
     currency = next((o.currency for o in found if o.currency), None)
