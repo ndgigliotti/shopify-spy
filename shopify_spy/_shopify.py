@@ -107,6 +107,11 @@ class ListedCollection(NamedTuple):
     page_url: str  # the list page it came from, after redirects
 
 
+class CollectionList(NamedTuple):
+    entries: list[ListedCollection]
+    complete: bool  # False if a page failed or repeated before the end
+
+
 class Paged(NamedTuple):
     outcome: Paging
     origin: str  # where the last response came from, after redirects
@@ -117,8 +122,9 @@ class Paged(NamedTuple):
 async def run(ctx: StoreContext, emit: Emit) -> bool:
     """Emit a store's products (and collections, if enabled).
 
-    Returns whether the catalog was covered: False only when the bulk endpoint
-    stopped partway and the sitemap couldn't be read to fill the gap.
+    Returns whether the catalog was covered: False when the bulk endpoint stopped
+    partway and the sitemap couldn't fill the gap, or when the collection list asked
+    for couldn't be read to its end.
     """
     seen_handles: set[str] = set()
     covered = True
@@ -128,7 +134,7 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
     # and emit items under the store's own domain
     kind = STORE
     listing_emit = emit
-    collections: list[ListedCollection] | None = None
+    collections: CollectionList | None = None
     if ctx.products:
         paged = await _page_products(
             ctx, emit, seen_handles, get_bulk_products_url(ctx.url), "Bulk"
@@ -147,7 +153,8 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
     if ctx.collections:
         if collections is None:
             collections = await _collection_list(ctx, base, kind=kind)
-        await _emit_collections(ctx, listing_emit, collections)
+        await _emit_collections(ctx, listing_emit, collections.entries)
+        covered = covered and collections.complete
     if ctx.items == 0 and own_bulk is Paging.NOT_FOUND:
         await ctx.probe_platform("/wp-json/", _looks_like_woocommerce, "woocommerce")
     return covered
@@ -247,7 +254,7 @@ async def _past_bulk(
     *,
     kind: RequestKind = STORE,
     listing_emit: Emit | None = None,
-) -> tuple[bool, list[ListedCollection] | None]:
+) -> tuple[bool, CollectionList | None]:
     """Find the products bulk didn't reach: collections past the limit, then the sitemap.
 
     Collections are read with ``kind`` and emitted with ``listing_emit`` (default
@@ -391,7 +398,7 @@ async def _collections(
     listed: set[str] | None,
     *,
     kind: RequestKind = STORE,
-) -> list[ListedCollection] | None:
+) -> CollectionList | None:
     """Get past the bulk limit through collections, each with its own 25,000 limit.
 
     /collections/all lists the catalog in another order than /products.json, then
@@ -427,7 +434,7 @@ async def _collections(
         logger.info("Collections found every product in the sitemap")
         return None
     collections = await _collection_list(ctx, base, kind=kind)
-    queue = deque(_collection_handles(collections))
+    queue = deque(_collection_handles(collections.entries))
     recent: deque[Paged] = deque(maxlen=YIELD_WINDOW)
 
     def worthwhile() -> bool:
@@ -458,12 +465,14 @@ async def _collections(
 
 async def _collection_list(
     ctx: StoreContext, base: str, *, kind: RequestKind = STORE
-) -> list[ListedCollection]:
+) -> CollectionList:
     """Every entry of the paged /collections.json, once per handle.
 
-    A failed page is logged and ends the list with what was read so far.
+    A failed or repeated page is logged and ends the list with what was read so far,
+    marked incomplete.
     """
     collections: dict[str, ListedCollection] = {}
+    complete = False
     previous: list[Any] = []
     url = get_bulk_products_url(base, path="/collections.json")
     for _ in range(MAX_PAGES):
@@ -471,18 +480,23 @@ async def _collection_list(
         if fetched is None:
             break
         page, page_url = fetched
-        if not page or page == previous:
-            break  # the end, or a server that ignores `page`
+        if page and page == previous:
+            logger.warning("Collection list page repeated the last one at %s", page_url)
+            break  # a server that ignores `page`
+        if not page:
+            complete = True
+            break
         previous = page
         for collection in page:
             if isinstance(collection, dict) and collection.get("handle"):
                 handle = str(collection["handle"])
                 collections.setdefault(handle, ListedCollection(collection, handle, page_url))
         if len(page) < BULK_PAGE_SIZE:
+            complete = True
             break
         url = next_page_url(page_url)
     logger.info("Collection list: %d collections", len(collections))
-    return list(collections.values())
+    return CollectionList(list(collections.values()), complete)
 
 
 async def _collection_page(

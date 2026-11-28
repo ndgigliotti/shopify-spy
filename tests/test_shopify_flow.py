@@ -263,6 +263,7 @@ def test_collection_list_failure_gives_no_collection_items(failure):
     assert len(items) == 2
     assert per_handle_requests(fetcher) == []  # no per-handle fallback
     assert fetcher.count(SITEMAP) == 0
+    assert (result.stores[0].status, result.stores[0].complete) == (spy.StoreStatus.partial, False)
 
 
 # --- Partial bulk run (§3.10 fix) ---
@@ -424,6 +425,14 @@ def test_collection_list_stops_when_pages_repeat(capped):
     page = collection_list(*((f"c{i}", 1) for i in range(250)))
     _, _, fetcher = scrape({**capped, COLLECTIONS: page, COLLECTIONS[:-1] + "2": page})
     assert fetcher.count(COLLECTIONS[:-1] + "3") == 0
+
+
+def test_repeated_collection_list_page_makes_the_store_partial():
+    page = collection_list(*((f"c{i}", 1) for i in range(250)))
+    routes = {COLLECTIONS: page, COLLECTIONS[:-1] + "2": page}
+    items, result, _ = scrape(routes, products=False, collections=True)
+    assert len(items) == 250
+    assert (result.stores[0].status, result.stores[0].complete) == (spy.StoreStatus.partial, False)
 
 
 def test_collection_product_with_a_null_handle_does_not_hide_one_named_none(capped):
@@ -925,3 +934,14 @@ def test_repeated_bulk_page_falls_back_to_the_sitemap():
     assert fetcher.count(bulk_url(3)) == 0
     assert len(items) == 251
     assert (result.stores[0].status, result.stores[0].complete) == ("ok", True)
+
+
+def test_failed_collection_list_page_makes_the_store_partial():
+    routes = {
+        COLLECTIONS: collection_list(*((f"c{i}", 1) for i in range(250))),
+        COLLECTIONS[:-1] + "2": (503, "busy"),
+    }
+    items, result, _ = scrape(routes, products=False, collections=True)
+    assert len(items) == 250
+    store = result.stores[0]
+    assert (store.status, store.complete) == (spy.StoreStatus.partial, False)

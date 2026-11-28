@@ -153,6 +153,9 @@
 - A Shopify store whose `/products.json` repeats a page (a server that ignores
   `page`) now reads the sitemap for the products past it, instead of ending
   `ok` with the rest missing.
+- A Shopify store read with `--collections` whose `/collections.json` fails or
+  repeats a page before the end of the list is now `partial`, keeping the
+  collections read, instead of `ok`.
 
 ## 0.5.1
 
