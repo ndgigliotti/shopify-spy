@@ -211,13 +211,14 @@ class _JsonSource:
             logger.debug("Not a Squarespace product record on %s", url)
             self.counts.not_product += 1
             return
+        # Before the id check: a product in two collections has a fullUrl in each
+        if isinstance(full_url := record.get("fullUrl"), str):
+            self.emitted_paths.add(_path_key(full_url))
         key = record.get("id")
         if isinstance(key, (str, int)):
             if key in self.emitted_ids:
                 return
             self.emitted_ids.add(key)
-        if isinstance(full_url := record.get("fullUrl"), str):
-            self.emitted_paths.add(_path_key(full_url))
         self.emitted = True
         self.ctx.no_item_reason = None
         await self._emit(_item(record, self.ctx))
@@ -254,31 +255,34 @@ class _JsonSource:
         """Read the listed product pages no emitted record's ``fullUrl`` matches;
         return whether the store is complete: every collection page was read and
         every missing page gave an item or no longer exists."""
-        missing: dict[str, str] = {}
+        listed: dict[str, str] = {}
         for url in self.product_urls:
-            if (key := _path_key(url)) not in self.emitted_paths:
-                missing.setdefault(key, url)
-        listed = len({_path_key(url) for url in self.product_urls})
+            listed.setdefault(_path_key(url), url)
+        missing = [url for key, url in listed.items() if key not in self.emitted_paths]
         if missing or self.counts.not_product:
             logger.info(
                 "Squarespace %s: %d of %d listed product pages not in the ?format=json "
-                "collections, reading them from product pages; %d records without "
-                "structuredContent.variants",
+                "collections%s; %d records without structuredContent.variants",
                 self.ctx.url,
                 len(missing),
-                listed,
+                len(listed),
+                ", reading them from product pages" if missing else "",
                 self.counts.not_product,
             )
         pages_read = True
         if missing:
-            pages = _MissedPages(
+            pages = generic._Pages(
                 self.ctx,
                 self._emit,
                 self.listing,
                 platform="squarespace",
                 source="product_page",
-                urls=list(missing.values()),
+                urls=missing,
             )
+            # The store's first item came from the collections, so no missed page
+            # counts toward PROBE_PAGES or the no-item reason, and no other platform
+            # is probed
+            pages.emitted = True
             await pages.run()
             pages_read = not pages.failed and not pages.counts.no_product
         return (
@@ -311,16 +315,6 @@ class _JsonSource:
         # Never return False here: the sitemap's 2xx would make diagnose() say empty
         await pages.probe_others()
         raise SquarespaceError(pages.reason())
-
-
-class _MissedPages(generic._Pages):
-    """The listed product pages the collections didn't give, read after the store's
-    first item: as that item came first, no page counts toward ``PROBE_PAGES`` or
-    the store's reason for having no item, and no other platform is probed."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.emitted = True
 
 
 class _FallbackPages(generic._Pages):

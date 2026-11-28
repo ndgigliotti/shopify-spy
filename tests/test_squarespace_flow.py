@@ -408,6 +408,16 @@ def test_a_product_in_two_collections_is_emitted_once():
     assert result.stores[0].status == "ok"
 
 
+def test_a_product_listed_under_two_collections_is_not_read_from_its_page():
+    routes = store(1, extra_locs=[f"{STORE}/sale/p/tee"])
+    routes[f"{STORE}/sale/p/tee"] = product_page(node("tee"))
+    routes[json_url("/shop")] = collection(record("tee"))
+    routes[json_url("/sale")] = collection(record("tee", "sale"))
+    items, result, _ = scrape_json(routes)
+    assert [i["source"] for i in items] == ["format_json"]
+    assert result.stores[0].status == "ok"
+
+
 def test_logs_the_fallback_after_the_source(caplog):
     caplog.set_level(logging.INFO, logger="shopify_spy")
     scrape_json(store(json=(403, "")))
@@ -642,6 +652,7 @@ def test_an_unlisted_variantless_record_is_only_logged(caplog):
     assert result.stores[0].status == "ok"
     [_, coverage] = squarespace_logs(caplog)
     assert "0 of 3 listed product pages not in" in coverage
+    assert "reading them from product pages" not in coverage
     assert "1 records without structuredContent.variants" in coverage
 
 
