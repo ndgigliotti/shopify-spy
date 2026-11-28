@@ -44,7 +44,7 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 
 - `URL...`: one or more store URLs (optional with `--url-file`).
 - `--url-file, -f FILE`: a file of URLs, one per line; lines starting with `#` are comments.
-- `--platform, -p PLATFORM`: `shopify` (the default), `woocommerce`, `magento`, `bigcommerce` or `generic`. The first four read the platform's own API. `generic` is for any other store (Wix, Squarespace, a custom site): it reads the schema.org Product data (JSON-LD or microdata) on each product page a store's sitemaps list. It is a best-effort fallback at one request per product, so it's slow; use `--limit` for a sample, and see [Generic stores](troubleshooting.md#generic-stores). A store that fails because it looks like Shopify, WooCommerce or Magento gets a hint naming that platform, in the end-of-run summary when nothing was scraped and in the library's `StoreResult.hint`.
+- `--platform, -p PLATFORM`: `shopify` (the default), `woocommerce`, `magento`, `bigcommerce` or `generic`. The first four read the platform's own API. `generic` is for any other store (Wix, Squarespace, a custom site): it reads the schema.org Product data (JSON-LD or microdata) on each product page a store's sitemaps list. It is a best-effort fallback at one request per product, so it's slow; use `--limit` for a sample, and see [Generic stores](troubleshooting.md#generic-stores). A store that fails because it looks like Shopify, WooCommerce or Magento gets a hint naming that platform, in the end-of-run summary, the [status file](troubleshooting.md#the-status-file) and the library's `StoreResult.hint`.
 - `--products / --no-products`: scrape products (default: yes; Shopify only).
 - `--collections / --no-collections`: scrape collections (default: no; Shopify only).
 - `--images / --no-images`: download product images into `<output>/images/full/` (default: no). Downloads from one host are at least `--image-delay` apart while throttling. See [Images](output.md#images).
@@ -147,7 +147,7 @@ Requests honor the `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` envir
 - Through a proxy, only literal IP addresses and `localhost` names are checked against the [non-public address rule](troubleshooting.md#refused-requests-to-non-public-addresses), since the proxy resolves hostnames itself.
 - A proxy is for a fixed egress, such as a company network or another region. It is not a way around a store's rate limits, which in practice key on user agent or endpoint as much as on IP.
 
-A proxy's 407 (refused credentials) counts as [`no_response`](troubleshooting.md#store-statuses). In the library, a store that never answers while a proxy is in use gets a `hint` saying to check the proxy.
+A proxy's 407 (refused credentials) counts as [`no_response`](troubleshooting.md#store-statuses). A store that never answers while a proxy is in use gets a hint saying to check the proxy, or its credentials after a 407, in the CLI's end-of-run summary, the status file and `StoreResult.hint`.
 
 ## Browser profiles
 

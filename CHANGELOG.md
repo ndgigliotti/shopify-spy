@@ -8,6 +8,9 @@
   after a refusal on or off (default on), and the status file's
   `identity_changes` and `StoreResult.identity_changes` count the switches per
   store.
+- The status file has each store's `hint`, the same text as `StoreResult.hint`
+  (`null` when there is none)
+  ([#120](https://github.com/ndgigliotti/shopify-spy/issues/120)).
 - A `magento` platform (`--platform magento`, `platform="magento"`) for Magento
   Open Source and Adobe Commerce 2.4 stores, read through the storefront GraphQL
   API at `/graphql` without a token. Items are the GraphQL products plus `store`,
@@ -107,6 +110,18 @@
   `scripts/update_user_agents.py`, which refreshed it. Without `--user-agent`,
   requests carry the browser profile's own user agent; with it, exactly the one
   you set, so httpx never sends one Shopify Spy picks.
+
+### Fixed
+
+- The CLI's end-of-run summary prints each store's `StoreResult.hint`, so a store
+  that never answered through a proxy (`--proxy`, `network.proxy` or a proxy
+  environment variable) gets the hint to check the proxy, or its credentials after
+  a 407, instead of the network or `--insecure` advice
+  ([#81](https://github.com/ndgigliotti/shopify-spy/issues/81)). The summary of a
+  run that scraped items also prints the hints of stores that failed or produced
+  nothing, and a store's hint replaces the status hint it would otherwise share
+  with other stores. The CLI's wrong-platform hint now reads like the library's
+  (`looks like WooCommerce; pass platform='woocommerce'`).
 
 ## 0.5.1
 

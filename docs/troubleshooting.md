@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Every store ends with a status, which the CLI lists when a store fails and the [status file](#the-status-file) records for every store. When the whole run produces no items, the CLI also explains the likely cause of each status and suggests flags to try, including the other `--platform` when a store looks like it runs on it. In the library, each `StoreResult` has the status and sometimes a `hint`. Start with the store's status below.
+Every store ends with a status, which the CLI lists when a store fails and the [status file](#the-status-file) records for every store. When the whole run produces no items, the CLI also explains the likely cause of each status and suggests flags to try. Some stores also get a hint of their own, such as the platform a store looks like it runs on, or the proxy when one was in use; the CLI prints it for each store that failed or produced nothing, and the status file and `StoreResult.hint` carry it. Start with the store's status below.
 
 ## Store statuses
 
@@ -14,11 +14,11 @@ Every store ends with a status, which the CLI lists when a store fails and the [
 | `timed out` | `timed_out` | No items within `--bail` seconds, not counting `Retry-After` waits |
 | `403 Forbidden` | `forbidden` | The store returned 403s and no successful response, also after switching browser profile (see [Retries and identities](#retries-and-identities)), or answered with a challenge page that only a real browser can pass |
 | `404 Not Found` | `not_found` | The store returned 404s and no successful response; check the URL and `--platform` |
-| `blocked by robots.txt` | `robots_blocked` | robots.txt forbade the store's requests; try `--ignore-robots`. For a Magento store whose robots.txt disallows URLs with query strings, the CLI and `StoreResult.hint` say so (see [Magento stores](#magento-stores)) |
+| `blocked by robots.txt` | `robots_blocked` | robots.txt forbade the store's requests; try `--ignore-robots`. For a Magento store whose robots.txt disallows URLs with query strings, the store's hint says so (see [Magento stores](#magento-stores)) |
 | `rate limited (429)` | `rate_limited` | The store answered 429 (Too Many Requests) after retries, or with a `Retry-After` longer than 60 s, and no successful response, or a 429 its retries didn't get past held it until `--bail` fired with no items; retry later with a lower `--concurrent` (see [Rate limiting](#rate-limiting)) |
 | `unavailable (5xx)` | `unavailable` | The store answered 5xx server errors (often an outage or maintenance) and no successful response; retry later |
 | `TLS error` | `tls_error` | The certificate failed verification; try `--insecure`, or behind a company proxy point `SSL_CERT_FILE` or `SSL_CERT_DIR` at its CA (`REQUESTS_CA_BUNDLE` and `CURL_CA_BUNDLE` work too; see [Network](cli.md#network)) |
-| `no response` | `no_response` | The store never answered (DNS, connection or network failure), a proxy refused the request (407), or the store's own address was refused (see the `Refused request to` warning and [Refused requests to non-public addresses](#refused-requests-to-non-public-addresses)); with a proxy in use, the library's `StoreResult.hint` says to check it (see [Proxies](cli.md#proxies)) |
+| `no response` | `no_response` | The store never answered (DNS, connection or network failure), a proxy refused the request (407), or the store's own address was refused (see the `Refused request to` warning and [Refused requests to non-public addresses](#refused-requests-to-non-public-addresses)); with a proxy in use, the store's hint says to check it (see [Proxies](cli.md#proxies)) |
 | `failed` | `error` | An unexpected error, a Magento store whose `/graphql` answered without products, a BigCommerce store without a Storefront API token on its homepage or whose `/graphql` answered without products, or a generic store whose pages had no Product data or whose sitemaps weren't found or couldn't be read (the reason is in the [log file](#log-files) and `StoreResult.errors`; see [Magento stores](#magento-stores), [BigCommerce stores](#bigcommerce-stores) and [generic stores](#generic-stores)) |
 | `stopped` | `stopped` | Interrupted (Ctrl-C) before producing anything |
 | `invalid URL` | `invalid_url` | The URL was malformed and skipped before scraping |
@@ -41,7 +41,7 @@ Each run except `--peek` writes a status file to `<output>/status/`, with each U
   "items_written": 47,
   "urls": [
     {"url": "https://store.com", "items": 47, "status": "ok", "code": "ok", "products_from": null,
-     "identity_changes": 0}
+     "identity_changes": 0, "hint": null}
   ],
   "finish_reason": "finished",
   "duration_seconds": 12.3,
@@ -50,7 +50,7 @@ Each run except `--peek` writes a status file to `<output>/status/`, with each U
 }
 ```
 
-`products_from` is `null` unless a store's products came from another host, such as the `myshopify.com` domain of a [headless store](#headless-shopify-stores). `identity_changes` counts the store's switches to another browser profile after a refusal; see [Retries and identities](#retries-and-identities).
+`products_from` is `null` unless a store's products came from another host, such as the `myshopify.com` domain of a [headless store](#headless-shopify-stores). `identity_changes` counts the store's switches to another browser profile after a refusal; see [Retries and identities](#retries-and-identities). `hint` is the store's hint, the same text as `StoreResult.hint`, such as `looks like WooCommerce; pass platform='woocommerce'`, and `null` when there is none.
 
 `finish_reason` summarizes the run: `finished`, `item_limit` (a store reached `--limit`), `bail` (a store hit the `--bail` timeout; a generic store stopped there after checking pages reports `failed` with the pages checked), `crawler_failed` (a store failed with an error: unexpected, a Magento or BigCommerce answer without products, a BigCommerce homepage without a token, or a generic store without Product data), or `shutdown` (interrupted). `items_written` is how many items the data file holds. A crash or a killed process writes no status file.
 
@@ -123,7 +123,7 @@ Magento scraping uses the storefront GraphQL API at `/graphql`, which Magento Op
 
 - **Page size:** some stores cap the page size. A GraphQL error about the page size on the first page makes the scraper retry it with the size the message names (or half), so these stores still finish `ok`.
 - **`failed` with a GraphQL message:** the store's `/graphql` answered the first page without products. The message from Magento is in the log file and `StoreResult.errors`. Common causes are a query complexity or depth limit the store set below Magento's defaults, a disabled GraphQL module, a store whose catalog search errors, or a site that isn't Magento (WordPress's WPGraphQL also answers at `/graphql`). When `/products.json` or `/wp-json/` answers like Shopify or WooCommerce, the hint names that platform.
-- **`blocked by robots.txt`:** robots.txt rules that match query strings, such as `Disallow: /*?`, also match the GraphQL URLs, since the query is in the URL. Many Magento stores have such a rule, and their catalog can't be read with robots.txt obeyed; the scraper keeps to it rather than sending the query another way. When robots.txt allows `/graphql` itself but not the query URL, the CLI's end-of-run summary and `StoreResult.hint` say the store's robots.txt disallows URLs with query strings, and `StoreResult.query_disallowed` is `True`. `--ignore-robots` reads the catalog anyway; see the `robots_blocked` status above.
+- **`blocked by robots.txt`:** robots.txt rules that match query strings, such as `Disallow: /*?`, also match the GraphQL URLs, since the query is in the URL. Many Magento stores have such a rule, and their catalog can't be read with robots.txt obeyed; the scraper keeps to it rather than sending the query another way. When robots.txt allows `/graphql` itself but not the query URL, the store's hint says its robots.txt disallows URLs with query strings, and `StoreResult.query_disallowed` is `True`. `--ignore-robots` reads the catalog anyway; see the `robots_blocked` status above.
 - **`ok` with a warning about fewer products than `total_count`:** `total_count` can include products the storefront hides, such as out-of-stock ones. If some products also came back twice, the result order shifted between pages and products were likely missed; the store is then `partial`. Scraping it again may give a complete result.
 - **`403 Forbidden`:** sites behind a bot challenge (such as Cloudflare's) answer 403 to scripted requests, on `/graphql` as on every other page.
 
