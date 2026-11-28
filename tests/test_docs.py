@@ -82,6 +82,8 @@ def test_scrape_doc_names_every_platform():
     doc = spy.scrape.__doc__
     assert doc.count('"jsonld"') >= 2
     assert "JsonLdProductItem" in doc
+    assert doc.count('"squarespace"') >= 2
+    assert "SquarespaceProductItem" in doc
     assert '"woocommerce" or "magento"' not in doc
 
 

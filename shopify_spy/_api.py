@@ -449,10 +449,11 @@ _SCRAPE_DOC = """
     Args:
         urls: A store URL or an iterable of them. Only the host matters; paths are
             ignored. One platform per call.
-        platform: "shopify", "woocommerce", "magento", "bigcommerce" or "jsonld" (default
-            {platform}). When a WooCommerce store's Store API is unavailable, its
-            product pages are read instead: partial items in the Store API's shape
-            with ``source="product_page"``. Magento stores are read through the
+        platform: "shopify", "woocommerce", "magento", "bigcommerce", "jsonld" or
+            "squarespace" (default {platform}). When a WooCommerce store's Store
+            API is unavailable, its product pages are read instead: partial items
+            in the Store API's shape with ``source="product_page"``. Magento
+            stores are read through the
             storefront GraphQL API at ``/graphql``, in the default store view and
             its currency; there are no Magento collections. BigCommerce stores are
             read through the Storefront GraphQL API at ``/graphql`` (or the
@@ -463,8 +464,15 @@ _SCRAPE_DOC = """
             schema.org Product JSON-LD (or microdata) becomes an item, at one request per
             product. It is a best-effort fallback for platforms without an
             adapter, so ``max_items_per_store`` and the throttle matter.
+            Squarespace's robots.txt disallows ``?format=json``, so with
+            ``respect_robots_txt`` (the default) "squarespace" reads the product
+            pages its sitemap lists as "jsonld" does (``source="product_page"``);
+            with ``respect_robots_txt=False`` it reads the collections'
+            ``?format=json`` product records, with every variant and its stock
+            (``source="format_json"``), falling back to the product pages when no
+            collection gives a product. The log says which source was read.
         products: Scrape products (default {products}). Shopify only; WooCommerce,
-            Magento, BigCommerce and JSON-LD always scrape products.
+            Magento, BigCommerce, JSON-LD and Squarespace always scrape products.
         collections: Also scrape collections (default {collections}). Shopify only.
         images: Download product images into ``images_dir/full/`` (default {images}).
             Requires ``images_dir``. Each item gains ``scraped_images`` records
@@ -534,8 +542,10 @@ _SCRAPE_DOC = """
     (status ``error``: an unexpected error, a Magento store whose ``/graphql``
     answered without products, with the GraphQL message in ``StoreResult.errors``,
     a BigCommerce store without a token on its homepage, or whose ``/graphql``
-    answered without products, or a JSON-LD store whose pages have no Product
-    data); ``run.result.failed`` lists them with a status and, sometimes, a
+    answered without products, a JSON-LD or Squarespace store whose pages have no
+    Product data (with robots.txt ignored, a Squarespace store whose collections
+    gave no product either), or a Squarespace store whose sitemap lists no product
+    page); ``run.result.failed`` lists them with a status and, sometimes, a
     ``hint`` (e.g. a likely wrong ``platform``). A store stopped by ``bail`` can
     also end ``error`` with a reason when its adapter recorded one (JSON-LD pages
     checked without Product data). An empty store is not a failure. A store's
@@ -546,13 +556,16 @@ _SCRAPE_DOC = """
     URL is on one.
 
     Items are each platform's native shape plus ``store``, ``platform``
-    ("shopify", "woocommerce", "magento", "bigcommerce" or "jsonld") and
-    ``image_urls`` (Magento, BigCommerce and JSON-LD items also get ``html_url``;
-    a JSON-LD item is the page's schema.org Product or ProductGroup node, with
-    ``@type``, ``name``, ``offers`` and so on; see ``ShopifyProductItem``,
+    ("shopify", "woocommerce", "magento", "bigcommerce", "jsonld" or "squarespace")
+    and ``image_urls`` (Magento, BigCommerce, JSON-LD and Squarespace items also get
+    ``html_url``; a JSON-LD item is the page's schema.org Product or ProductGroup
+    node, with ``@type``, ``name``, ``offers`` and so on, and so is a Squarespace
+    item with ``source="product_page"``; one with ``source="format_json"`` is the
+    Squarespace product record; see ``ShopifyProductItem``,
     ``WooCommerceProductItem``, ``MagentoProductItem``, ``BigCommerceProductItem``,
-    ``JsonLdProductItem``); ``write_items(..., schema="unified")`` flattens them
-    into one row per variant with the same columns on every platform.
+    ``JsonLdProductItem``, ``SquarespaceProductItem``); ``write_items(...,
+    schema="unified")`` flattens them into one row per variant with the same
+    columns on every platform.
 
     Nothing is written to disk unless ``images=True``, and no config file is read.
 """.format_map(
