@@ -128,6 +128,10 @@ class FetchIncomplete(FetchError):
     """The connection closed before the body was complete."""
 
 
+class FetchUndecodable(FetchIncomplete):
+    """The body's Content-Encoding can't be decoded, so sending it again won't help."""
+
+
 class FetchInvalidURL(FetchError):
     """The URL can't be requested (control characters, a bad host, ...)."""
 
@@ -747,7 +751,7 @@ class CurlCffiFetcher:
                     # Reading the body raw means sending the request again, which a
                     # POST (BigCommerce's /graphql) must not get from the fetcher
                     if request.method not in _SAFE_METHODS:
-                        raise FetchIncomplete(f"undecodable response body: {exc}") from exc
+                        raise FetchUndecodable(f"undecodable response body: {exc}") from exc
                     return await self._attempt(profile, True, request, route, proxy)
         except TimeoutError as exc:
             raise FetchTimeout(f"no complete response within {request.timeout}s") from exc

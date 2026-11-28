@@ -142,9 +142,9 @@
 ### Fixed
 
 - A POST (BigCommerce's `/graphql`) whose response libcurl can't decode is no longer
-  sent a second time inside the transport to read the body raw. It fails as
-  incomplete, and the store's retries (`--retries`) decide whether to send it again,
-  paced and counted like any other retry; GET requests still reread the body raw.
+  sent a second time inside the transport to read the body raw. It fails once,
+  without retries, since the same encoding would refuse every resend; GET requests
+  still reread the body raw.
 - A request already waiting out the gap since the host's previous request no longer
   leaves before a `Retry-After` pause the host got meanwhile: it waits out the pause
   too, then the slowed spacing, as the docs say.

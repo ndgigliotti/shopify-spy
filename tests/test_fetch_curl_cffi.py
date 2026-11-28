@@ -34,6 +34,7 @@ from shopify_spy._fetch import (
     FetchTimeout,
     FetchTLSError,
     FetchTooLarge,
+    FetchUndecodable,
     Identity,
     Request,
 )
@@ -533,7 +534,7 @@ async def test_undecodable_post_is_never_sent_twice(server, transport):
     )
     server.paths.clear()
     async with _fetcher(transport) as fetcher:
-        with pytest.raises(FetchIncomplete):
+        with pytest.raises(FetchUndecodable):
             await fetcher.fetch(request)
     assert server.paths == ["POST /gzip-unknown"]
 
