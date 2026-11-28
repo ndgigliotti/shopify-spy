@@ -141,6 +141,9 @@
 
 ### Fixed
 
+- A Shopify store read from its sitemap, where every listed product failed, was
+  reported `empty` (a store with no products); it now ends `failed`, with how many
+  listed products couldn't be read in `StoreResult.errors`.
 - The CLI's end-of-run summary prints each store's `StoreResult.hint`, so a store
   that never answered through a proxy (`--proxy`, `network.proxy` or a proxy
   environment variable) gets the hint to check the proxy, or its credentials after

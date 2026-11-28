@@ -93,6 +93,10 @@ def image_urls(data: Any, enabled: bool) -> list[Any]:
     return list(find_all_values("src", data)) if enabled else []
 
 
+class ShopifyError(Exception):
+    """The sitemap listed products, but none could be read."""
+
+
 class Paging(enum.Enum):
     """How paging a product list ended."""
 
@@ -247,6 +251,13 @@ def _rehosted(emit: Emit, own_origin: str, on_first: Callable[[], None]) -> Emit
     return rehost
 
 
+def _raise_if_none_read(ctx: StoreContext, failed: int) -> None:
+    """Fail the store when listed products failed and nothing came out at all, so it
+    isn't reported as ``empty`` (a store with no products)."""
+    if failed and not ctx.items:
+        raise ShopifyError(f"none of the store's listed products could be read ({failed} failed)")
+
+
 async def _past_bulk(
     ctx: StoreContext,
     emit: Emit,
@@ -272,6 +283,7 @@ async def _past_bulk(
         listed = {h for loc in locs if (h := _listed_handle(loc))} if walk.root_ok else None
         collections = await _collections(ctx, listing_emit, seen, paged.origin, listed, kind=kind)
         failed = await _fetch_documents(ctx, emit, _each(locs), seen)
+        _raise_if_none_read(ctx, failed)
         return walk.root_ok and not walk.unread and not failed, collections
     if paged.outcome is Paging.CAPPED:
         # With an item limit the catalog may be far bigger than needed (millions of
@@ -279,6 +291,7 @@ async def _past_bulk(
         collections = await _collections(ctx, listing_emit, seen, paged.origin, None, kind=kind)
     walk = _sitemap_walk(ctx)
     failed = await _fetch_documents(ctx, emit, _product_locs(walk), seen)
+    _raise_if_none_read(ctx, failed)
     return (not seen or walk.root_ok) and not walk.unread and not failed, collections
 
 

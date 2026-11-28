@@ -984,6 +984,20 @@ def test_listed_document_that_is_not_a_product_is_not_emitted(document):
     assert (store.status, store.complete) == (spy.StoreStatus.partial, False)
 
 
+def test_every_listed_product_failing_is_an_error_not_empty():
+    routes = {
+        bulk_url(1): (404, ""),
+        SITEMAP: urlset(f"{STORE}/products/a", f"{STORE}/products/b"),
+        f"{STORE}/products/a.json": (503, "busy"),
+        f"{STORE}/products/b.json": {"errors": "Not Found"},
+    }
+    items, result, _ = scrape(routes)
+    assert items == []
+    store = result.stores[0]
+    assert (store.status, store.complete) == (spy.StoreStatus.error, False)
+    assert any("listed products could be read (2 failed)" in e for e in store.errors)
+
+
 def test_unreadable_store_is_not_complete():
     routes = {bulk_url(1): (503, ""), SITEMAP: (503, "")}
     items, result, _ = scrape(routes)
