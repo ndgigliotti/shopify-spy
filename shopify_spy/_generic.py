@@ -32,14 +32,13 @@ from shopify_spy import _sitemap as sitemap
 from shopify_spy._fetch import Response
 from shopify_spy._session import Emit, RequestFailed, StoreContext
 from shopify_spy._utils import canonicalize_url, hostname
-from shopify_spy._woocommerce import GONE, _site
+from shopify_spy._woocommerce import FETCH_CONCURRENCY, GONE, _site
 
 __all__ = ["JsonLdError", "run"]
 
 logger = logging.getLogger("shopify_spy")
 
 SITEMAP_PATHS = ("/sitemap.xml", "/sitemap_index.xml", "/xmlsitemap.php")
-FETCH_CONCURRENCY = 8  # product pages fetched at once per store (host slots still apply)
 PROBE_PAGES = 50  # pages back without an item, before the first, that end the store
 HINT_AFTER = 5  # pages back without an item, before the first, that start the hint probe
 # WordPress taxonomy sitemaps (Yoast's and Rank Math's product_cat-sitemap.xml, core's
