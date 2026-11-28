@@ -18,8 +18,10 @@ are read, following ``pagination.nextPageUrl``. Each Squarespace product record
 (one with ``structuredContent.variants``) becomes an item: the record unchanged,
 plus ``store``, ``platform``, ``html_url``, ``image_urls`` and
 ``source="format_json"``. When no collection gives a product, the listed product
-pages are read instead, as in the default mode. When some do, a listed product
-page whose path no record's ``fullUrl`` matches makes the store incomplete.
+pages are read instead, as in the default mode. When some do, each listed product
+page whose path no record's ``fullUrl`` matches is then read as in the default mode
+(``source="product_page"``), and the store is complete only if every one of those
+gives an item or no longer exists.
 """
 
 from __future__ import annotations
@@ -138,7 +140,7 @@ class _JsonSource:
         for path in self.collections:
             await self._read_collection(path)
         if self.emitted:
-            return self._covered()
+            return await self._read_missing()
         return await self._fallback()
 
     async def _list(self) -> None:
@@ -248,25 +250,42 @@ class _JsonSource:
         )
         return f"{reason}: {', '.join(outcomes)}" if outcomes else reason
 
-    def _covered(self) -> bool:
-        """Whether the store is complete: every listed product page was among the
-        records emitted and every collection page was read."""
-        listed = {_path_key(url) for url in self.product_urls}
-        missing = len(listed - self.emitted_paths)
+    async def _read_missing(self) -> bool:
+        """Read the listed product pages no emitted record's ``fullUrl`` matches;
+        return whether the store is complete: every collection page was read and
+        every missing page gave an item or no longer exists."""
+        missing: dict[str, str] = {}
+        for url in self.product_urls:
+            if (key := _path_key(url)) not in self.emitted_paths:
+                missing.setdefault(key, url)
+        listed = len({_path_key(url) for url in self.product_urls})
         if missing or self.counts.not_product:
             logger.info(
                 "Squarespace %s: %d of %d listed product pages not in the ?format=json "
-                "collections; %d records without structuredContent.variants",
+                "collections, reading them from product pages; %d records without "
+                "structuredContent.variants",
                 self.ctx.url,
-                missing,
-                len(listed),
+                len(missing),
+                listed,
                 self.counts.not_product,
             )
+        pages_read = True
+        if missing:
+            pages = _MissedPages(
+                self.ctx,
+                self._emit,
+                self.listing,
+                platform="squarespace",
+                source="product_page",
+                urls=list(missing.values()),
+            )
+            await pages.run()
+            pages_read = not pages.failed and not pages.counts.no_product
         return (
             self.listing.complete
             and not self.incomplete
             and not self.counts.unreadable
-            and not missing
+            and pages_read
         )
 
     async def _fallback(self) -> bool:
@@ -292,6 +311,16 @@ class _JsonSource:
         # Never return False here: the sitemap's 2xx would make diagnose() say empty
         await pages.probe_others()
         raise SquarespaceError(pages.reason())
+
+
+class _MissedPages(generic._Pages):
+    """The listed product pages the collections didn't give, read after the store's
+    first item: as that item came first, no page counts toward ``PROBE_PAGES`` or
+    the store's reason for having no item, and no other platform is probed."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.emitted = True
 
 
 class _FallbackPages(generic._Pages):

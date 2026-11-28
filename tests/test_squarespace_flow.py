@@ -435,7 +435,8 @@ def test_one_collection_failing_beside_items_is_partial(caplog, spec):
     routes[json_url("/sale")] = spec
     items, result, fetcher = scrape_json(routes)
     assert len(items) == 3
-    assert product_pages_requested(fetcher) == []
+    # Its listed product is read from its page, which no longer exists
+    assert product_pages_requested(fetcher) == [SALE]
     [s] = result.stores
     assert s.status == "partial"
     assert s.complete is False
@@ -471,14 +472,29 @@ def test_a_failing_later_page_with_every_listed_product_read_is_partial(caplog, 
     assert any(m.startswith(("Request failed:", page)) and page in m for m in caplog.messages)
 
 
-def test_a_gone_collection_leaves_its_listed_products_missing(caplog):
+def test_a_gone_collection_s_listed_products_are_read_from_their_pages(caplog):
     caplog.set_level(logging.INFO, logger="shopify_spy")
-    items, result, fetcher = scrape_json(json_store(extra_locs=[SALE]))  # /sale 404s
-    assert len(items) == 3
-    assert product_pages_requested(fetcher) == []
+    routes = json_store(extra_locs=[SALE])  # /sale?format=json 404s
+    routes[SALE] = product_page(node("hat") | {"url": SALE})
+    items, result, fetcher = scrape_json(routes)
+    assert len(items) == 4
+    [hat] = [i for i in items if i["source"] == "product_page"]
+    assert (hat["html_url"], hat["platform"]) == (SALE, "squarespace")
+    assert product_pages_requested(fetcher) == [SALE]
     [s] = result.stores
-    assert s.status == "partial"
-    assert any("1 of 4 listed product pages not in" in m for m in squarespace_logs(caplog))
+    assert s.status == "ok"
+    assert any(
+        "1 of 4 listed product pages not in the ?format=json collections, reading them "
+        "from product pages" in m
+        for m in squarespace_logs(caplog)
+    )
+
+
+def test_a_gone_missed_product_page_leaves_the_store_complete():
+    items, result, fetcher = scrape_json(json_store(extra_locs=[SALE]))  # both 404
+    assert len(items) == 3
+    assert product_pages_requested(fetcher) == [SALE]
+    assert result.stores[0].status == "ok"
 
 
 VARIANTLESS = {"id": "x", "fullUrl": "/shop/p/tee", "structuredContent": {"productType": 2}}
@@ -566,25 +582,52 @@ def test_bail_in_the_fallback_reports_both_outcomes():
     )
 
 
-def test_listed_products_missing_from_the_collections_is_partial(caplog):
+def test_listed_products_missing_from_the_collections_are_read_from_their_pages(caplog):
     caplog.set_level(logging.INFO, logger="shopify_spy")
     items, result, fetcher = scrape_json(store(5, json=collection(*map(record, SLUGS[:3]))))
-    assert len(items) == 3
-    assert product_pages_requested(fetcher) == []
+    assert [i["source"] for i in items] == ["format_json"] * 3 + ["product_page"] * 2
+    assert sorted(i["html_url"] for i in items[3:]) == [url("bag"), url("hat")]
+    assert sorted(product_pages_requested(fetcher)) == [url("bag"), url("hat")]
+    [s] = result.stores
+    assert s.status == "ok"
+    assert s.complete is True
+    [_, coverage] = squarespace_logs(caplog)
+    assert STORE in coverage
+    assert (
+        "2 of 5 listed product pages not in the ?format=json collections, "
+        "reading them from product pages"
+    ) in coverage
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [(503, ""), FetchConnectionError("connection refused"), html()],
+    ids=["503", "no-response", "no-product-data"],
+)
+def test_a_failing_missed_product_page_is_partial(spec):
+    routes = store(5, json=collection(*map(record, SLUGS[:3])))
+    routes[url("hat")] = spec
+    items, result, _ = scrape_json(routes)
+    assert sorted(i["html_url"] for i in items if i["source"] == "product_page") == [url("bag")]
     [s] = result.stores
     assert s.status == "partial"
     assert s.complete is False
-    [_, coverage] = squarespace_logs(caplog)
-    assert STORE in coverage
-    assert "2 of 5 listed product pages not in the ?format=json collections" in coverage
 
 
-def test_a_listed_variantless_record_is_partial(caplog):
+def test_missed_product_pages_stop_at_max_items_per_store():
+    routes = store(5, json=collection(*map(record, SLUGS[:3])))
+    items, result, _ = scrape_json(routes, max_items_per_store=4)
+    assert len(items) == 4
+    assert result.stores[0].finish_reason == "item_limit"
+
+
+def test_a_listed_variantless_record_is_read_from_its_page(caplog):
     caplog.set_level(logging.INFO, logger="shopify_spy")
     cap = {**record("cap"), "structuredContent": {}}
     items, result, _ = scrape_json(store(3, json=collection(record("tee"), record("mug"), cap)))
-    assert len(items) == 2
-    assert result.stores[0].status == "partial"
+    assert [i["source"] for i in items] == ["format_json", "format_json", "product_page"]
+    assert items[2]["html_url"] == url("cap")
+    assert result.stores[0].status == "ok"
     [_, coverage] = squarespace_logs(caplog)
     assert "1 of 3 listed product pages not in" in coverage
     assert "1 records without structuredContent.variants" in coverage
@@ -633,4 +676,6 @@ def test_a_record_without_a_full_url_has_no_html_url():
     rec = {k: v for k, v in record("tee").items() if k != "fullUrl"}
     items, result, _ = scrape_json(store(1, json=collection(rec)))
     assert items[0]["html_url"] is None
-    assert result.stores[0].status == "partial"  # the listed page wasn't matched
+    # The listed page wasn't matched, so it is read too
+    assert [i["source"] for i in items] == ["format_json", "product_page"]
+    assert result.stores[0].status == "ok"

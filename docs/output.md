@@ -215,7 +215,7 @@ With `--platform squarespace`, an item's shape depends on where it was read from
 - **Fields:** the record format is undocumented and varies a little between stores; `SquarespaceProductItem` lists the common fields. Prices (`priceMoney.value`, `salePriceMoney.value`) are decimal strings, and `salePriceMoney` counts only when `onSale` is true. A digital product (`structuredContent.productType` 2) has no variants: its `priceMoney`, `salePriceMoney` and `onSale` are on `structuredContent` itself. `addedOn`, `updatedOn` and `publishOn` are epoch milliseconds. `body` is HTML.
 - **`html_url`** is the store's origin plus `fullUrl`.
 - **Images:** `image_urls` lists the record's `items` images (else its `assetUrl`), then each variant's `mainImage` not already listed.
-- **Fallback:** when no collection gives a product, the listed product pages are read instead, so a run with `--ignore-robots` can give `product_page` items too.
+- **Fallback:** when no collection gives a product, the listed product pages are read instead, and when the collections give some, the listed product pages no record's `fullUrl` matches are read after them, so a run with `--ignore-robots` can give `product_page` items too.
 - **XML:** keys that aren't valid element names (such as a product-page item's `@type`) have their invalid characters replaced with `_`.
 
 ## Images
@@ -278,7 +278,7 @@ The unified schema has one row per variant and a plain value in every cell (no e
 | `grams`, `requires_shipping`, `taxable`, `variant_position` | the variant's | | | | | |
 | `variant_image_url` | the variant's | | the variant product's `image.url` | the variant's `defaultImage.urlOriginal` | the variant's first `image` | the variant's `mainImage.assetUrl` |
 | `url` | the scraped JSON document | | | | | |
-| `source` | | `store_api`, or `product_page` for the partial items read from product pages | | | `product_page` on Squarespace items read from product pages (by default, or after an `--ignore-robots` run falls back to them) | `format_json` |
+| `source` | | `store_api`, or `product_page` for the partial items read from product pages | | | `product_page` on Squarespace items read from product pages (by default, or in an `--ignore-robots` run, for products its collections didn't give) | `format_json` |
 | `image_paths` | with `--images`: the downloaded files | with `--images`: the downloaded files | with `--images`: the downloaded files | with `--images`: the downloaded files | with `--images`: the downloaded files | with `--images`: the downloaded files |
 
 - **Prices** are decimal amounts, with WooCommerce's minor units converted. JSON-LD prices written with a currency symbol or separators are read: of a dot and a comma, the last is the decimal point (`1.234,56`, `1,299.00`), and a lone comma is decimal (`19,99`) unless three digits follow it (`1,299`). A price that can't be read is left blank. `min_price` and `max_price` are the product's price range on each of its rows. In JSON, prices are strings.

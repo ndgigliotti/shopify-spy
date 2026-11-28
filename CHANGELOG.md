@@ -49,11 +49,11 @@
   `--ignore-robots` (`respect_robots_txt=False`), it reads each collection's
   `?format=json` pages instead, giving the Squarespace product records with every
   variant, price and stock (`SquarespaceProductItem`, `source: "format_json"`), and
-  falls back to the product pages when no collection gives a product. The log says
+  then reads the listed product pages its collections didn't give, as by default. The log says
   which source each store used, and the unified schema has a row per variant (a
   digital product, which has none, gets one row priced from its `structuredContent`). A
-  store read with `--ignore-robots` whose sitemap lists product pages its
-  collections don't give ends `partial`
+  store read with `--ignore-robots` ends `partial` when a collection page or one of
+  those product pages can't be read
   ([#91](https://github.com/ndgigliotti/shopify-spy/issues/91)).
 
 ### Changed

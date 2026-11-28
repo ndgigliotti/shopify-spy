@@ -495,8 +495,9 @@ _SCRAPE_DOC = """
             pages its sitemap lists as "generic" does (``source="product_page"``);
             with ``respect_robots_txt=False`` it reads the collections'
             ``?format=json`` product records, with every variant and its stock
-            (``source="format_json"``), falling back to the product pages when no
-            collection gives a product. The log says which source was read.
+            (``source="format_json"``), then reads the listed product pages no
+            record matched, as by default (all of them when no collection gives a
+            product). The log says which source was read.
         products: Scrape products (default {products}). Shopify only; WooCommerce,
             Magento, BigCommerce, generic and Squarespace always scrape products.
         collections: Also scrape collections (default {collections}). Shopify only.
