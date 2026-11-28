@@ -109,12 +109,12 @@ def test_load_config_bigcommerce(tmp_path):
     assert config.to_kwargs()["platform"] == "bigcommerce"
 
 
-def test_load_config_jsonld(tmp_path):
+def test_load_config_generic(tmp_path):
     config_file = tmp_path / "config.yaml"
-    config_file.write_text("scrape:\n  platform: jsonld\n")
+    config_file.write_text("scrape:\n  platform: generic\n")
     config = load_config_from_file(config_file)
-    assert config.scrape.platform == "jsonld"
-    assert config.to_kwargs()["platform"] == "jsonld"
+    assert config.scrape.platform == "generic"
+    assert config.to_kwargs()["platform"] == "generic"
 
 
 def test_load_config_is_utf8_whatever_the_locale(tmp_path):

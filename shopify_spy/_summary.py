@@ -3,7 +3,7 @@
 Provisional API. Each platform's items have their own shape (Shopify wraps the
 payload in "product"/"collection"; WooCommerce is flat, with prices in minor units;
 Magento is flat, with prices in ``price_range``; BigCommerce is a GraphQL node, with
-prices in ``prices``; JSON-LD is the page's schema.org node, with prices in
+prices in ``prices``; a generic item is the page's schema.org node, with prices in
 ``offers``); this reads any of them.
 """
 
@@ -29,7 +29,7 @@ logger = logging.getLogger("shopify_spy")
 @dataclass(frozen=True)
 class ItemSummary:
     kind: str  # "product" or "collection"
-    platform: str  # "shopify", "woocommerce", "magento", "bigcommerce" or "jsonld"
+    platform: str  # "shopify", "woocommerce", "magento", "bigcommerce" or "generic"
     id: Any
     title: str | None
     min_price: Decimal | None
@@ -110,22 +110,22 @@ def is_bigcommerce(item: dict[str, Any]) -> bool:
     return item.get("platform") == "bigcommerce" and "entityId" in item
 
 
-def is_jsonld(item: dict[str, Any]) -> bool:
-    """Whether ``item`` is a scraped JSON-LD product (``summarize().asdict()`` has a
+def is_generic(item: dict[str, Any]) -> bool:
+    """Whether ``item`` is a scraped generic product (``summarize().asdict()`` has a
     ``platform`` but no ``@type``)."""
-    return item.get("platform") == "jsonld" and "@type" in item
+    return item.get("platform") == "generic" and "@type" in item
 
 
 def summarize(item: dict[str, Any]) -> ItemSummary:
-    """Summarize a Shopify, WooCommerce, Magento, BigCommerce or JSON-LD item from ``scrape()``."""
+    """Summarize a Shopify, WooCommerce, Magento, BigCommerce or generic item from ``scrape()``."""
     if isinstance(item.get("product"), dict) or isinstance(item.get("collection"), dict):
         return _shopify(item)
     if is_magento(item):
         return _magento(item)
     if is_bigcommerce(item):
         return _bigcommerce(item)
-    if is_jsonld(item):
-        return _jsonld(item)
+    if is_generic(item):
+        return _generic(item)
     return _woocommerce(item)
 
 
@@ -210,8 +210,8 @@ def _magento(item: dict[str, Any]) -> ItemSummary:
     )
 
 
-def jsonld_prices(item: dict[str, Any]) -> tuple[Decimal | None, Decimal | None, str | None]:
-    """The lowest and highest price and the currency across a JSON-LD product's
+def generic_prices(item: dict[str, Any]) -> tuple[Decimal | None, Decimal | None, str | None]:
+    """The lowest and highest price and the currency across a generic product's
     ``offers`` and its variants' ``offers``, or Nones."""
     found = [jsonld.offers(item.get("offers"))]
     found += [jsonld.offers(v.get("offers")) for v in jsonld.variants(item)]
@@ -223,11 +223,11 @@ def jsonld_prices(item: dict[str, Any]) -> tuple[Decimal | None, Decimal | None,
     return min(amounts), max(amounts), currency
 
 
-def _jsonld(item: dict[str, Any]) -> ItemSummary:
-    low, high, currency = jsonld_prices(item)
+def _generic(item: dict[str, Any]) -> ItemSummary:
+    low, high, currency = generic_prices(item)
     return ItemSummary(
         kind="product",
-        platform="jsonld",
+        platform="generic",
         id=jsonld.first_text(item, ("productID", "productGroupID", "sku", "@id")),
         title=jsonld.name(item.get("name")),
         min_price=low,

@@ -24,7 +24,7 @@ def parse(page, url=PAGE, **kwargs):
 
 
 def row(node, url=PAGE):
-    item = node | {"store": "shop.example", "platform": "jsonld", "html_url": url}
+    item = node | {"store": "shop.example", "platform": "generic", "html_url": url}
     return flatten(item)[0]
 
 

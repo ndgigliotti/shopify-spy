@@ -62,7 +62,7 @@ class ScrapeOptions(BaseModel):
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
-    platform: Literal["shopify", "woocommerce", "magento", "bigcommerce", "jsonld"] = "shopify"
+    platform: Literal["shopify", "woocommerce", "magento", "bigcommerce", "generic"] = "shopify"
     products: bool = True
     collections: bool = False
     images: bool = False
@@ -104,7 +104,7 @@ def _prepare(
     if options.get("platform") == "auto":
         raise ValueError(
             "auto-detection isn't supported yet; "
-            "use 'shopify', 'woocommerce', 'magento', 'bigcommerce' or 'jsonld'"
+            "use 'shopify', 'woocommerce', 'magento', 'bigcommerce' or 'generic'"
         )
     proxy = options.get("proxy")
     if proxy is not None and not isinstance(proxy, str):
@@ -472,7 +472,7 @@ _SCRAPE_DOC = """
     Args:
         urls: A store URL or an iterable of them. Only the host matters; paths are
             ignored. One platform per call.
-        platform: "shopify", "woocommerce", "magento", "bigcommerce" or "jsonld" (default
+        platform: "shopify", "woocommerce", "magento", "bigcommerce" or "generic" (default
             {platform}). When a WooCommerce store's Store API is unavailable, its
             product pages are read instead: partial items in the Store API's shape
             with ``source="product_page"``. Magento stores are read through the
@@ -481,13 +481,14 @@ _SCRAPE_DOC = """
             read through the Storefront GraphQL API at ``/graphql`` (or the
             ``mybigcommerce.com`` endpoint a headless storefront's page names), with
             the public API token the storefront's homepage carries, in the default
-            currency; there are no BigCommerce collections. JSON-LD stores are
-            read from the product pages listed in their sitemaps: each page with
-            schema.org Product JSON-LD (or microdata) becomes an item, at one request per
-            product. It is a best-effort fallback for platforms without an
-            adapter, so ``max_items_per_store`` and the throttle matter.
+            currency; there are no BigCommerce collections. Generic stores (any
+            other platform) are read from the product pages listed in their
+            sitemaps: each page with schema.org Product JSON-LD (or microdata)
+            becomes an item, at one request per product. It is a best-effort
+            fallback for platforms without an adapter, so ``max_items_per_store``
+            and the throttle matter.
         products: Scrape products (default {products}). Shopify only; WooCommerce,
-            Magento, BigCommerce and JSON-LD always scrape products.
+            Magento, BigCommerce and generic always scrape products.
         collections: Also scrape collections (default {collections}). Shopify only.
         images: Download product images into ``images_dir/full/`` (default {images}).
             Requires ``images_dir``. Each item gains ``scraped_images`` records
@@ -584,10 +585,10 @@ _SCRAPE_DOC = """
     (status ``error``: an unexpected error, a Magento store whose ``/graphql``
     answered without products, with the GraphQL message in ``StoreResult.errors``,
     a BigCommerce store without a token on its homepage, or whose ``/graphql``
-    answered without products, or a JSON-LD store whose pages have no Product
+    answered without products, or a generic store whose pages have no Product
     data); ``run.result.failed`` lists them with a status and, sometimes, a
     ``hint`` (e.g. a likely wrong ``platform``). A store stopped by ``bail`` can
-    also end ``error`` with a reason when its adapter recorded one (JSON-LD pages
+    also end ``error`` with a reason when its adapter recorded one (generic pages
     checked without Product data). An empty store is not a failure. A store's
     ``hint`` and ``products_from`` also name the ``myshopify.com`` domain a
     headless store's products came from. Invalid URLs and options raise
@@ -596,12 +597,12 @@ _SCRAPE_DOC = """
     URL is on one.
 
     Items are each platform's native shape plus ``store``, ``platform``
-    ("shopify", "woocommerce", "magento", "bigcommerce" or "jsonld") and
-    ``image_urls`` (Magento, BigCommerce and JSON-LD items also get ``html_url``;
-    a JSON-LD item is the page's schema.org Product or ProductGroup node, with
+    ("shopify", "woocommerce", "magento", "bigcommerce" or "generic") and
+    ``image_urls`` (Magento, BigCommerce and generic items also get ``html_url``;
+    a generic item is the page's schema.org Product or ProductGroup node, with
     ``@type``, ``name``, ``offers`` and so on; see ``ShopifyProductItem``,
     ``WooCommerceProductItem``, ``MagentoProductItem``, ``BigCommerceProductItem``,
-    ``JsonLdProductItem``); ``write_items(..., schema="unified")`` flattens them
+    ``GenericProductItem``); ``write_items(..., schema="unified")`` flattens them
     into one row per variant with the same columns on every platform.
 
     Nothing is written to disk unless ``images=True``, and no config file is read.

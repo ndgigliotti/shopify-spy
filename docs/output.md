@@ -19,12 +19,12 @@ File names start with the platform and a UTC timestamp. `data/` holds the items,
 
 ## Schemas
 
-- **`native`** (the default for JSONL, JSON and XML): each item as the store's API returned it, described under [Shopify items](#shopify-items), [WooCommerce items](#woocommerce-items), [Magento items](#magento-items), [BigCommerce items](#bigcommerce-items) and [JSON-LD items](#json-ld-items). It keeps every field.
+- **`native`** (the default for JSONL, JSON and XML): each item as the store's API returned it, described under [Shopify items](#shopify-items), [WooCommerce items](#woocommerce-items), [Magento items](#magento-items), [BigCommerce items](#bigcommerce-items) and [generic items](#generic-items). It keeps every field.
 - **`unified`** (`--schema unified`, or `output.schema` in the config): one record per variant with the same columns on every platform, described under [Unified schema](#unified-schema). CSV and XLSX are always unified, and `--schema native` with them is an error. In XML each row is an `<item>`.
 
 ## Shopify items
 
-Each line holds the full product or collection JSON from Shopify's API, plus four added fields. `platform` tells it apart from a WooCommerce, Magento, BigCommerce or JSON-LD item, and `image_urls` is empty unless `--images` is given.
+Each line holds the full product or collection JSON from Shopify's API, plus four added fields. `platform` tells it apart from a WooCommerce, Magento, BigCommerce or generic item, and `image_urls` is empty unless `--images` is given.
 
 ```json
 {
@@ -69,7 +69,7 @@ When a store's Store API is unavailable on its first page, Shopify Spy reads its
 - **Product groups:** a `ProductGroup` (Yoast's markup for a variable product) without offers of its own takes its price range from its variants' offers, and is in stock when any variant is.
 - **Cleanup:** relative image URLs are resolved against the page's URL, names and descriptions are unescaped until they stop changing (pages escape them, sometimes twice), names lose the site name an SEO plugin may append (`Hat - My Shop`), and a SKU that's really the product ID (WooCommerce's placeholder for a missing SKU) is set to `null`.
 - **Variations:** a variable product also gets `attributes` and `variations` from the page's variation form, each variation with its own `prices`, `sku` and `is_in_stock`, so the unified schema has a row per variation. WooCommerce embeds that form's data only for products with up to 30 variations (by default), so larger ones keep just the price range.
-- **Pages that don't work:** pages without schema.org `Product` data for the page are skipped (the page's product is chosen as for [JSON-LD items](#json-ld-items), so a page of several products none of which names it isn't read), as are deleted (404 or 410) pages. Other pages that fail to load mark the store `partial`.
+- **Pages that don't work:** pages without schema.org `Product` data for the page are skipped (the page's product is chosen as for [generic items](#generic-items), so a page of several products none of which names it isn't read), as are deleted (404 or 410) pages. Other pages that fail to load mark the store `partial`.
 - **XML:** keys that aren't valid element names (such as JSON-LD's `@type`) have their invalid characters replaced with `_`.
 
 ## Magento items
@@ -137,9 +137,9 @@ Each line holds a product node as the Storefront GraphQL `site.products` query a
 - **`image_urls`** lists the `images` `urlOriginal` values, the default image first.
 - **Variants:** each variant node has its `entityId`, `sku`, `gtin`, `mpn`, `upc`, `isPurchasable`, `prices`, `inventory`, `defaultImage` and `options` (each with its `values`). Every variant is read, 250 per query, up to 2,500 a product; `variants.pageInfo.hasNextPage` is `true` only on a product whose variants weren't all read (past that bound, or after a failed variants query), and the log has a warning for it.
 
-## JSON-LD items
+## Generic items
 
-With `--platform jsonld`, each line holds the schema.org `Product` or `ProductGroup` node from one product page's JSON-LD (or its microdata), as the page has it except that references to other nodes on the page (`{"@id": ...}`, as Yoast gives a product's images) are replaced by those nodes, plus four added fields (`image_urls` is empty unless `--images` is given):
+With `--platform generic`, each line holds the schema.org `Product` or `ProductGroup` node from one product page's JSON-LD (or its microdata), as the page has it except that references to other nodes on the page (`{"@id": ...}`, as Yoast gives a product's images) are replaced by those nodes, plus four added fields (`image_urls` is empty unless `--images` is given):
 
 ```json
 {
@@ -155,7 +155,7 @@ With `--platform jsonld`, each line holds the schema.org `Product` or `ProductGr
     { "@type": "Product", "sku": "TEE-M", "size": "M", "offers": { "@type": "Offer", "price": "22.00", "priceCurrency": "USD", "availability": "https://schema.org/OutOfStock" } }
   ],
   "store": "store.com",
-  "platform": "jsonld",
+  "platform": "generic",
   "html_url": "https://store.com/products/tee",
   "image_urls": ["https://store.com/tee.jpg"]
 }
@@ -170,7 +170,7 @@ With `--platform jsonld`, each line holds the schema.org `Product` or `ProductGr
 - **Images:** `image_urls` and the unified `image_url` and `variant_image_url` columns resolve a relative `image` (`/media/tee.jpg`) against the page's URL; the node's own `image` stays as written.
 - **Variants:** a `ProductGroup` keeps its `hasVariant` Products inside it, each with its own `sku` and `offers` (the unified schema skips entries with neither). Many stores publish a single Product with one offer or a price range instead, so variants are often missing.
 - **Currencies:** pages come from the store's sitemaps, so a store with regional sections (such as vitamix.com's `/ca/en_us/` pages) can give items in several currencies. Each item's price carries its own currency (the offers' `priceCurrency`, and the unified `currency` column).
-- **Fidelity:** a store's JSON-LD is written for search engines, not as a catalog, so it can leave out fields the native platforms have (tags, stock counts, variant options). See [JSON-LD stores](troubleshooting.md#json-ld-stores).
+- **Fidelity:** a store's schema.org data is written for search engines, not as a catalog, so it can leave out fields the native platforms have (tags, stock counts, variant options). See [Generic stores](troubleshooting.md#generic-stores).
 - **XML:** keys that aren't valid element names (such as `@type`) have their invalid characters replaced with `_`.
 
 ## Images
@@ -197,11 +197,11 @@ Supported formats are JPEG, PNG, GIF, WebP, AVIF, HEIC/HEIF, JPEG XL, JPEG 2000,
 
 ## Unified schema
 
-The unified schema has one row per variant and a plain value in every cell (no embedded JSON), so you can sort and filter it in a spreadsheet or load it as a table. CSV and Excel (XLSX) always use it; JSONL, JSON and XML use it with `--schema unified`. The product's columns repeat on each of its variant rows, and a product without variants still gets one row. Every platform shares the same columns, so one file can hold Shopify, WooCommerce, Magento, BigCommerce and JSON-LD items. A column a platform lacks is blank on its rows (empty in CSV and XML, `null` in JSON).
+The unified schema has one row per variant and a plain value in every cell (no embedded JSON), so you can sort and filter it in a spreadsheet or load it as a table. CSV and Excel (XLSX) always use it; JSONL, JSON and XML use it with `--schema unified`. The product's columns repeat on each of its variant rows, and a product without variants still gets one row. Every platform shares the same columns, so one file can hold Shopify, WooCommerce, Magento, BigCommerce and generic items. A column a platform lacks is blank on its rows (empty in CSV and XML, `null` in JSON).
 
-| Column | Shopify | WooCommerce | Magento | BigCommerce | JSON-LD |
+| Column | Shopify | WooCommerce | Magento | BigCommerce | Generic |
 |---|---|---|---|---|---|
-| `platform` | `shopify` | `woocommerce` | `magento` | `bigcommerce` | `jsonld` |
+| `platform` | `shopify` | `woocommerce` | `magento` | `bigcommerce` | `generic` |
 | `kind` | `product` or `collection` (`--collections`) | `product` | `product` | `product` | `product` |
 | `store`, `sku`, `image_count` | yes | yes | yes | yes | yes |
 | `id` | `id` | `id` | `uid` | `entityId` | `productID`, `productGroupID`, `sku` or `@id` |
@@ -221,11 +221,11 @@ The unified schema has one row per variant and a plain value in every cell (no e
 | `currency` | | `currency_code` | the minimum final price's `currency` | the price range's `currencyCode` | the first offer's `priceCurrency` |
 | `min_price`, `max_price` | the lowest and highest variant price (products only) | the price range | the minimum and maximum final price | `priceRange` (else `price`) | the lowest and highest offer price, across variants (an `AggregateOffer`'s `lowPrice` and `highPrice`) |
 | `on_sale`, `is_purchasable` | | yes | | `is_purchasable` (the variant's) | |
-| `average_rating`, `review_count` | | yes; for items from product pages, as for JSON-LD | | `summationOfRatings / numberOfReviews`, to 2 decimals (blank without reviews), and `numberOfReviews` | the `aggregateRating`'s `ratingValue`, out of 5 (one on another `bestRating` scale is converted), and its `reviewCount` or `ratingCount` |
+| `average_rating`, `review_count` | | yes; for items from product pages, as for generic | | `summationOfRatings / numberOfReviews`, to 2 decimals (blank without reviews), and `numberOfReviews` | the `aggregateRating`'s `ratingValue`, out of 5 (one on another `bestRating` scale is converted), and its `reviewCount` or `ratingCount` |
 | `variant_count` | variants | variations | `variants` | `variants` | `hasVariant` entries with `offers` or a `sku`, or the offers in a list of offers |
 | `variant_id` | the variant's ID | the variation's ID | the variant product's `uid` | the variant's `entityId` | the variant's `productID`, `sku` or `@id`; an offer's `sku`, `@id` or `url` |
 | `variant_title` | such as `Red / S` | the variation's attribute values, such as `Red / S` | the variant's option labels, such as `Red / S` | the variant's option values, such as `Red / S` | the variant's `variesBy` values, such as `Red / S`, else its `name`; an offer's `name` |
-| `gtin`, `mpn` | | for items from product pages only, as for JSON-LD | blank: only store-defined custom attributes hold them | the variant's `gtin` (else its `upc`) and `mpn`, else the product's | the variant's (or its offer's) `gtin`, `gtin13`, `gtin12`, `gtin14` or `gtin8` and `mpn`, else the product's (or its offer's; an offer's row doesn't take another offer's) |
+| `gtin`, `mpn` | | for items from product pages only, as for generic | blank: only store-defined custom attributes hold them | the variant's `gtin` (else its `upc`) and `mpn`, else the product's | the variant's (or its offer's) `gtin`, `gtin13`, `gtin12`, `gtin14` or `gtin8` and `mpn`, else the product's (or its offer's; an offer's row doesn't take another offer's) |
 | `option1`-`option3` | the variant's option values | the variation's attribute values, in the product's attribute order | the variant's option labels, in `configurable_options` order | the variant's option values, in `productOptions` order | the variant's `variesBy` values, in `variesBy` order |
 | `price` | the variant's price | `price` | the final price (the variant's, else the product's minimum) | `prices.price` (the variant's, else the product's) | the lowest offer price (the variant's or offer's, else the product's) |
 | `compare_at_price` | the variant's `compare_at_price` | `regular_price`, only when `price` is below it | the regular price, only when `price` is below it | the first of `basePrice` and `retailPrice` (MSRP) that `price` is below | a `ListPrice` or `StrikethroughPrice`, only when `price` is below it |
@@ -240,7 +240,7 @@ The unified schema has one row per variant and a plain value in every cell (no e
 - **WooCommerce variation rows** have the variation's own `sku`, `price`, `compare_at_price` and `available`. If the store refuses the variation listing, they're the product's.
 - **Magento variant rows** have the variant's own `sku`, `price`, `compare_at_price` and `available`. A product without `variants` gets one row with its own.
 - **BigCommerce variant rows** have the variant's own `sku`, `price`, `compare_at_price`, `available` and `is_purchasable`; a variant without its own price has the product's. A product without variant edges gets one row with its own `sku`, price and stock.
-- **JSON-LD variant rows:** a `ProductGroup` gets a row per `hasVariant` Product, with the variant's own `sku`, `price` and `available`; a variant without a price keeps the product's. Entries with neither `offers` nor a `sku`, which some stores use to link the product's other colours, get no row. A Product with a list of offers gets a row per offer, with each offer's `sku`, `price` and `available`. A single `Offer` or an `AggregateOffer` gives one row.
+- **Generic variant rows:** a `ProductGroup` gets a row per `hasVariant` Product, with the variant's own `sku`, `price` and `available`; a variant without a price keeps the product's. Entries with neither `offers` nor a `sku`, which some stores use to link the product's other colours, get no row. A Product with a list of offers gets a row per offer, with each offer's `sku`, `price` and `available`. A single `Offer` or an `AggregateOffer` gives one row.
 - **`gtin` and `mpn`** come from BigCommerce's own fields and from schema.org data. Shopify's `products.json` has no barcodes, WooCommerce's Store API has no GTINs or MPNs, and Magento's storefront GraphQL has them only as custom attributes each store defines and names, which aren't read, so they're blank on those rows (WooCommerce items read from product pages have their JSON-LD's).
 - **Left out:** WooCommerce's `type` (`simple`, `variable`, ...) and descriptive attributes are only in the native schema. So are Magento's `__typename` and option `value_index` codes, BigCommerce's `availabilityV2`, `salePrice` and option `entityId`s, and JSON-LD properties without a column (`color`, `weight`, ...). Without `--images`, the `image_paths` column is left out; with it, the column lists the downloaded files, relative to the images directory.
 - **JSON-LD text:** pages often escape their JSON-LD text, sometimes twice (`&amp;amp;`), so `title`, `vendor`, `categories`, `description` and the variant titles are unescaped until they stop changing; names are put on one line.
@@ -288,14 +288,14 @@ cat output/data/*.jsonl | jq 'select(.platform == "magento") | {name, sku, price
 # BigCommerce: extract product names, SKUs and prices
 cat output/data/*.jsonl | jq 'select(.platform == "bigcommerce") | {name, sku, price: .prices.price.value}'
 
-# JSON-LD: extract product names, pages and offers
-cat output/data/*.jsonl | jq 'select(.platform == "jsonld") | {name, html_url, offers}'
+# Generic: extract product names, pages and offers
+cat output/data/*.jsonl | jq 'select(.platform == "generic") | {name, html_url, offers}'
 
 # Unified schema (--schema unified): the same fields on every platform, a line per variant
 cat output/data/*.jsonl | jq -r '[.platform, .title, .variant_title, .price] | @tsv'
 ```
 
-**With DuckDB**, which reads JSONL and CSV directly. Each run writes a new timestamped file, so a glob over `output/data/` queries every run at once, such as each variant's price over time. Point a query at files of one shape: a JSONL query that reads `product` fails if the glob also matches WooCommerce, Magento, BigCommerce, JSON-LD or unified files.
+**With DuckDB**, which reads JSONL and CSV directly. Each run writes a new timestamped file, so a glob over `output/data/` queries every run at once, such as each variant's price over time. Point a query at files of one shape: a JSONL query that reads `product` fails if the glob also matches WooCommerce, Magento, BigCommerce, generic or unified files.
 
 ```bash
 # Native JSONL from Shopify runs
@@ -319,7 +319,7 @@ with open("output/data/shopify_spider_2024-01-15T10-30-00+00-00.jsonl", encoding
     for line in f:
         item = json.loads(line)
         print(item["product"]["title"])  # Shopify
-        # print(item["name"])            # WooCommerce, Magento, BigCommerce or JSON-LD
+        # print(item["name"])            # WooCommerce, Magento, BigCommerce or generic
 ```
 
 **With pandas:**

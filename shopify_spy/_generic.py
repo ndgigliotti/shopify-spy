@@ -2,7 +2,7 @@
 pages that the store's sitemaps list.
 
 A store whose pages have no Product data (it renders products in the browser, say)
-raises JsonLdError after ``PROBE_PAGES`` pages, so it reports ``error`` with the
+raises GenericError after ``PROBE_PAGES`` pages, so it reports ``error`` with the
 reason rather than ``empty``; ``ctx.no_item_reason`` holds that reason for the
 runner in case ``--bail`` stops the store first.
 """
@@ -26,7 +26,7 @@ from shopify_spy._session import Emit, RequestFailed, StoreContext
 from shopify_spy._utils import canonicalize_url, hostname
 from shopify_spy._woocommerce import FETCH_CONCURRENCY, GONE, _site
 
-__all__ = ["JsonLdError", "run"]
+__all__ = ["GenericError", "run"]
 
 logger = logging.getLogger("shopify_spy")
 
@@ -46,7 +46,7 @@ _TAXONOMY_FRAGMENTS = (
 )
 
 
-class JsonLdError(Exception):
+class GenericError(Exception):
     """The store's sitemaps listed pages, but none gave a schema.org Product; no
     sitemap could be found; or the sitemaps to read for pages couldn't be read."""
 
@@ -62,16 +62,16 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
     if not listing.roots:
         await pages.probe_others()
         if listing.answered:
-            raise JsonLdError(f"no sitemap found at {', '.join(listing.tried)}")
+            raise GenericError(f"no sitemap found at {', '.join(listing.tried)}")
         return False  # diagnose() reports the sitemaps' 404, 403 or robots.txt
     if pages.counts.checked == 0:
         if listing.unread:
             # diagnose() would call it empty: the sitemap index's 2xx is a success
             await pages.probe_others()
-            raise JsonLdError(f"no page listed; unreadable sitemaps: {', '.join(listing.unread)}")
+            raise GenericError(f"no page listed; unreadable sitemaps: {', '.join(listing.unread)}")
         return listing.complete  # no on-site page listed: empty
     await pages.probe_others()
-    raise JsonLdError(f"{pages.reason()}; {pages.stopped_by()}")
+    raise GenericError(f"{pages.reason()}; {pages.stopped_by()}")
 
 
 def _is_product_sitemap(url: str) -> bool:
@@ -392,7 +392,7 @@ async def _probe_others(ctx: StoreContext) -> None:
 
 def _item(node: dict[str, Any], response: Response, images: bool) -> dict[str, Any]:
     node["store"] = urllib.parse.urlsplit(response.url).netloc
-    node["platform"] = "jsonld"
+    node["platform"] = "generic"
     node["html_url"] = response.url.split("#", 1)[0]
     node["image_urls"] = jsonld.product_image_urls(node, response.url) if images else []
     return node

@@ -1,4 +1,4 @@
-"""End-to-end jsonld platform: the real CLI against local stores whose sitemaps list
+"""End-to-end generic platform: the real CLI against local stores whose sitemaps list
 product pages with schema.org Product JSON-LD (#93).
 
 Run with: uv run pytest -m e2e
@@ -218,7 +218,7 @@ def _scrape(tmp_path, urls):
             "scrape",
             *urls,
             "--platform",
-            "jsonld",
+            "generic",
             "--format",
             "csv",
             "--output",
@@ -252,7 +252,7 @@ EXPECTED = {
 }
 
 
-def test_cli_scrapes_jsonld_stores(tmp_path, stores):
+def test_cli_scrapes_generic_stores(tmp_path, stores):
     started = {scenario: stores(scenario) for scenario in EXPECTED}
     urls = {scenario: url for scenario, (url, _) in started.items()}
     hits = {scenario: log for scenario, (_, log) in started.items()}
@@ -274,7 +274,7 @@ def test_cli_scrapes_jsonld_stores(tmp_path, stores):
 
     # A row per simple product, per offer in a list, and per hasVariant Product
     assert len(rows) == 1 + 2 + 2 + 2 + 2 + 2
-    assert {r["platform"] for r in rows} == {"jsonld"}
+    assert {r["platform"] for r in rows} == {"generic"}
     assert {r["kind"] for r in rows} == {"product"}
     by_store: dict = {}
     for row in rows:

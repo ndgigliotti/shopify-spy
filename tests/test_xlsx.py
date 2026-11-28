@@ -335,9 +335,9 @@ def test_typed_columns_are_unified_columns():
 
 
 def test_gtin_and_mpn_stay_text(tmp_path):
-    from .test_export import JSONLD_PRODUCT
+    from .test_export import GENERIC_PRODUCT
 
     path = tmp_path / "out.xlsx"
-    write_items([JSONLD_PRODUCT | {"gtin13": "0012345678905", "mpn": 12345}], path)
+    write_items([GENERIC_PRODUCT | {"gtin13": "0012345678905", "mpn": 12345}], path)
     (row,) = read_rows(path)
     assert (row["gtin"], row["mpn"]) == ("0012345678905", "12345")

@@ -22,8 +22,9 @@ spy scrape --platform magento https://www.example.com
 
 # Scrape a BigCommerce store
 spy scrape --platform bigcommerce https://www.example.com
-# Any other store, from its product pages' JSON-LD (one request per product)
-spy scrape --platform jsonld https://www.example.com --limit 100
+
+# Any other store, from its product pages' schema.org data (one request per product)
+spy scrape --platform generic https://www.example.com --limit 100
 
 # Several stores, from arguments or a file
 spy scrape https://store1.com https://store2.com
@@ -43,7 +44,7 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 
 - `URL...`: one or more store URLs (optional with `--url-file`).
 - `--url-file, -f FILE`: a file of URLs, one per line; lines starting with `#` are comments.
-- `--platform, -p PLATFORM`: `shopify` (the default), `woocommerce`, `magento`, `bigcommerce` or `jsonld`. `jsonld` reads the schema.org Product data on the product pages a store's sitemaps list, for platforms without their own adapter. It is a best-effort fallback at one request per product; see [JSON-LD stores](troubleshooting.md#json-ld-stores).
+- `--platform, -p PLATFORM`: `shopify` (the default), `woocommerce`, `magento`, `bigcommerce` or `generic`. The first four read the platform's own API. `generic` is for any other store (Wix, Squarespace, a custom site): it reads the schema.org Product data (JSON-LD or microdata) on each product page a store's sitemaps list. It is a best-effort fallback at one request per product, so it's slow; use `--limit` for a sample, and see [Generic stores](troubleshooting.md#generic-stores). A store that fails because it looks like Shopify, WooCommerce or Magento gets a hint naming that platform, in the end-of-run summary when nothing was scraped and in the library's `StoreResult.hint`.
 - `--products / --no-products`: scrape products (default: yes; Shopify only).
 - `--collections / --no-collections`: scrape collections (default: no; Shopify only).
 - `--images / --no-images`: download product images into `<output>/images/full/` (default: no). Downloads from one host are at least `--image-delay` apart while throttling. See [Images](output.md#images).
@@ -58,7 +59,7 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 
 ### Network
 
-- `--concurrent INT`: concurrent requests per host (default: 16).
+- `--concurrent INT`: the most requests in flight to one host at once (default: 16). While throttling, `--min-delay` spaces requests to one host, so they go out about one at a time; this caps how many can be in flight when responses are slow or with `--no-throttle`.
 - `--max-stores INT`: stores scraped at once (default: 16).
 - `--throttle / --no-throttle`: auto-throttle requests (default: yes). `--no-throttle` drops the adaptive delay, `--min-delay` and `--image-delay`, but a robots.txt `Crawl-delay` and `Retry-After` pauses still apply. See [Rate limiting](troubleshooting.md#rate-limiting).
 - `--min-delay SECONDS`: the minimum gap between page and API requests to one host while throttling (default: 1, at most 1 request per second per host). It's a strict gap, not an average: requests go out 1 to 1.5 times the minimum apart (more if the store is slow) and never bunch up to catch up.
@@ -99,7 +100,7 @@ A config file looks like this, and `spy init` writes one to start from:
 ```yaml
 # shopify-spy.yaml
 scrape:
-  platform: shopify   # Platform: shopify, woocommerce, magento, bigcommerce, jsonld
+  platform: shopify   # Platform: shopify, woocommerce, magento, bigcommerce, generic
   products: true      # Scrape product data (Shopify only)
   collections: false  # Scrape collection data (Shopify only)
   images: false       # Download product images

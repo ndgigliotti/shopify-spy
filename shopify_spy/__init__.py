@@ -31,7 +31,7 @@ from shopify_spy._results import RunResult, ScrapeFailed, StoreResult, StoreStat
 from shopify_spy._summary import ItemSummary, summarize
 from shopify_spy._types import (
     BigCommerceProductItem,
-    JsonLdProductItem,
+    GenericProductItem,
     MagentoProductItem,
     ShopifyCollectionItem,
     ShopifyProductItem,
@@ -47,7 +47,7 @@ __all__ = [
     "BigCommerceProductItem",
     "ItemSummary",
     "ItemWriter",
-    "JsonLdProductItem",
+    "GenericProductItem",
     "MagentoProductItem",
     "RunResult",
     "ScrapeFailed",
