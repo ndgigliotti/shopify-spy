@@ -455,8 +455,10 @@ class AsyncScrapeRun(_BaseRun):
 
     async def first(self) -> dict[str, Any]:
         """Return the first item and stop the run; raise ScrapeFailed if there is none."""
+        # Claimed outside the try: a run another consumer is iterating isn't closed
+        items = aiter(self)
         try:
-            async for item in self:
+            async for item in items:
                 return item
         finally:
             await self.aclose()

@@ -41,7 +41,7 @@ With nothing to install, an agent can learn a store's item shape and then write 
 
 ## How a run works
 
-`scrape()` returns a run without fetching anything; stores are scraped while something iterates it, one item at a time. Items aren't kept, so memory stays flat however big the catalog; a consumer that stops pulling pauses the fetching after a small buffer, and a run can be iterated only once (call `scrape()` again for another pass).
+`scrape()` returns a run without fetching anything; stores are scraped while something iterates it, one item at a time. Items aren't kept, so memory stays flat however big the catalog; a consumer that stops pulling pauses the fetching after a small buffer, and a run can be iterated only once (call `scrape()` again for another pass). A second attempt, including `first()` or `collect()`, raises `RuntimeError` and leaves the first iteration running.
 
 - Iterating the run yourself, or passing it to `write_items()`, streams. `run.collect()` and `list(run)` hold every item in memory.
 - `run.result` (the per-store results) is available once iteration ends, and `run.stores` gives a snapshot mid-run.

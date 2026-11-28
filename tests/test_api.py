@@ -865,3 +865,25 @@ async def test_aclose_after_the_run_finished_drops_buffered_items():
         assert [item async for item in items] == []
     assert run.result.stores[0].finish_reason == "finished"
 
+
+async def test_rejected_second_consumer_leaves_the_run_going():
+    async with asyncio.timeout(5):
+        run = spy.scrape_async(STORE, fetcher_factory=fake(ok_routes(n=3)), **FAST)
+        items = aiter(run)
+        await anext(items)
+        with pytest.raises(RuntimeError, match="once"):
+            await run.first()
+        with pytest.raises(RuntimeError, match="once"):
+            await run.collect()
+        assert len([item async for item in items]) == 2
+
+
+def test_rejected_second_consumer_leaves_the_sync_run_going():
+    run = spy.scrape(STORE, fetcher_factory=fake(ok_routes(n=3)), **FAST)
+    items = iter(run)
+    next(items)
+    with pytest.raises(RuntimeError, match="once"):
+        run.first()
+    with pytest.raises(RuntimeError, match="once"):
+        run.collect()
+    assert len(list(items)) == 2
