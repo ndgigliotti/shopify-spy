@@ -17,6 +17,8 @@ output/
 
 File names start with the platform and a UTC timestamp. `data/` holds the items, `status/` holds a [status file](troubleshooting.md#the-status-file) for each run, and `images/` holds the downloads from `--images`. `--peek` writes none of these.
 
+XML files declare `UTF-8`. Characters XML 1.0 can't hold, such as control characters other than tab and newlines, become U+FFFD (`�`) there; the other formats keep them.
+
 ## Schemas
 
 - **`native`** (the default for JSONL, JSON and XML): each item as the store's API returned it, described under [Shopify items](#shopify-items), [WooCommerce items](#woocommerce-items), [Magento items](#magento-items), [BigCommerce items](#bigcommerce-items), [generic items](#generic-items) and [Squarespace items](#squarespace-items). It keeps every field.

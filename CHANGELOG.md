@@ -150,6 +150,16 @@
   nothing, and a store's hint replaces the status hint it would otherwise share
   with other stores. The wrong-platform hint now reads the same in the CLI and the
   library (`looks like WooCommerce; use the woocommerce platform`).
+- Appending to a CSV with `fields` in another order than the file's header wrote
+  values under the wrong columns; rows now follow the header's order, and `fields`
+  naming other columns raises `ValueError` before anything is written.
+- Appending to a JSONL or CSV file whose last line had no newline ran the first new
+  record on from it; a newline is written first.
+- XML files declare `encoding="UTF-8"` instead of Scrapy's `utf8`, which
+  ElementTree and other parsers reject once the file holds non-ASCII text. This is
+  the one byte-level change from the Scrapy-era XML.
+- Characters XML 1.0 forbids (control characters other than tab and newlines,
+  U+FFFE, U+FFFF and lone surrogates) made XML files invalid; they become U+FFFD.
 
 ## 0.5.1
 
