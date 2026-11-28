@@ -565,7 +565,7 @@ def _both(cafile, capath) -> dict:
     return {"cainfo": cafile, "capath": capath, "proxy_cainfo": cafile, "proxy_capath": capath}
 
 
-async def test_curl_session_reads_the_ca_file_when_it_opens(ca_env, tmp_path):
+async def test_curl_fetcher_reads_the_ca_file_on_entry(ca_env, tmp_path):
     """Set after import; the file stands in as the unused directory."""
     cafile = str(tmp_path / "file.pem")
     (tmp_path / "file.pem").write_text("")
@@ -576,13 +576,27 @@ async def test_curl_session_reads_the_ca_file_when_it_opens(ca_env, tmp_path):
     assert await _curl_ca() == _both(cafile, str(tmp_path))
 
 
-async def test_curl_session_reads_the_ca_directory_when_it_opens(ca_env, tmp_path):
+async def test_curl_fetcher_reads_the_ca_directory_on_entry(ca_env, tmp_path):
     """A hashed certificate from the directory stands in as the unused file."""
     (tmp_path / "ca.pem").write_text("-----BEGIN CERTIFICATE-----\n")
     (tmp_path / "0123abcd.r0").write_text("-----BEGIN X509 CRL-----\n")
     (tmp_path / "89abcdef.0").write_text("-----BEGIN CERTIFICATE-----\n")
     ca_env.setenv("SSL_CERT_DIR", str(tmp_path))
     assert await _curl_ca() == _both(str(tmp_path / "89abcdef.0"), str(tmp_path))
+
+
+async def test_curl_sessions_opened_later_keep_the_ca_read_on_entry(ca_env, tmp_path):
+    """As httpx's one client does, whatever the environment says mid-run."""
+    from curl_cffi import CurlOpt
+
+    for name in ("a.pem", "b.pem"):
+        (tmp_path / name).write_text("")
+    ca_env.setenv("SSL_CERT_FILE", str(tmp_path / "a.pem"))
+    async with CurlCffiFetcher("chrome") as fetcher:
+        ca_env.setenv("SSL_CERT_FILE", str(tmp_path / "b.pem"))
+        for profile, raw in (("chrome", False), ("safari", False), ("chrome", True)):
+            options = fetcher._session(profile, raw).curl_options
+            assert options[CurlOpt.CAINFO] == str(tmp_path / "a.pem")
 
 
 @pytest.mark.parametrize("kwargs", [{}, {"trust_env": False}])

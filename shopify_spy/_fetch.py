@@ -679,7 +679,7 @@ class CurlCffiFetcher:
     It keeps HttpxFetcher's contract: no redirects followed, no cookies kept, the
     MAX_SIZE cap, the same errors, a total deadline on the loop clock, and proxies
     chosen by httpx's rules (an explicit ``proxy`` replaces the environment's).
-    CAs come from ca_locations, read when each session opens.
+    CAs come from ca_locations, read on entry, as in HttpxFetcher.
     Each request uses ``Request.identity.impersonate``, or ``impersonate`` when that
     is None. The profile brings its own user agent and headers, so the identity's
     are never applied; ``Request.headers`` override the profile's.
@@ -704,6 +704,7 @@ class CurlCffiFetcher:
         # one. Raw sessions read bodies libcurl can't decode; all open on first use
         self._sessions: dict[tuple[str, bool], Any] = {}
         self._curls: list[Any] = []
+        self._ca_options: dict[Any, Any] = {}
         self._entered = False
 
     async def __aenter__(self) -> Self:
@@ -712,6 +713,7 @@ class CurlCffiFetcher:
         # Installed on every entry: a caller's catch_warnings may have reset the
         # filters since. Never removed, since that could drop someone else's entry
         warnings.filterwarnings("ignore", message=_HTTPS_PROXY_WARNING, category=CurlCffiWarning)
+        self._ca_options = _curl_ca_options(self._trust_env) if self._verify else {}
         self._entered = True
         return self
 
@@ -751,7 +753,7 @@ class CurlCffiFetcher:
             curl_options={
                 CurlOpt.NOPROXY: "",
                 **({CurlOpt.HTTP_CONTENT_DECODING: 0} if raw else {}),
-                **(_curl_ca_options(self._trust_env) if self._verify else {}),
+                **self._ca_options,
             },
         )
         return session
