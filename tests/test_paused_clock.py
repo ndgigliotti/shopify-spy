@@ -47,7 +47,7 @@ def test_consumer_pauses_do_not_cause_request_timeouts():
     timeouts = []
 
     async def slow(request):
-        # Enforce request.timeout like HttpxFetcher does
+        # Enforce request.timeout like CurlCffiFetcher does
         try:
             async with asyncio.timeout(request.timeout):
                 await asyncio.sleep(0.2)

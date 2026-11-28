@@ -1,4 +1,4 @@
-"""CurlCffiFetcher's contract against local servers: the same as HttpxFetcher's.
+"""CurlCffiFetcher's contract against local servers, with a browser profile and plain.
 
 A local server can't check the TLS fingerprint, only what the fetcher does with
 redirects, cookies, sizes, encodings, deadlines, errors and proxies.
@@ -33,7 +33,6 @@ from shopify_spy._fetch import (
     FetchTimeout,
     FetchTLSError,
     FetchTooLarge,
-    HttpxFetcher,
     Identity,
     Request,
 )
@@ -269,9 +268,7 @@ def socks_proxy():
     srv.server_close()
 
 
-def _fetcher(transport: str, **kwargs):
-    if transport == "httpx":
-        return HttpxFetcher(**kwargs)
+def _fetcher(transport: str, **kwargs) -> CurlCffiFetcher:
     return CurlCffiFetcher("chrome" if transport == "profile" else None, **kwargs)
 
 
@@ -500,7 +497,7 @@ def test_paused_clock_excludes_time_outside_the_loop(server):
     [
         ("/gzip", PAYLOAD),
         ("/br", b"hello"),
-        ("/utf-8", b"as sent"),  # unknown token: passed through, as HttpxFetcher does
+        ("/utf-8", b"as sent"),  # unknown token: passed through, as Scrapy did
         ("/gzip-unknown", PAYLOAD),
     ],
 )
@@ -605,7 +602,7 @@ def _ca_dir(directory, pem: bytes) -> str:
     return str(directory)
 
 
-@pytest.mark.parametrize("transport", ["profile", "plain", "httpx"])
+@pytest.mark.parametrize("transport", ["profile", "plain"])
 @pytest.mark.parametrize("variable", CA_VARIABLES)
 async def test_ca_from_the_environment_is_trusted(
     tls, tls_server, tmp_path, ca_env, transport, variable
@@ -618,7 +615,7 @@ async def test_ca_from_the_environment_is_trusted(
     assert (response.status, response.body) == (200, b"ok")
 
 
-@pytest.mark.parametrize("transport", ["profile", "plain", "httpx"])
+@pytest.mark.parametrize("transport", ["profile", "plain"])
 async def test_ca_file_comes_first(tls, tls_server, tmp_path, ca_env, transport):
     (tmp_path / "other.pem").write_bytes(trustme.CA().cert_pem.bytes())
     ca_env.setenv("SSL_CERT_FILE", str(tmp_path / "other.pem"))
@@ -629,7 +626,7 @@ async def test_ca_file_comes_first(tls, tls_server, tmp_path, ca_env, transport)
     assert (await fetch(f"{tls_server}/ok", transport)).status == 200
 
 
-@pytest.mark.parametrize("transport", ["profile", "plain", "httpx"])
+@pytest.mark.parametrize("transport", ["profile", "plain"])
 async def test_ca_file_and_directory_are_both_trusted(tls, tls_server, tmp_path, ca_env, transport):
     pem = open(tls.ca, "rb").read()
     (tmp_path / "other.pem").write_bytes(trustme.CA().cert_pem.bytes())
@@ -638,7 +635,7 @@ async def test_ca_file_and_directory_are_both_trusted(tls, tls_server, tmp_path,
     assert (await fetch(f"{tls_server}/ok", transport)).status == 200
 
 
-@pytest.mark.parametrize("transport", ["profile", "plain", "httpx"])
+@pytest.mark.parametrize("transport", ["profile", "plain"])
 @pytest.mark.parametrize("variable", ["SSL_CERT_FILE", "SSL_CERT_DIR"])
 async def test_ca_from_the_environment_replaces_the_default(
     tls_server, tmp_path, ca_env, transport, variable
@@ -658,7 +655,7 @@ async def test_ca_from_the_environment_replaces_the_default(
     assert (await fetch(f"{tls_server}/ok", transport, verify=False)).status == 200
 
 
-@pytest.mark.parametrize("transport", ["profile", "plain", "httpx"])
+@pytest.mark.parametrize("transport", ["profile", "plain"])
 @pytest.mark.parametrize("variable", ["REQUESTS_CA_BUNDLE", "SSL_CERT_DIR"])
 async def test_unusable_ca_location_fails_the_same_way(
     tls_server, tmp_path, ca_env, transport, variable
@@ -670,7 +667,7 @@ async def test_unusable_ca_location_fails_the_same_way(
         await fetch(f"{tls_server}/ok", transport)
 
 
-@pytest.mark.parametrize("transport", ["profile", "plain", "httpx"])
+@pytest.mark.parametrize("transport", ["profile", "plain"])
 async def test_trust_env_off_ignores_the_ca_environment(
     tls, tls_server, tmp_path, ca_env, transport
 ):
@@ -699,7 +696,7 @@ async def test_explicit_proxy_replaces_the_environment(
 @pytest.mark.parametrize("transport", ["profile", "plain"])
 async def test_environment_proxy_is_used(server, clean_proxy_env, recording_proxy, transport):
     proxy = recording_proxy()
-    # Uppercase only: libcurl itself ignores HTTP_PROXY, httpx doesn't
+    # Uppercase only: libcurl itself ignores HTTP_PROXY, env_proxy_for doesn't
     clean_proxy_env.setenv("HTTP_PROXY", proxy.url)
     clean_proxy_env.setenv("NO_PROXY", "other.example")
     response = await fetch(f"{server.url}/echo", transport)
@@ -739,7 +736,7 @@ async def test_https_with_bypassed_environment_proxy(tls_server, clean_proxy_env
 async def test_https_proxy_receives_connect(clean_proxy_env, ca_env, tls):
     httpd = _serve(_RecordingProxyHandler, tls=tls, records=[])
     proxy = f"https://127.0.0.1:{httpd.server_address[1]}"
-    # The proxy's certificate is checked even with verify=False, as in httpx
+    # The proxy's certificate is checked even with verify=False
     ca_env.setenv("SSL_CERT_FILE", tls.ca)
     try:
         with pytest.raises(FetchConnectionError) as info:  # the proxy's 502 to CONNECT
@@ -751,7 +748,7 @@ async def test_https_proxy_receives_connect(clean_proxy_env, ca_env, tls):
         httpd.server_close()
 
 
-@pytest.mark.parametrize("transport", ["profile", "plain", "httpx"])
+@pytest.mark.parametrize("transport", ["profile", "plain"])
 @pytest.mark.parametrize("via", ["proxy", "HTTPS_PROXY"])
 async def test_https_proxy_is_checked_against_the_ca_environment(
     clean_proxy_env, ca_env, tls, transport, via
@@ -764,8 +761,6 @@ async def test_https_proxy_is_checked_against_the_ca_environment(
     try:
         with pytest.raises(FetchTLSError):
             await fetch("https://store.example:8443/", transport, **kwargs)
-        # Not SSL_CERT_FILE: OpenSSL's defaults, which httpcore loads for a proxy
-        # without a context of its own, read that one
         ca_env.setenv("REQUESTS_CA_BUNDLE", tls.ca)
         with pytest.raises(FetchConnectionError) as info:  # the proxy's 502 to CONNECT
             await fetch("https://store.example:8443/", transport, **kwargs)

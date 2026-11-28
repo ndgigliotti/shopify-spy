@@ -76,7 +76,7 @@ class ScrapeOptions(BaseModel):
     respect_robots_txt: bool = True
     verify_tls: bool = True
     proxy: str | None = Field(default=None, repr=False)
-    # None: DEFAULT_IMPERSONATE, or httpx when user_agent is set
+    # None: DEFAULT_IMPERSONATE, or impersonation off when user_agent is set
     impersonate: str | None = None
     rotate: bool = True
     max_concurrent_stores: int | None = Field(default=16, ge=1)

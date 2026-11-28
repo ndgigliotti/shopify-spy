@@ -17,8 +17,8 @@ from collections.abc import Awaitable, Callable, Sequence
 IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 Resolver = Callable[[str], Awaitable[list[IPAddress]]]
 
-# Shorthand IPv4 (127.1, 2130706433, 0x7f.0.0.1): httpx passes these on as names,
-# and the OS resolver or a proxy turns them into addresses
+# Shorthand IPv4 (127.1, 2130706433, 0x7f.0.0.1): curl, the OS resolver or a proxy
+# may turn these into addresses
 _IPV4_SHORTHAND = re.compile(r"[0-9][0-9a-fx.]*", re.IGNORECASE)
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
