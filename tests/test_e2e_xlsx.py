@@ -16,7 +16,7 @@ import pytest
 
 from shopify_spy._flatten import COLUMNS
 
-from .test_e2e_diagnosis import _free_port
+from .test_e2e_diagnosis import NO_THROTTLE_FLOORS, _free_port
 
 pytestmark = pytest.mark.e2e
 
@@ -96,7 +96,7 @@ def store():
 def _scrape_xlsx(tmp_path, url, *args):
     result = subprocess.run(
         [sys.executable, "-m", "shopify_spy.cli", "scrape", url, "-F", "xlsx",
-         "--output", str(tmp_path), "--quiet", *args],
+         "--output", str(tmp_path), "--quiet", *NO_THROTTLE_FLOORS, *args],
         capture_output=True, text=True, timeout=120, cwd=tmp_path,
     )  # fmt: skip
     assert result.returncode == 0, result.stdout + result.stderr
@@ -156,7 +156,7 @@ def test_shopify_store_to_xlsx(tmp_path, store):
 def test_shopify_store_to_csv_has_the_price_range(tmp_path, store):
     result = subprocess.run(
         [sys.executable, "-m", "shopify_spy.cli", "scrape", store, "-F", "csv",
-         "--output", str(tmp_path), "--quiet"],
+         "--output", str(tmp_path), "--quiet", *NO_THROTTLE_FLOORS],
         capture_output=True, text=True, timeout=120, cwd=tmp_path,
     )  # fmt: skip
     assert result.returncode == 0, result.stdout + result.stderr
