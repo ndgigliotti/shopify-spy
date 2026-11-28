@@ -155,4 +155,3 @@ spy scrape --user-agent 'MyBot/1.0 (+https://example.com)' https://www.example.c
 - `--user-agent TEXT` (`network.user_agent`, `user_agent=`) is the only way to send plain requests: they go through httpx with exactly that User-Agent, never switched, so it can't be combined with `--impersonate`. Either flag replaces the other's config-file setting for that run.
 - robots.txt and its `Crawl-delay`, throttling (`--min-delay`, `--image-delay`), `Retry-After`, `--concurrent`, `--proxy`, `--insecure` and the [non-public address check](troubleshooting.md#refused-requests-to-non-public-addresses) work the same on both transports.
 - A custom certificate authority, such as a company proxy's, is trusted on both transports through `SSL_CERT_FILE`. curl_cffi doesn't read `SSL_CERT_DIR`, so a CA set only there works with `--user-agent` alone.
-
