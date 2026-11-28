@@ -37,10 +37,18 @@ from shopify_spy._export import (
     unified_records,
     write_status,
 )
-from shopify_spy._fetch import FetcherFactory, check_proxy_support, validate_proxy
+from shopify_spy._fetch import (
+    DEFAULT_IMPERSONATE,
+    IMPERSONATE_PROFILES,
+    FetcherFactory,
+    ca_locations,
+    check_proxy_support,
+    validate_impersonate,
+    validate_proxy,
+)
 from shopify_spy._flatten import default_columns
 from shopify_spy._results import _PLATFORM_NAMES, RunResult, StoreResult, StoreStatus
-from shopify_spy._utils import normalize_url, read_url_file, split_valid_urls
+from shopify_spy._utils import blank_to_none, normalize_url, read_url_file, split_valid_urls
 from shopify_spy._xlsx import require_xlsxwriter
 
 if TYPE_CHECKING:
@@ -189,7 +197,8 @@ SCRAPE_EPILOG = "\n\n".join(
         "--peek writes nothing.",
         "Exit status: 0 when any store produced items (failed stores are listed); 1 when "
         "none did, the output couldn't be written, or the input was invalid (no or "
-        "invalid URLs, a bad --proxy, --verbose with --quiet, a missing excel extra); 2 "
+        "invalid URLs, a bad --proxy or --impersonate, --verbose with --quiet, a missing "
+        "excel extra, --impersonate with --user-agent); 2 "
         "for a usage error such as an unknown option.",
         "Config: without --config, ./shopify-spy.yaml or else "
         "~/.config/shopify-spy/config.yaml is read if it exists, and its values replace "
@@ -388,8 +397,32 @@ def scrape(
         typer.Option(
             "--user-agent",
             "-A",
-            help="Fixed User-Agent header, never swapped (default: a random browser UA "
-            "per store, swapped after a 403 or 429).",
+            help="Fixed User-Agent header, never swapped; turns impersonation off "
+            "(requests go through httpx). Can't be combined with --impersonate.",
+            rich_help_panel=NETWORK_PANEL,
+        ),
+    ] = None,
+    impersonate: Annotated[
+        str | None,
+        typer.Option(
+            "--impersonate",
+            "-I",
+            metavar="BROWSER",
+            help="Browser profile to start with: requests use that browser's TLS and "
+            "HTTP/2 settings and headers, and a 403 or 429 switches the store to the next "
+            f"of {', '.join(IMPERSONATE_PROFILES)} (default: {DEFAULT_IMPERSONATE}). Any "
+            "curl_cffi target, e.g. chrome150.",
+            rich_help_panel=NETWORK_PANEL,
+        ),
+    ] = None,
+    rotate: Annotated[
+        bool | None,
+        typer.Option(
+            "--rotate/--no-rotate",
+            help="After a 403 or 429, retry with another browser profile, once per "
+            "refusal and only after the usual backoff; "
+            "--no-rotate keeps one identity for the whole run "
+            f"(default: {_on_off(_DEFAULTS.network.rotate)}).",
             rich_help_panel=NETWORK_PANEL,
         ),
     ] = None,
@@ -477,6 +510,8 @@ def scrape(
         image_delay=image_delay,
         limit=limit,
         user_agent=user_agent,
+        impersonate=impersonate,
+        rotate=rotate,
         ignore_robots=ignore_robots,
         bail=bail,
         insecure=insecure,
@@ -545,8 +580,24 @@ def _check_options(config: Config, peek: bool) -> None:
     schema_for(config.output.format, config.output.schema_)
     if config.output.format == "xlsx" and not peek:
         require_xlsxwriter()
+    if config.network.impersonate is not None:
+        _check_impersonate(config.network.impersonate, config.network.user_agent)
     if FETCHER_FACTORY is None:
         check_proxy_support(config.network.proxy)
+        if config.network.verify_tls:
+            ca_locations()  # a bad CA variable fails here, not once the run is under way
+
+
+def _check_impersonate(target: str, user_agent: str | None) -> None:
+    if user_agent is not None:
+        raise ValueError(
+            "--impersonate sets the user agent from the browser profile, so it can't be "
+            "combined with --user-agent, which turns impersonation off; drop one (or, in "
+            "the config file, network.impersonate or network.user_agent)"
+        )
+    # A test transport ignores the profile, as the library does with fetcher_factory
+    if FETCHER_FACTORY is None:
+        validate_impersonate(target)
 
 
 @app.command(cls=_HelpCommand)
@@ -591,6 +642,8 @@ def apply_cli_overrides(
     throttle: bool | None,
     limit: int | None,
     user_agent: str | None,
+    impersonate: str | None = None,
+    rotate: bool | None = None,
     ignore_robots: bool = False,
     bail: int | None = None,
     insecure: bool = False,
@@ -600,6 +653,7 @@ def apply_cli_overrides(
     image_delay: float | None = None,
 ) -> Config:
     """Apply CLI argument overrides to config. ``None`` keeps the config value."""
+    user_agent = blank_to_none(user_agent)
     scrape_dict = config.scrape.model_dump() | _given(
         platform=platform,
         products=products,
@@ -617,7 +671,14 @@ def apply_cli_overrides(
         max_concurrent_stores=max_stores,
         user_agent=user_agent,
         proxy=proxy,
+        impersonate=impersonate,
+        rotate=rotate,
     )
+    # The two pick the transport, so one given here replaces the config file's other
+    if user_agent is not None and impersonate is None:
+        network_dict["impersonate"] = None
+    if impersonate is not None and user_agent is None:
+        network_dict["user_agent"] = None
     if ignore_robots:
         network_dict["respect_robots_txt"] = False
     if insecure:
@@ -991,7 +1052,8 @@ def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
     if StoreStatus.tls_error in present:
         hints.append(
             "TLS certificate verification failed. "
-            "Retry with [bold]--insecure[/bold] to skip verification."
+            "Retry with [bold]--insecure[/bold] to skip verification, or behind a "
+            "company proxy point SSL_CERT_FILE or SSL_CERT_DIR at its CA."
         )
     if StoreStatus.no_response in present:
         hints.append("No responses received. Check the URL and your network connection.")

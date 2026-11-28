@@ -414,7 +414,7 @@ def test_apply_cli_overrides_none_values():
     assert overridden.scrape.limit is None
     assert overridden.output.dir == Path("./output")
     assert overridden.throttle.enabled is True
-    assert overridden.network.user_agent is None  # random browser UA
+    assert overridden.network.user_agent is None  # browser profiles
 
 
 def test_apply_cli_overrides_format():
@@ -462,7 +462,7 @@ def test_invalid_proxy_flag_is_a_clean_redacted_error(cli):
     assert "secret" not in run.stderr + run.stdout
 
 
-def test_proxy_flag_reaches_library(cli, monkeypatch):
+def _seen_kwargs(monkeypatch) -> dict:
     seen = {}
     real = cli_module.scrape_async
 
@@ -471,8 +471,135 @@ def test_proxy_flag_reaches_library(cli, monkeypatch):
         return real(urls, **kwargs)
 
     monkeypatch.setattr(cli_module, "scrape_async", spy_scrape)
+    return seen
+
+
+def test_proxy_flag_reaches_library(cli, monkeypatch):
+    seen = _seen_kwargs(monkeypatch)
     cli(None, "shop.test", "--proxy", "http://u:p@gw:8000")
     assert seen["proxy"] == "http://u:p@gw:8000"
+
+
+def test_impersonate_flag_overrides_config():
+    config = Config(network={"impersonate": "firefox"})
+    assert _overrides(config).to_kwargs()["impersonate"] == "firefox"
+    assert _overrides(config, impersonate="chrome").to_kwargs()["impersonate"] == "chrome"
+    assert _overrides().to_kwargs()["impersonate"] is None
+
+
+def test_impersonate_from_flag_and_config_reaches_library(cli, monkeypatch, tmp_path):
+    seen = _seen_kwargs(monkeypatch)
+    cli(shop("shop.test", 1), "shop.test", "--impersonate", "chrome")
+    assert seen["impersonate"] == "chrome"
+
+    seen.clear()
+    cli(shop("shop.test", 1), "shop.test", "-I", "firefox")
+    assert seen["impersonate"] == "firefox"
+
+    seen.clear()
+    config_file = tmp_path / "spy.yaml"
+    config_file.write_text("network:\n  impersonate: chrome\n")
+    cli(shop("shop.test", 1), "shop.test", "-c", str(config_file))
+    assert seen["impersonate"] == "chrome"
+
+
+def _scrape_without_fake(*args: str):
+    """Run spy scrape on the real transport; these runs must exit before any request."""
+    result = runner.invoke(app, ["scrape", "--peek", *args, "shop.test"])
+    return result.exit_code, " ".join(strip_ansi(result.stderr).split())
+
+
+def test_rotate_flag_overrides_config():
+    config = Config(network={"rotate": False})
+    assert _overrides(config).to_kwargs()["rotate"] is False
+    assert _overrides(config, rotate=True).to_kwargs()["rotate"] is True
+    assert _overrides().to_kwargs()["rotate"] is True
+
+
+def test_no_rotate_reaches_library(cli, monkeypatch):
+    seen = _seen_kwargs(monkeypatch)
+    cli(shop("shop.test", 1), "shop.test", "--no-rotate")
+    assert seen["rotate"] is False
+
+
+def test_impersonate_defaults_to_none(cli, monkeypatch):
+    seen = _seen_kwargs(monkeypatch)
+    cli(shop("shop.test", 1), "shop.test")
+    assert seen["impersonate"] is None
+
+
+def test_blank_user_agent_flag_keeps_the_config_file(cli, monkeypatch, tmp_path):
+    seen = _seen_kwargs(monkeypatch)
+    config_file = tmp_path / "spy.yaml"
+    config_file.write_text("network:\n  impersonate: safari\n  user_agent: ''\n")
+    run = cli(shop("shop.test", 1), "-c", str(config_file), "-A", "", "shop.test")
+    assert run.exit_code == 0, run.stderr
+    assert (seen["impersonate"], seen["user_agent"]) == ("safari", None)
+
+
+def test_user_agent_alone_reaches_library(cli, monkeypatch):
+    seen = _seen_kwargs(monkeypatch)
+    run = cli(shop("shop.test", 1), "shop.test", "-A", "MyBot/1.0")
+    assert run.exit_code == 0, run.stderr
+    assert (seen["impersonate"], seen["user_agent"]) == (None, "MyBot/1.0")
+
+
+def test_unknown_impersonate_target_is_a_clean_error():
+    code, err = _scrape_without_fake("--impersonate", "nosuchbrowser")
+    assert code == 1
+    assert "Error: " in err and "'nosuchbrowser'" in err
+    assert all(name in err for name in ("chrome", "firefox", "safari"))
+    assert "Traceback" not in err
+
+
+def test_unreadable_ca_file_is_a_clean_error(ca_env, tmp_path):
+    ca_env.setenv("CURL_CA_BUNDLE", str(tmp_path / "nonexistent.pem"))
+    code, err = _scrape_without_fake()
+    assert code == 1
+    assert "Error: CURL_CA_BUNDLE in the environment: can't read the CA file" in err
+    assert "Traceback" not in err
+
+
+@pytest.mark.parametrize("in_config", [False, True])
+def test_impersonate_with_user_agent_is_a_clean_error(cli, tmp_path, in_config):
+    if in_config:
+        config_file = tmp_path / "spy.yaml"
+        config_file.write_text("network:\n  impersonate: chrome\n  user_agent: MyBot/1.0\n")
+        args = ["-c", str(config_file)]
+    else:
+        args = ["--impersonate", "chrome", "-A", "MyBot/1.0"]
+    run = cli(shop("shop.test", 1), *args, "shop.test")
+    assert run.exit_code == 1
+    err = " ".join(run.stderr.split())
+    assert "Error: --impersonate sets the user agent from the browser profile" in err
+    assert "--user-agent, which turns impersonation off" in err
+    assert "network.impersonate or network.user_agent" in err
+    assert not run.requests
+
+
+@pytest.mark.parametrize(
+    ("in_config", "flag", "expected"),
+    [
+        ("impersonate: safari", ["-A", "MyBot/1.0"], (None, "MyBot/1.0")),
+        ("user_agent: MyBot/1.0", ["-I", "safari"], ("safari", None)),
+    ],
+)
+def test_flag_replaces_the_config_files_other_transport(
+    cli, monkeypatch, tmp_path, in_config, flag, expected
+):
+    seen = _seen_kwargs(monkeypatch)
+    config_file = tmp_path / "spy.yaml"
+    config_file.write_text(f"network:\n  {in_config}\n")
+    run = cli(shop("shop.test", 1), "-c", str(config_file), *flag, "shop.test")
+    assert run.exit_code == 0, run.stderr
+    assert (seen["impersonate"], seen["user_agent"]) == expected
+
+
+def test_impersonate_is_not_checked_with_a_test_transport(cli):
+    """FETCHER_FACTORY stands in for the transport, as fetcher_factory does in the library."""
+    run = cli(shop("shop.test", 1), "--impersonate", "nosuchbrowser", "shop.test")
+    assert run.exit_code == 0, run.stderr
+    assert len(run.items()) == 1
 
 
 def test_overrides_map_to_kwargs():
@@ -643,6 +770,7 @@ def test_status_file_lists_skipped_urls(cli):
         "status": "invalid URL",
         "code": "invalid_url",
         "products_from": None,
+        "identity_changes": 0,
     }
 
 
@@ -873,6 +1001,7 @@ def test_multi_url_store_that_failed(cli):
         "status": "failed",
         "code": "error",
         "products_from": None,
+        "identity_changes": 0,
     }
 
 
@@ -907,6 +1036,7 @@ def test_store_that_failed_after_scraping_items(cli):
         "status": "failed",
         "code": "error",
         "products_from": None,
+        "identity_changes": 0,
     }
     assert data["finish_reason"] == "crawler_failed"
 
@@ -985,6 +1115,7 @@ def test_diagnose_items(cli):
         "status": "ok",
         "code": "ok",
         "products_from": None,
+        "identity_changes": 0,
     }
 
 
@@ -1378,6 +1509,7 @@ def test_status_file_written_on_success(cli):
             "status": "ok",
             "code": "ok",
             "products_from": None,
+            "identity_changes": 0,
         }
     ]
 

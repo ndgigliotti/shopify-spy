@@ -59,6 +59,10 @@ pipx install 'shopify-spy[excel]'
 pip install 'shopify-spy[excel]'
 ```
 
+## Browser profiles
+
+[Browser profiles](cli.md#browser-profiles) come from [curl_cffi](https://github.com/lexiforest/curl_cffi), a dependency that every install includes; no extra is needed. It bundles a compiled libcurl, built by its maintainers, that sends browsers' TLS handshakes. Its wheels cover Linux (glibc and musl), macOS and Windows on x86-64 and ARM64, among others. Where no wheel fits, the installer builds it from source, and if that fails, Shopify Spy can't be installed there: `--user-agent` only changes which library sends requests.
+
 ## Nix
 
 The repository is a flake. Its build runs the test suite.
@@ -73,6 +77,8 @@ spy scrape --peek https://www.example.com
 
 # A shell whose Python can import shopify_spy
 nix develop github:ndgigliotti/shopify-spy
+```
+
 ```
 
 The CLI and the dev shell include Excel support, so `--format xlsx` works without the `excel` extra. In your own flake, `overlays.default` adds `python3Packages.shopify-spy` (for every Python version) and a top-level `shopify-spy`. As in nixpkgs, the library package leaves Excel support out; add it with `python3.withPackages (ps: [ ps.shopify-spy ] ++ ps.shopify-spy.optional-dependencies.excel)`.

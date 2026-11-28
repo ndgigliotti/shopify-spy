@@ -133,7 +133,7 @@ Scrapy 2.14.2 source by review.
 |---|---|
 | Timeout | `network.timeout` (180 s) |
 | Retries | `network.retries` (2) on 500, 502, 503, 504, 522, 524, 408, 429, 403 and on transport errors (timeouts, connection refused/lost/reset, DNS, `OSError`, truncated bodies). Retries re-enter the queue behind the slot delay (no explicit backoff) |
-| User agent | One random browser UA per store; changed only when retrying a 403. `-A/--user-agent` fixes the UA and disables rotation |
+| User agent | (Scrapy era) One random browser UA per store; changed only when retrying a 403. `-A/--user-agent` fixes the UA and disables rotation. Since #95: the curl_cffi profile's own UA, or exactly `--user-agent` over httpx |
 | Default headers | `Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`, `Accept-Language: en`, `Accept-Encoding: gzip, deflate` |
 | robots.txt | Obeyed by default, fetched once per host per store. Rules evaluated against the `Scrapy/2.14.2` token (UA middleware runs after robots), or the `-A` UA. Any response body, even 4xx/5xx, is parsed as robots.txt (an HTML error page has no rules, so allow). Transport failure → allow. `-i/--ignore-robots` disables |
 | TLS | Certificates **not** verified (Scrapy's context factory uses `verify=False`) |
@@ -720,7 +720,9 @@ streaming `ItemWriter` context manager used by the CLI. Formats per §3.7 with D
 | Dev | `respx` (for `HttpxFetcher` tests only), `pytest-asyncio`, `pytest-cov` | Consolidate dev deps into one place (today split between `[dependency-groups]` and `optional-dependencies.dev`) |
 
 CLI deps stay required so `uv tool install shopify-spy` keeps working.
-Later extras: `[curl]` → `curl_cffi`, `[browser]` → `playwright` (§12 items 3 and 4).
+`curl_cffi` is a core dependency since #95 made it the default transport (the
+`[impersonate]` extra never shipped). Later extra: `[browser]` → `playwright`
+(§12 item 4).
 
 ## 6. Python and platforms
 
@@ -932,23 +934,34 @@ on every public symbol (returns, statuses, files written); `py.typed`.
 
 Guiding principles:
 
-- Rotating browser UAs stay the default, so requests look like ordinary browser
-  traffic (Nick's decision); an honest UA is at most opt-in.
+- Requests look like ordinary browser traffic by default (Nick's decision): curl_cffi
+  browser profiles since #95. An honest UA is opt-in (`--user-agent`), the only
+  way to get plain httpx requests; the browser UA pool is gone.
 - Neutral names: no "stealth", "impersonate" or "bypass" in user-facing names.
+  `--impersonate` is Nick's exception (2026-11-26, #95), named after curl_cffi's
+  own parameter; "stealth" and "bypass" stay out.
 - No CAPTCHA solving or "bypass" features.
 - Polite defaults stay on: robots.txt, throttling, bail.
 
 1. **Browser identities (dropped):** matching headers per UA (#54, closed).
    Chrome client hints over httpx's TLS widen the mismatch: the one test,
    recorded in #62, got a 403 where the bare UA got a 429. Revisit only
-   together with item 3.
+   together with item 3. Item 3 now covers it: under `--impersonate` the
+   profile supplies browser-consistent headers together with the matching TLS
+   fingerprint, the combination #54 lacked.
 2. **Platform auto-detect** (`platform="auto"`), in progress: #41, branch
    `feat/platform-autodetect`, no PR yet. On `master`, `platform="auto"` still
    raises (`_api.py:87`).
-3. **libcurl transport:** `transport="curl"`, a `[curl]` extra, and UAs paired
-   with `curl_cffi` impersonation profiles via `Identity.impersonate`. Build it
-   on 403s from Cloudflare-fronted stores, or once Shopify or Cloudflare start
-   checking fingerprints.
+3. **libcurl transport (done, #95):** curl_cffi is the default transport:
+   each store starts as `chrome` (`--impersonate BROWSER` picks another) and
+   can switch to the next of `chrome`, `safari`, `firefox`; only a custom
+   `--user-agent` uses httpx. Switching is a test of whether a
+   refusal is about identity, not a way to keep trying: it waits the retry's
+   backoff within the retry budget, stops for the store once a switched-to
+   identity is refused too, skips identities the host refused this run (#67),
+   never happens on challenge pages, 401s or myshopify.com, and `--no-rotate`
+   turns it off. `Identity.impersonate` carries the profile per request, and
+   `CurlCffiFetcher` keeps one curl session per profile.
 4. **Browser renderer:** any engine over CDP, defaulting to Playwright with
    Chromium. Lightpanda 1.0.5 got 0/6 Shopify stores' `/products.json` through
    the edge (challenge pages; the test was muddied by an IP rate limit), and its

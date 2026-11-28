@@ -63,9 +63,11 @@ spy scrape --peek https://www.example.com 2>/dev/null | jq '.product.title'
 - `--throttle / --no-throttle`: auto-throttle requests (default: yes). `--no-throttle` drops the adaptive delay, `--min-delay` and `--image-delay`, but a robots.txt `Crawl-delay` and `Retry-After` pauses still apply. See [Rate limiting](troubleshooting.md#rate-limiting).
 - `--min-delay SECONDS`: the minimum gap between page and API requests to one host while throttling (default: 1, at most 1 request per second per host). It's a strict gap, not an average: requests go out 1 to 1.5 times the minimum apart (more if the store is slow) and never bunch up to catch up.
 - `--image-delay SECONDS`: the minimum gap between image downloads from one host while throttling, the store's own host included (default: 0.25, at most 4 images per second per host).
-- `--user-agent, -A TEXT`: a fixed User-Agent header, never swapped (default: a random browser user agent per store, swapped after a 403 or 429).
+- `--impersonate, -I BROWSER`: the browser profile each store starts with (default: `chrome`). See [Browser profiles](#browser-profiles).
+- `--rotate / --no-rotate`: after a 403 or 429, retry once as another browser profile (default: yes). `--no-rotate` keeps one identity for the whole run. See [Retries and identities](troubleshooting.md#retries-and-identities).
+- `--user-agent, -A TEXT`: send plain requests (through httpx, not as a browser) with exactly this User-Agent, never switched. Can't be combined with `--impersonate`. A blank value counts as unset.
 - `--proxy URL`: send every request through this proxy; see [Proxies](#proxies).
-- `--insecure`: don't verify TLS certificates.
+- `--insecure`: don't verify TLS certificates. Otherwise they're checked against certifi's CA bundle, or against a CA of your own, such as a company proxy's: the file named by `SSL_CERT_FILE`, else `REQUESTS_CA_BUNDLE`, else `CURL_CA_BUNDLE`, and the directory named by `SSL_CERT_DIR` (hashed, as `openssl rehash` lays it out). Either one, or both together, replaces certifi's bundle rather than adding to it, so a file that should also trust public sites has to include their CAs. A file that can't be read, or a directory with no hashed certificate, stops the run before it starts, naming the variable. Both transports read these variables the same way during the run, for the store and for an `https://` proxy alike, so setting them after importing the library works.
 - `--ignore-robots, -i`: ignore robots.txt restrictions.
 
 ### Run control
@@ -114,8 +116,10 @@ network:
   concurrent_requests: 16  # Concurrent requests per host
   timeout: 180             # Request timeout (seconds)
   retries: 2               # Retry failed requests
-  # user_agent: MyBot/1.0 (+https://example.com)  # Custom user agent
+  # user_agent: MyBot/1.0 (+https://example.com)  # Custom user agent (turns impersonation off)
   # proxy: http://proxy.example.com:8080  # Fixed proxy (overrides HTTPS_PROXY)
+  # impersonate: safari  # First browser profile (default chrome); false = no impersonation
+  rotate: true             # Try another browser profile after a 403 or 429 (false = --no-rotate)
   respect_robots_txt: true
   verify_tls: true         # Verify TLS certificates (false = --insecure)
   max_concurrent_stores: 16  # Stores scraped at once
@@ -143,3 +147,16 @@ Requests honor the `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` envir
 - A proxy is for a fixed egress, such as a company network or another region. It is not a way around a store's rate limits, which in practice key on user agent or endpoint as much as on IP.
 
 A proxy's 407 (refused credentials) counts as [`no_response`](troubleshooting.md#store-statuses). In the library, a store that never answers while a proxy is in use gets a `hint` saying to check the proxy.
+
+## Browser profiles
+
+Requests go through [curl_cffi](https://github.com/lexiforest/curl_cffi) with a current browser's TLS and HTTP/2 settings and headers, the browser's own User-Agent included. Each store starts as `chrome`; after a 403 or 429 it can switch to the next of `chrome`, `safari` and `firefox`, the newest desktop profile curl_cffi has for each (see [Retries and identities](troubleshooting.md#retries-and-identities) for when it does).
+
+```bash
+spy scrape --impersonate safari https://www.example.com                # start as Safari
+spy scrape --user-agent 'MyBot/1.0 (+https://example.com)' https://www.example.com  # plain requests
+```
+
+- `--impersonate BROWSER` (`network.impersonate` in the config file, `impersonate=` in the library) picks the first profile: `chrome`, `safari`, `firefox`, or any other target the installed curl_cffi accepts, such as a pinned `chrome150`. A profile outside those three comes first, followed by them. An unknown value is rejected before the run starts.
+- `--user-agent TEXT` (`network.user_agent`, `user_agent=`) is the only way to send plain requests: they go through httpx with exactly that User-Agent, never switched, so it can't be combined with `--impersonate`. Either flag replaces the other's config-file setting for that run.
+- robots.txt and its `Crawl-delay`, throttling (`--min-delay`, `--image-delay`), `Retry-After`, `--concurrent`, `--proxy`, `--insecure` and the [non-public address check](troubleshooting.md#refused-requests-to-non-public-addresses) work the same on both transports.

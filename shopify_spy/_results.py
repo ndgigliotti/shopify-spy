@@ -99,6 +99,8 @@ class StoreResult:
     # Requests that ended on a 429, of any kind but images (robots.txt's too)
     rate_limited_requests: int = 0
     images_failed: int = 0
+    # Browser profile switches after a 403 or 429
+    identity_changes: int = 0
     errors: list[str] = field(default_factory=list)
     duration: float = 0.0
     via_proxy: bool = False  # requests went through a proxy (proxy= or the environment)

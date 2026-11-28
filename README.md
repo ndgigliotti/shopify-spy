@@ -101,7 +101,7 @@ An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an i
 - **Python library.** `import shopify_spy` gives the same scraping engine as the CLI, with items as typed plain dicts and failures that are never silent.
 - **Spreadsheet-ready output.** JSONL, JSON, CSV, Excel and XML, with a unified schema shared by every platform.
 - **Polite by default.** Robots.txt is honored, requests are auto-throttled, and a store that produces nothing within `--bail` seconds (default 30) is abandoned instead of hanging the run.
-- **Retries.** Timeouts, dropped connections, transient 5xx errors and 429 rate limits are retried, honoring `Retry-After`. Requests use a common browser user agent, and a 403 or 429 retries with another.
+- **Retries.** Timeouts, dropped connections, transient 5xx errors and 429 rate limits are retried, honoring `Retry-After`. Requests use a current browser's TLS and HTTP/2 settings and headers, and a 403 or 429 is retried once as another browser after the usual backoff; see [Retries and identities](https://github.com/ndgigliotti/shopify-spy/blob/v0.5.1/docs/troubleshooting.md#retries-and-identities).
 
 ## Supported Platforms
 

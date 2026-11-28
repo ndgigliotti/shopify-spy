@@ -12,6 +12,8 @@
   hatchling,
 
   # dependencies
+  certifi,
+  curl-cffi,
   defusedxml,
   httpx,
   platformdirs,
@@ -29,6 +31,7 @@
   pytest-asyncio,
   pytestCheckHook,
   respx,
+  trustme,
   writableTmpDirAsHomeHook,
 }:
 
@@ -40,6 +43,8 @@ buildPythonPackage (finalAttrs: {
   build-system = [ hatchling ];
 
   dependencies = [
+    certifi
+    curl-cffi
     defusedxml
     httpx
     platformdirs
@@ -60,6 +65,7 @@ buildPythonPackage (finalAttrs: {
     pytest-asyncio
     pytestCheckHook
     respx
+    trustme
     writableTmpDirAsHomeHook
   ]
   ++ lib.concatAttrValues finalAttrs.passthru.optional-dependencies;

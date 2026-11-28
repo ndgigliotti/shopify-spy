@@ -33,6 +33,17 @@ def clean_proxy_env(monkeypatch):
     return monkeypatch
 
 
+CA_VARIABLES = ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_DIR")
+
+
+@pytest.fixture
+def ca_env(monkeypatch):
+    """Remove CA variables, so a test sees only the ones it sets."""
+    for name in CA_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    return monkeypatch
+
+
 class _RecordingProxyHandler(http.server.BaseHTTPRequestHandler):
     reject_connect = False
 

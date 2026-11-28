@@ -20,8 +20,8 @@ Layers, top to bottom; lower layers never import higher ones, and only the CLI i
 - **Public API** (`_api.py`, `_export.py`, `_summary.py`, `_types.py`): `scrape()` (sync; steps a private event loop whose clock excludes paused time) and `scrape_async()`; `on_failure` raises `ScrapeFailed` by default. Writers match the old Scrapy exporters byte for byte (JSONL/JSON/XML).
 - **Runner** (`_runner.py`, `_results.py`): one driver task owns all store tasks and feeds a bounded queue; per-store error isolation, `max_items_per_store`, bail, graceful shutdown; `StoreResult`/`StoreStatus`/`RunResult`. Never hold a TaskGroup or timeout across a `yield`.
 - **Adapters** (`_shopify.py`, `_woocommerce.py`, `_magento.py`, `_bigcommerce.py`, `_generic.py`, `_sitemap.py`, `_images.py`): `run(ctx, emit)` coroutines. Shopify tries bulk `/products.json`, falls back to the sitemap; WooCommerce pages the Store API; Magento pages the storefront GraphQL `products` query; BigCommerce reads the homepage's Storefront API token and pages `site.products` over POST `/graphql`; `_generic.py` (`jsonld`) reads schema.org Product JSON-LD from sitemap-listed product pages.
-- **Session** (`_session.py`, `_policy.py`): per-store `StoreSession` (dedupe, robots.txt, retries with UA rotation on 403, hop-by-hop redirects, stats) over a run-wide `HostRegistry` (robots cache, concurrency and AutoThrottle slots keyed by origin).
-- **Transport** (`_fetch.py`): `Fetcher` protocol; `HttpxFetcher`, plus `FakeFetcher`/`ReplayFetcher` for tests.
+- **Session** (`_session.py`, `_policy.py`): per-store `StoreSession` (dedupe, robots.txt, retries that may switch browser profile on a 403 or 429, hop-by-hop redirects, stats) over a run-wide `HostRegistry` (robots cache, concurrency and AutoThrottle slots keyed by origin).
+- **Transport** (`_fetch.py`): `Fetcher` protocol; `CurlCffiFetcher` (default, browser profiles), `HttpxFetcher` (custom user agent), plus `FakeFetcher`/`ReplayFetcher` for tests.
 
 A new runtime dependency also goes in `nix/package.nix` (checked by `nix flake check`).
 

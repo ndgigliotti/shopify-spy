@@ -17,6 +17,9 @@ import respx
 
 from shopify_spy._fetch import (
     ACCEPT_ENCODING,
+    DEFAULT_IMPERSONATE,
+    IMPERSONATE_PROFILES,
+    CurlCffiFetcher,
     FakeFetcher,
     FetchConnectionError,
     FetchIncomplete,
@@ -31,12 +34,16 @@ from shopify_spy._fetch import (
     Response,
     Seq,
     _is_cert_error,
+    ca_locations,
     check_proxy_support,
     decompress,
     encode_proxy_userinfo,
+    env_proxy_for,
+    impersonate_rotation,
     load_corpus,
     redact_url,
     uses_proxy,
+    validate_impersonate,
     validate_proxy,
 )
 
@@ -338,12 +345,273 @@ def test_validate_proxy_error_is_redacted():
         ({"ALL_PROXY": "socks5://gw:1080"}, "http://a.com", True),
         ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "a.com"}, "https://a.com", False),
         ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "*"}, "https://a.com", False),
+        # httpx's rule, not urllib's: a leading dot bypasses subdomains only
+        ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": ".a.com"}, "https://a.com", True),
+        ({"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": ".a.com"}, "https://www.a.com", False),
     ],
 )
 def test_uses_proxy_from_environment(clean_proxy_env, env, url, expected):
     for name, value in env.items():
         clean_proxy_env.setenv(name, value)
     assert uses_proxy(url, None) is expected
+
+
+GW = "http://gw:8080"
+ENV_PROXY_CASES = [
+    ({}, "https://example.com"),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": ".example.com"}, "https://example.com"),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": ".example.com"}, "https://www.example.com"),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": "example.com"}, "https://www.example.com"),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": "example.com"}, "https://wwwexample.com"),
+    ({"HTTPS_PROXY": GW, "NO_PROXY": "EXAMPLE.com"}, "https://example.com"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "127.0.0.1"}, "http://127.0.0.1:8000/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "127.0.0.1"}, "http://127.0.0.2/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "10.0.0.0/8"}, "http://10.0.0.0/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "::1"}, "http://[::1]:8000/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "localhost"}, "http://localhost:8000/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "localhost"}, "http://www.localhost/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "example.com:8080"}, "http://example.com:8080/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "example.com:8080"}, "http://example.com/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "http://example.com"}, "http://example.com/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "http://example.com"}, "https://example.com/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": "other.com, *"}, "http://example.com/"),
+    ({"HTTP_PROXY": GW, "NO_PROXY": " , example.com"}, "http://example.com/"),
+    ({"HTTPS_PROXY": GW}, "http://example.com/"),
+    ({"HTTPS_PROXY": GW}, "https://example.com/"),
+    ({"HTTP_PROXY": "gw:3128"}, "http://example.com/"),
+    ({"ALL_PROXY": "socks5://gw:1080"}, "http://example.com/"),
+    ({"ALL_PROXY": "socks5://gw:1080", "HTTPS_PROXY": GW}, "https://example.com/"),
+    ({"ALL_PROXY": "socks5://gw:1080", "HTTPS_PROXY": GW}, "http://example.com/"),
+]
+
+
+def _httpx_env_proxy(url: str) -> str | None:
+    """The environment proxy httpx itself picks for ``url`` (private API, test only)."""
+    from httpx._utils import URLPattern, get_environment_proxies
+
+    mounts = sorted({URLPattern(k): v for k, v in get_environment_proxies().items()}.items())
+    target = httpx.URL(url)
+    return next((proxy for pattern, proxy in mounts if pattern.matches(target)), None)
+
+
+@pytest.mark.parametrize(
+    ("env", "url"),
+    ENV_PROXY_CASES,
+    ids=[",".join([*(f"{k}={v}" for k, v in env.items()), url]) for env, url in ENV_PROXY_CASES],
+)
+def test_env_proxy_for_matches_httpx(clean_proxy_env, env, url):
+    for name, value in env.items():
+        clean_proxy_env.setenv(name, value)
+    assert env_proxy_for(url) == _httpx_env_proxy(url)
+
+
+@pytest.mark.parametrize(
+    ("no_proxy", "url", "expected"),
+    [
+        (".example.com", "https://example.com", GW),
+        (".example.com", "https://www.example.com", None),
+        ("example.com", "https://www.example.com", None),
+        ("example.com", "https://wwwexample.com", GW),
+    ],
+)
+def test_env_proxy_for_no_proxy_names(clean_proxy_env, no_proxy, url, expected):
+    clean_proxy_env.setenv("HTTPS_PROXY", GW)
+    clean_proxy_env.setenv("NO_PROXY", no_proxy)
+    assert env_proxy_for(url) == expected
+
+
+def test_env_proxy_for_unparseable_url_goes_direct(clean_proxy_env):
+    clean_proxy_env.setenv("HTTPS_PROXY", GW)
+    assert env_proxy_for("https://exa\x7fmple.com/") is None
+
+
+def test_impersonate_profiles_are_current_desktop_browsers():
+    """Pinned: the aliases resolve to each browser's newest desktop profile on every
+    supported curl_cffi (checked on 0.16.3 and 0.17.0); "edge" is Edge 101."""
+    from curl_cffi.requests.impersonate import resolve_latest_browser_type
+
+    assert IMPERSONATE_PROFILES == ("chrome", "safari", "firefox")
+    assert DEFAULT_IMPERSONATE == "chrome"
+    resolved = [resolve_latest_browser_type(p) for p in IMPERSONATE_PROFILES]
+    assert len(set(resolved)) == len(resolved)
+    for profile, target in zip(IMPERSONATE_PROFILES, resolved, strict=True):
+        assert validate_impersonate(profile) == profile
+        assert target.startswith(profile)
+        assert not target.endswith(("_android", "_ios"))
+
+
+@pytest.mark.parametrize(
+    ("start", "expected"),
+    [
+        ("chrome", ("chrome", "safari", "firefox")),
+        ("safari", ("safari", "firefox", "chrome")),
+        ("firefox", ("firefox", "chrome", "safari")),
+        ("chrome146", ("chrome146", "chrome", "safari", "firefox")),
+    ],
+)
+def test_impersonate_rotation(start, expected):
+    assert impersonate_rotation(start) == expected
+
+
+def test_impersonate_rotation_skips_the_alias_a_pinned_profile_resolves_to():
+    from curl_cffi.requests.impersonate import resolve_latest_browser_type
+
+    newest = resolve_latest_browser_type("safari")
+    assert impersonate_rotation(newest) == (newest, "chrome", "firefox")
+
+
+def test_validate_impersonate_matches_what_curl_cffi_can_use():
+    from typing import get_args
+
+    from curl_cffi.requests import Session
+    from curl_cffi.requests.exceptions import ImpersonateError, RequestException
+    from curl_cffi.requests.impersonate import BrowserTypeLiteral
+
+    def usable(target: str) -> bool:
+        # Port 1 refuses the connection, after curl_cffi has applied the target
+        with Session() as session:
+            try:
+                session.get("http://127.0.0.1:1/", impersonate=target, timeout=5)
+            except ImpersonateError:
+                return False
+            except RequestException:
+                return True
+        raise AssertionError("port 1 accepted a connection")
+
+    targets = {*get_args(BrowserTypeLiteral), "tor"}
+    assert {"chrome", "firefox", "safari", "edge", "chrome150", "tor145"} <= targets
+    for target in targets:
+        if usable(target):
+            assert validate_impersonate(target) == target
+        else:
+            with pytest.raises(ValueError, match="unknown impersonate target"):
+                validate_impersonate(target)
+
+
+@pytest.mark.parametrize("target", ["nosuchbrowser", "", "Chrome", "chrome "])
+def test_validate_impersonate_rejects(target):
+    with pytest.raises(ValueError, match="chrome, firefox or safari") as info:
+        validate_impersonate(target)
+    assert repr(target) in str(info.value)
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({}, (None, None)),
+        ({"SSL_CERT_FILE": "a", "REQUESTS_CA_BUNDLE": "b", "CURL_CA_BUNDLE": "c"}, ("a", None)),
+        ({"REQUESTS_CA_BUNDLE": "b", "CURL_CA_BUNDLE": "c"}, ("b", None)),
+        ({"CURL_CA_BUNDLE": "c"}, ("c", None)),
+        ({"SSL_CERT_FILE": "", "CURL_CA_BUNDLE": "c"}, ("c", None)),
+        ({"SSL_CERT_DIR": "d"}, (None, "d")),
+        ({"SSL_CERT_FILE": "a", "SSL_CERT_DIR": "d"}, ("a", "d")),
+    ],
+)
+def test_ca_locations_precedence(ca_env, tmp_path, env, expected):
+    for name in "abc":
+        (tmp_path / name).write_text("")
+    (tmp_path / "d").mkdir()
+    (tmp_path / "d" / "89abcdef.0").write_text("-----BEGIN CERTIFICATE-----\n")
+    for name, value in env.items():
+        ca_env.setenv(name, value and str(tmp_path / value))
+    assert ca_locations() == tuple(value and str(tmp_path / value) for value in expected)
+    assert ca_locations(trust_env=False) == (None, None)
+
+
+@pytest.mark.parametrize("variable", ["SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"])
+@pytest.mark.parametrize("missing", [True, False])
+def test_unreadable_ca_file_names_the_variable(ca_env, tmp_path, variable, missing):
+    """A missing file, or a directory, never quietly falls back to another bundle."""
+    location = str(tmp_path / "nonexistent.pem") if missing else str(tmp_path)
+    ca_env.setenv(variable, location)
+    with pytest.raises(ValueError, match=f"^{variable} in the environment: can't read"):
+        ca_locations()
+    assert ca_locations(trust_env=False) == (None, None)
+
+
+@pytest.mark.parametrize("layout", ["missing", "empty", "unhashed"])
+@pytest.mark.parametrize("with_file", [False, True])
+def test_ca_directory_without_a_hashed_certificate_is_an_error(ca_env, tmp_path, layout, with_file):
+    """Never left for curl to back with libcurl's built-in bundle."""
+    directory = tmp_path / "dir"
+    if layout != "missing":
+        directory.mkdir()
+    if layout == "unhashed":
+        (directory / "ca.pem").write_text("-----BEGIN CERTIFICATE-----\n")
+    if with_file:
+        (tmp_path / "ca.pem").write_text("")
+        ca_env.setenv("SSL_CERT_FILE", str(tmp_path / "ca.pem"))
+    ca_env.setenv("SSL_CERT_DIR", str(directory))
+    with pytest.raises(ValueError, match="^SSL_CERT_DIR in the environment: no CA certificate"):
+        ca_locations()
+    assert ca_locations(trust_env=False) == (None, None)
+
+
+async def _curl_ca(**kwargs) -> dict:
+    from curl_cffi import CurlOpt
+
+    names = {
+        CurlOpt.CAINFO: "cainfo",
+        CurlOpt.CAPATH: "capath",
+        CurlOpt.PROXY_CAINFO: "proxy_cainfo",
+        CurlOpt.PROXY_CAPATH: "proxy_capath",
+    }
+    async with CurlCffiFetcher("chrome", **kwargs) as fetcher:
+        options = fetcher._session("chrome").curl_options
+    return {names[key]: value for key, value in options.items() if key in names}
+
+
+def _both(cafile, capath) -> dict:
+    return {"cainfo": cafile, "capath": capath, "proxy_cainfo": cafile, "proxy_capath": capath}
+
+
+async def test_curl_fetcher_reads_the_ca_file_on_entry(ca_env, tmp_path):
+    """Set after import; the file stands in as the unused directory."""
+    cafile = str(tmp_path / "file.pem")
+    (tmp_path / "file.pem").write_text("")
+    ca_env.setenv("REQUESTS_CA_BUNDLE", cafile)
+    assert await _curl_ca() == _both(cafile, cafile)
+    (tmp_path / "89abcdef.0").write_text("-----BEGIN CERTIFICATE-----\n")
+    ca_env.setenv("SSL_CERT_DIR", str(tmp_path))
+    assert await _curl_ca() == _both(cafile, str(tmp_path))
+
+
+async def test_curl_fetcher_reads_the_ca_directory_on_entry(ca_env, tmp_path):
+    """A hashed certificate from the directory stands in as the unused file."""
+    (tmp_path / "ca.pem").write_text("-----BEGIN CERTIFICATE-----\n")
+    (tmp_path / "0123abcd.r0").write_text("-----BEGIN X509 CRL-----\n")
+    (tmp_path / "89abcdef.0").write_text("-----BEGIN CERTIFICATE-----\n")
+    ca_env.setenv("SSL_CERT_DIR", str(tmp_path))
+    assert await _curl_ca() == _both(str(tmp_path / "89abcdef.0"), str(tmp_path))
+
+
+async def test_curl_sessions_opened_later_keep_the_ca_read_on_entry(ca_env, tmp_path):
+    """As httpx's one client does, whatever the environment says mid-run."""
+    from curl_cffi import CurlOpt
+
+    for name in ("a.pem", "b.pem"):
+        (tmp_path / name).write_text("")
+    ca_env.setenv("SSL_CERT_FILE", str(tmp_path / "a.pem"))
+    async with CurlCffiFetcher("chrome") as fetcher:
+        ca_env.setenv("SSL_CERT_FILE", str(tmp_path / "b.pem"))
+        for profile, raw in (("chrome", False), ("safari", False), ("chrome", True)):
+            options = fetcher._session(profile, raw).curl_options
+            assert options[CurlOpt.CAINFO] == str(tmp_path / "a.pem")
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"trust_env": False}])
+async def test_curl_session_uses_certifi_otherwise(ca_env, kwargs):
+    import certifi
+
+    if kwargs:
+        ca_env.setenv("SSL_CERT_FILE", "/ca/file.pem")
+        ca_env.setenv("SSL_CERT_DIR", "/ca/dir")
+    assert await _curl_ca(**kwargs) == _both(certifi.where(), certifi.where())
+
+
+async def test_curl_session_without_verification_sets_no_ca(ca_env):
+    ca_env.setenv("SSL_CERT_FILE", "/ca/file.pem")
+    assert await _curl_ca(verify=False) == {}
 
 
 def test_explicit_proxy_is_always_used(clean_proxy_env):
@@ -368,6 +636,8 @@ ENV_CASES = [
     {"HTTPS_PROXY": "socks4://h:1"},
     {"HTTPS_PROXY": "http://h:99999"},
     {"ALL_PROXY": "socks5h://h:1080"},
+    {"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "[::1"},
+    {"HTTPS_PROXY": "http://gw:8080", "NO_PROXY": "::1, 10.0.0.0/8, .example.com"},
 ]
 
 

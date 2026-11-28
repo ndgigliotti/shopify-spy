@@ -4,6 +4,10 @@
 
 ### Added
 
+- `--rotate/--no-rotate` (`network.rotate`, `rotate=`) turns the identity switch
+  after a refusal on or off (default on), and the status file's
+  `identity_changes` and `StoreResult.identity_changes` count the switches per
+  store.
 - A `magento` platform (`--platform magento`, `platform="magento"`) for Magento
   Open Source and Adobe Commerce 2.4 stores, read through the storefront GraphQL
   API at `/graphql` without a token. Items are the GraphQL products plus `store`,
@@ -40,6 +44,31 @@
 
 ### Changed
 
+- Requests go through curl_cffi with a current browser's TLS and HTTP/2 settings
+  and headers by default, starting as `chrome`
+  ([#95](https://github.com/ndgigliotti/shopify-spy/issues/95)). curl_cffi
+  (`>=0.16.3,<0.18`) is a new required dependency. `--impersonate BROWSER` (`-I`,
+  `network.impersonate`, `impersonate=`) picks the first profile: `chrome`,
+  `safari`, `firefox` or any other curl_cffi target. Setting your own
+  `--user-agent` (`network.user_agent`, `user_agent=`) is the only way to send
+  plain httpx requests, with exactly that string and never switched; it can't be
+  combined with `--impersonate`, and a blank one counts as unset.
+- Both transports trust the same CAs, for the store and for an `https://` proxy,
+  read from the environment during the run: the file in `SSL_CERT_FILE`, else
+  `REQUESTS_CA_BUNDLE`, else `CURL_CA_BUNDLE`, and the directory in
+  `SSL_CERT_DIR`, either one replacing certifi's bundle as `SSL_CERT_FILE`
+  already did. httpx now reads `REQUESTS_CA_BUNDLE` and
+  `CURL_CA_BUNDLE` too, and trusts `SSL_CERT_DIR` alongside `SSL_CERT_FILE`
+  rather than ignoring it when both are set. A CA file that can't be read,
+  or a directory with no hashed certificate, stops the run before it starts,
+  naming the variable, on both transports.
+- After a 403 or 429, a store switches to another browser profile to test
+  whether the refusal is about identity: only after the retry's usual backoff,
+  within the existing retries, and never again for that store if the new profile
+  is refused too. A host's refusals are remembered for the run, so no store
+  switches to a profile it refused ([#67](https://github.com/ndgigliotti/shopify-spy/issues/67)). Challenge pages
+  (Cloudflare's `cf-mitigated: challenge`), 401s, image downloads and
+  `*.myshopify.com` refusals never switch, and a challenge page isn't retried. Each switch is logged at INFO.
 - The unified schema (CSV, XLSX and `--schema unified`) has two new columns,
   `gtin` and `mpn`, after `sku`: a JSON-LD item's `gtin` (or `gtin13`, `gtin12`,
   `gtin14`, `gtin8`) and `mpn`, and a BigCommerce item's `gtin` (else `upc`) and
@@ -70,6 +99,14 @@
   retried after 60 seconds: the host is paused for the whole `Retry-After` and the
   request ends as if its retries had run out, so a store with no successful
   response ends `rate_limited` for a 429 (`unavailable` for a 503).
+
+### Removed
+
+- The unreleased `impersonate` extra: curl_cffi is always installed.
+- The built-in list of browser user agents (`user_agents.json`) and
+  `scripts/update_user_agents.py`, which refreshed it. Without `--user-agent`,
+  requests carry the browser profile's own user agent; with it, exactly the one
+  you set, so httpx never sends one Shopify Spy picks.
 
 ## 0.5.1
 

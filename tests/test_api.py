@@ -2,9 +2,11 @@
 
 import asyncio
 import gc
+import http.server
 import ipaddress
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 import warnings
@@ -13,7 +15,13 @@ import pytest
 
 import shopify_spy as spy
 from shopify_spy import _address, _runner
-from shopify_spy._fetch import FakeFetcher, FetchConnectionError, FetchTLSError, Seq
+from shopify_spy._fetch import (
+    CurlCffiFetcher,
+    FakeFetcher,
+    FetchConnectionError,
+    FetchTLSError,
+    Seq,
+)
 from tests.flow_support import FAST, STORE, bulk_url, products, scrape, urlset, woo_url
 
 OTHER = "https://other.test"
@@ -168,7 +176,7 @@ def test_rate_limited_woocommerce_fallback_fails():
     assert store.responses_by_status == {404: 1}  # fallback requests aren't counted
 
 
-def test_retry_after_wait_on_a_new_user_agent_outlasts_bail():
+def test_retry_after_wait_on_a_new_profile_outlasts_bail():
     """A 429 whose Retry-After is longer than --bail: the store waits and recovers."""
 
     async def slow_products(request):
@@ -181,8 +189,8 @@ def test_retry_after_wait_on_a_new_user_agent_outlasts_bail():
     [store] = result.stores
     assert store.status == spy.StoreStatus.ok
     assert len(items) == 1
-    first, retry = [r.identity.user_agent for r in fetcher.requests if r.url == bulk_url(1)]
-    assert first != retry
+    first, retry = [r.identity.impersonate for r in fetcher.requests if r.url == bulk_url(1)]
+    assert (first, retry) == ("chrome", "safari")
 
 
 def test_retry_after_waits_are_excused_from_bail_per_request():
@@ -393,10 +401,42 @@ def test_nothing_printed_to_stdout(capsys):
 
 def test_import_boundary():
     code = (
-        "import shopify_spy, sys; print([m for m in ('typer','yaml','scrapy') if m in sys.modules])"
+        "import shopify_spy, sys; "
+        "print([m for m in ('typer','yaml','scrapy','curl_cffi') if m in sys.modules])"
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "[]"
+
+
+class _NotFound(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):  # noqa: N802
+        self.send_response(404)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+
+def test_run_with_a_user_agent_never_imports_curl_cffi(clean_proxy_env):
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _NotFound)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    store = f"http://127.0.0.1:{httpd.server_address[1]}"
+    code = (
+        "import sys, shopify_spy as spy; "
+        f"run = spy.scrape({store!r}, user_agent='test-agent/1.0', on_failure='ignore', "
+        "throttle=False); "
+        "list(run); "
+        "print(404 in run.result.stores[0].responses_by_status, 'curl_cffi' in sys.modules)"
+    )
+    try:
+        out = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60
+        )
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    assert out.stdout.strip() == "True False"
 
 
 # --- Status diagnosis ---
@@ -418,9 +458,9 @@ def test_status_forbidden_after_retries():
     store = _status(fetcher, retries=2)
     assert store.status == "forbidden"
     assert fetcher.count(bulk_url(1)) == 3
-    # UA rotated after each 403
-    agents = [r.identity.user_agent for r in fetcher.requests if r.url == bulk_url(1)]
-    assert len(set(agents)) > 1
+    # One switch to the next profile, then the block is taken as not about identity
+    profiles = [r.identity.impersonate for r in fetcher.requests if r.url == bulk_url(1)]
+    assert profiles == ["chrome", "safari", "safari"]
 
 
 def test_status_not_found():
@@ -621,7 +661,7 @@ def test_default_transport_resolves_hostnames_for_the_check(clean_proxy_env):
     store = "https://shop.example"
     fetcher = FakeFetcher({bulk_url(1, store): (302, "", {"Location": "https://internal.test/x"})})
     clean_proxy_env.setattr(_address, "resolve", stub)
-    clean_proxy_env.setattr(_runner, "HttpxFetcher", lambda **kw: fetcher)
+    clean_proxy_env.setattr(_runner, "CurlCffiFetcher", lambda *a, **kw: fetcher)
     list(spy.scrape(store, **FAST))
     assert set(calls) == {"shop.example", "internal.test"}
     assert not [r.url for r in fetcher.requests if "internal.test" in r.url]
@@ -638,3 +678,165 @@ def test_proxy_kept_out_of_option_reprs():
     url = "http://u:secret@gw:8000"
     assert "secret" not in repr(ScrapeOptions(proxy=url))
     assert "secret" not in repr(RunConfig(proxy=url))
+
+
+# --- Impersonation ---
+
+
+class _CurlLike(FakeFetcher):
+    """FakeFetcher with CurlCffiFetcher's capabilities, so the runner retries as it would."""
+
+    capabilities = CurlCffiFetcher.capabilities
+
+
+def test_impersonate_with_user_agent_raises():
+    with pytest.raises(ValueError, match="browser profile; drop user_agent"):
+        spy.scrape("a.com", impersonate="chrome", user_agent="foo/1.0")
+
+
+def test_impersonate_with_user_agent_raises_with_custom_fetcher():
+    with pytest.raises(ValueError, match="drop user_agent"):
+        spy.scrape("a.com", impersonate="chrome", user_agent="foo/1.0", fetcher_factory=fake({}))
+
+
+@pytest.mark.parametrize("value", [True, False, 0, ""])
+def test_impersonate_rejects_values_that_are_not_a_profile(value):
+    with pytest.raises(ValueError, match="impersonate"):
+        spy.scrape("a.com", impersonate=value)
+
+
+def test_unknown_impersonate_target_raises_at_call_time():
+    with pytest.raises(ValueError, match="'nosuchbrowser'.*chrome, firefox or safari"):
+        spy.scrape("a.com", impersonate="nosuchbrowser")
+
+
+def test_unreadable_ca_file_raises_at_call_time(monkeypatch, ca_env, tmp_path):
+    ca_env.setenv("SSL_CERT_FILE", str(tmp_path / "nonexistent.pem"))
+    with pytest.raises(ValueError, match="^SSL_CERT_FILE in the environment"):
+        spy.scrape("a.com")
+    _record_transports(monkeypatch)
+    assert len(list(spy.scrape(STORE, verify_tls=False, **FAST))) == 2
+
+
+def test_custom_fetcher_ignores_impersonate(monkeypatch):
+    monkeypatch.setitem(sys.modules, "curl_cffi", None)  # neither imported nor validated
+    items, _, _ = scrape(ok_routes(), impersonate="nosuchbrowser")
+    assert len(items) == 2
+
+
+def _record_transports(monkeypatch, routes=None):
+    """Replace both default transports with fakes; return the constructor calls."""
+    made = []
+
+    def curl_fetcher(impersonate, *, verify, proxy):
+        made.append(("curl_cffi", impersonate, verify, proxy))
+        return _CurlLike(routes or ok_routes())
+
+    def httpx_fetcher(*, verify, proxy):
+        made.append(("httpx", verify, proxy))
+        return FakeFetcher(routes or ok_routes())
+
+    monkeypatch.setattr(_runner, "CurlCffiFetcher", curl_fetcher)
+    monkeypatch.setattr(_runner, "HttpxFetcher", httpx_fetcher)
+    return made
+
+
+def test_default_run_impersonates_chrome(monkeypatch, clean_proxy_env, caplog):
+    made = _record_transports(monkeypatch)
+    caplog.set_level("INFO", logger="shopify_spy")
+    proxy = "http://u:secret@127.0.0.1:8000"
+    run = spy.scrape(STORE, verify_tls=False, proxy=proxy, **FAST)
+    assert len(list(run)) == 2
+    assert made == [("curl_cffi", "chrome", False, proxy)]
+    assert "Impersonating chrome, then safari, firefox after a refusal (curl_cffi " in caplog.text
+    assert "secret" not in caplog.text
+
+
+def test_impersonate_picks_the_first_profile(monkeypatch, clean_proxy_env, caplog):
+    made = _record_transports(monkeypatch)
+    caplog.set_level("INFO", logger="shopify_spy")
+    assert len(list(spy.scrape(STORE, impersonate="chrome146", **FAST))) == 2
+    assert made == [("curl_cffi", "chrome146", True, None)]
+    assert "Impersonating chrome146, then chrome, safari, firefox after" in caplog.text
+
+
+def test_no_rotate_logs_only_the_first_profile(monkeypatch, clean_proxy_env, caplog):
+    _record_transports(monkeypatch)
+    caplog.set_level("INFO", logger="shopify_spy")
+    assert len(list(spy.scrape(STORE, rotate=False, **FAST))) == 2
+    assert "Impersonating chrome (curl_cffi " in caplog.text
+    assert "after a refusal" not in caplog.text
+
+
+@pytest.mark.parametrize("blank", ["", "  "])
+def test_blank_user_agent_counts_as_unset(monkeypatch, clean_proxy_env, blank):
+    made = _record_transports(monkeypatch)
+    assert len(list(spy.scrape(STORE, user_agent=blank, **FAST))) == 2
+    assert made == [("curl_cffi", "chrome", True, None)]
+
+
+def test_user_agent_runs_on_httpx(monkeypatch, clean_proxy_env):
+    made = _record_transports(monkeypatch)
+    assert len(list(spy.scrape(STORE, user_agent="MyBot/1.0", **FAST))) == 2
+    assert made == [("httpx", True, None)]
+
+
+def test_user_agent_is_sent_unchanged_without_rotation():
+    fetcher = FakeFetcher({f"{STORE}/robots.txt": (404, "")}, default_status=403)
+    store = _status(fetcher, retries=2, user_agent="MyBot/1.0")
+    assert store.status == "forbidden"
+    assert {(r.identity.user_agent, r.identity.impersonate) for r in fetcher.requests} == {
+        ("MyBot/1.0", None)
+    }
+
+
+@pytest.mark.parametrize("status", [403, 429])
+def test_impersonated_refusal_retried_with_the_next_profile(status):
+    fetcher = _CurlLike(
+        {f"{STORE}/robots.txt": (404, ""), bulk_url(1): Seq([(status, ""), products(2)])}
+    )
+    items, _, _ = scrape(fetcher)
+    assert len(items) == 2
+    profiles = [r.identity.impersonate for r in fetcher.requests if r.url == bulk_url(1)]
+    assert profiles == ["chrome", "safari"]
+
+
+def test_impersonated_forbidden_store_switches_profile_once():
+    fetcher = _CurlLike({f"{STORE}/robots.txt": (404, "")}, default_status=403)
+    store = _status(fetcher, retries=3)
+    assert store.status == "forbidden"
+    assert store.identity_changes == 1
+    profiles = [r.identity.impersonate for r in fetcher.requests if r.url == bulk_url(1)]
+    assert profiles == ["chrome", "safari", "safari", "safari"]
+
+
+def test_identity_changes_reported():
+    fetcher = _CurlLike(
+        {f"{STORE}/robots.txt": (404, ""), bulk_url(1): Seq([(429, ""), products(2)])}
+    )
+    _, result, _ = scrape(fetcher)
+    assert result.stores[0].identity_changes == 1
+
+
+def test_rotate_false_keeps_one_identity():
+    fetcher = _CurlLike(
+        {f"{STORE}/robots.txt": (404, ""), bulk_url(1): Seq([(403, ""), products(2)])}
+    )
+    _, result, _ = scrape(fetcher, rotate=False)
+    assert result.stores[0].identity_changes == 0
+    assert {r.identity.impersonate for r in fetcher.requests} == {"chrome"}
+
+
+def test_each_store_starts_with_the_first_profile():
+    other_store = "https://other.test"
+    fetcher = _CurlLike(
+        {
+            bulk_url(1): Seq([(403, ""), products(1)]),
+            bulk_url(1, other_store): Seq([(403, ""), products(1)]),
+        }
+    )
+    run = spy.scrape([STORE, other_store], fetcher_factory=lambda: fetcher, **FAST)
+    list(run)
+    for store in (STORE, other_store):
+        sent = [r.identity.impersonate for r in fetcher.requests if r.url == bulk_url(1, store)]
+        assert sent == ["chrome", "safari"]

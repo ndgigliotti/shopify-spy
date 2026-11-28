@@ -16,6 +16,11 @@ def dicts(value: Any) -> list[dict[str, Any]]:
     return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
 
 
+def blank_to_none(value: str | None) -> str | None:
+    """None for a blank string, such as an empty shell variable passed as an option."""
+    return value if value is None or value.strip() else None
+
+
 def normalize_url(url: str) -> urllib.parse.ParseResult:
     """Parse a URL, assuming https if no scheme is provided."""
     # Don't rely on urlparse's scheme: it reads "store.com:8080" as scheme "store.com"

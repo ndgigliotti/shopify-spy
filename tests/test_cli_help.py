@@ -70,6 +70,11 @@ def test_piped_scrape_help_content():
         "<output>/status/",
         "<output>/images/full/",
         "Exit status: 0",
+        "a bad --proxy or --impersonate",
+        "--impersonate with --user-agent",
+        "switches the store to the next of chrome, safari, firefox (default: chrome)",
+        "Fixed User-Agent header, never swapped; turns impersonation off",
+        "--no-rotate keeps one identity for the whole run (default: on)",
         "./shopify-spy.yaml",
         "~/.config/shopify-spy/config.yaml",
     ):
@@ -84,6 +89,10 @@ def test_piped_help_lists_options_by_task():
     assert out.index("--url-file") < out.index("--platform") < out.index("--limit")
     assert out.index("--limit") < out.index("--output") < out.index("--concurrent")
     assert out.index("--ignore-robots") < out.index("--bail") < out.index("--quiet")
+    network = out[out.index("Network:") : out.index("Run control:")]
+    assert network.index("--user-agent") < network.index("-I, --impersonate BROWSER")
+    assert network.index("-I, --impersonate BROWSER") < network.index("--rotate / --no-rotate")
+    assert network.index("--rotate / --no-rotate") < network.index("--proxy")
 
 
 def test_terminal_help_renders_rich_panels(monkeypatch):

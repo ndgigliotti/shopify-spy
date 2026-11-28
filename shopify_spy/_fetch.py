@@ -10,17 +10,23 @@ import asyncio
 import base64
 import gzip
 import http.cookiejar
+import ipaddress
 import json
 import logging
+import os
+import re
 import ssl
 import urllib.parse
 import urllib.request
+import warnings
 import zlib
 from collections import defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Self
+
+import certifi
 
 from shopify_spy._utils import canonicalize_url
 
@@ -47,7 +53,13 @@ class Identity:
 
     user_agent: str | None
     headers: Mapping[str, str] = field(default_factory=dict)
-    impersonate: str | None = None  # for TLS-impersonating transports later
+    # A curl_cffi browser profile, for transports that impersonate (CurlCffiFetcher)
+    impersonate: str | None = None
+
+    @property
+    def name(self) -> str:
+        """The profile, else the user agent: what a refusal is remembered by."""
+        return self.impersonate or self.user_agent or ""
 
 
 @dataclass(frozen=True)
@@ -66,7 +78,9 @@ class Response:
     status: int
     headers: Mapping[str, str]
     body: bytes
-    latency: float = 0.0  # seconds to response headers
+    # Seconds to response headers (CurlCffiFetcher: to the first body byte, or to
+    # the complete response when there is no body; curl_cffi has no headers hook)
+    latency: float = 0.0
 
     @property
     def text(self) -> str:
@@ -139,11 +153,13 @@ class Fetcher(Protocol):
 FetcherFactory = Callable[[], Fetcher]
 
 
-def decompress(body: bytes, wbits: int, max_size: int = MAX_SIZE) -> bytes:
-    """Inflate zlib/gzip/raw-deflate data, refusing output larger than max_size.
+def decompress(body: bytes, wbits: int, max_size: int | None = None) -> bytes:
+    """Inflate zlib/gzip/raw-deflate data, refusing output larger than max_size (MAX_SIZE).
 
     Concatenated gzip members (allowed by RFC 1952) are all decoded.
     """
+    if max_size is None:
+        max_size = MAX_SIZE
     out = bytearray()
     data = body
     while True:
@@ -256,28 +272,147 @@ def validate_proxy(url: str) -> str:
     return url
 
 
-def _env_proxies() -> list[str]:
-    """The proxy URLs httpx would take from the environment.
+def _env_proxy_mounts() -> dict[str, str | None]:
+    """The proxy mounts httpx builds from the environment: pattern -> proxy, None to bypass.
 
     Mirrors httpx._utils.get_environment_proxies (private, so not imported);
-    test_fetch's parity test pins this to the installed httpx.
+    test_fetch's parity tests pin this to the installed httpx.
     """
     info = urllib.request.getproxies()
-    if any(host.strip() == "*" for host in info.get("no", "").split(",")):
-        return []
-    values = [info[scheme] for scheme in ("http", "https", "all") if info.get(scheme)]
-    return [v if "://" in v else f"http://{v}" for v in values]
+    mounts: dict[str, str | None] = {}
+    for scheme in ("http", "https", "all"):
+        if value := info.get(scheme):
+            mounts[f"{scheme}://"] = value if "://" in value else f"http://{value}"
+    hosts = [host.strip() for host in info.get("no", "").split(",")]
+    if "*" in hosts:
+        return {}
+    mounts.update((_no_proxy_pattern(host), None) for host in hosts if host)
+    return mounts
+
+
+def _no_proxy_pattern(host: str) -> str:
+    if "://" in host:
+        return host
+    try:
+        version = ipaddress.ip_address(host.split("/")[0]).version
+    except ValueError:
+        version = None
+    if version == 4 or host.lower() == "localhost":
+        return f"all://{host}"
+    if version == 6:
+        return f"all://[{host}]"
+    # Unlike urllib's rule, ".example.com" bypasses subdomains but not example.com
+    return f"all://*{host}"
+
+
+@dataclass(frozen=True)
+class _URLPattern:
+    """Mirrors httpx._utils.URLPattern, which orders and matches proxy mounts."""
+
+    scheme: str
+    host_regex: re.Pattern[str] | None
+    port: int | None
+    priority: tuple[int, int, int]
+
+    @classmethod
+    def parse(cls, pattern: str) -> _URLPattern:
+        import httpx
+
+        url = httpx.URL(pattern)
+        scheme = "" if url.scheme == "all" else url.scheme
+        host = "" if url.host == "*" else url.host
+        if not host:
+            regex = None
+        elif host.startswith("*."):
+            regex = re.compile(rf"^.+\.{re.escape(host[2:])}$")
+        elif host.startswith("*"):
+            regex = re.compile(rf"^(.+\.)?{re.escape(host[1:])}$")
+        else:
+            regex = re.compile(rf"^{re.escape(host)}$")
+        priority = (0 if url.port is not None else 1, -len(host), -len(scheme))
+        return cls(scheme, regex, url.port, priority)
+
+    def matches(self, url: httpx.URL) -> bool:
+        return (
+            (not self.scheme or self.scheme == url.scheme)
+            and (self.host_regex is None or bool(self.host_regex.match(url.host)))
+            and (self.port is None or self.port == url.port)
+        )
+
+
+def env_proxy_for(url: str) -> str | None:
+    """The proxy httpx would use for ``url`` from the environment, or None to go direct.
+
+    A URL httpx can't parse gets None: no request goes anywhere for it.
+    """
+    import httpx
+
+    try:
+        target = httpx.URL(url)
+    except (httpx.InvalidURL, UnicodeError, ValueError):
+        return None
+    mounts = []
+    for key, proxy in _env_proxy_mounts().items():
+        try:
+            mounts.append((_URLPattern.parse(key), proxy))
+        except (httpx.InvalidURL, UnicodeError, ValueError):
+            continue  # httpx itself refuses to build a client for it
+    # Stable, like httpx's sort, so equal priorities keep the environment's order
+    for pattern, proxy in sorted(mounts, key=lambda mount: mount[0].priority):
+        if pattern.matches(target):
+            return proxy
+    return None
 
 
 def uses_proxy(url: str, proxy: str | None) -> bool:
     """Whether a request to ``url`` goes through a proxy, explicit or from the environment."""
-    if proxy is not None:
-        return True
-    parts = urllib.parse.urlsplit(url)
-    env = {scheme: info for scheme, info in urllib.request.getproxies().items() if info}
-    if parts.scheme not in env and "all" not in env:
-        return False
-    return not urllib.request.proxy_bypass_environment(parts.hostname or "")
+    return proxy is not None or env_proxy_for(url) is not None
+
+
+# The browser profiles a store rotates through on refusals, starting with the first.
+# Aliases curl_cffi resolves to its newest desktop profile of that browser; each is
+# accepted by every curl_cffi in the supported range (0.16.3 to 0.17). "edge" is left
+# out: it resolves to Edge 101, from 2022.
+IMPERSONATE_PROFILES = ("chrome", "safari", "firefox")
+DEFAULT_IMPERSONATE = IMPERSONATE_PROFILES[0]
+
+
+def impersonate_rotation(start: str) -> tuple[str, ...]:
+    """The profiles a store tries in turn, starting with ``start``.
+
+    A pool profile starts the pool at its place; any other comes first, followed by
+    the pool without the profile it resolves to (``chrome150`` for ``chrome`` when
+    that is curl_cffi's newest Chrome).
+    """
+    pool = IMPERSONATE_PROFILES
+    if start in pool:
+        i = pool.index(start)
+        return pool[i:] + pool[:i]
+    from curl_cffi.requests.impersonate import resolve_latest_browser_type
+
+    same = resolve_latest_browser_type(start)
+    return (start, *(p for p in pool if resolve_latest_browser_type(p) != same))
+
+
+def validate_impersonate(target: str) -> str:
+    """Return ``target`` if the installed curl_cffi can impersonate it, else raise ValueError.
+
+    Mirrors how curl_cffi resolves a target when it builds a request: a native
+    libcurl target (after aliases like "chrome") or a named fingerprint. Its
+    BrowserTypeLiteral lists targets it can't use (safari18_4) and misses some it
+    can (tor).
+    """
+    from curl_cffi.fingerprints import FingerprintManager
+    from curl_cffi.requests.impersonate import resolve_latest_browser_type
+    from curl_cffi.requests.utils import NATIVE_TARGET_NAMES
+
+    native = resolve_latest_browser_type(target) in NATIVE_TARGET_NAMES
+    if not (native or target in FingerprintManager.load_fingerprints()):
+        raise ValueError(
+            f"unknown impersonate target {target!r}; use a curl_cffi browser such as "
+            "chrome, firefox or safari, or a pinned profile such as chrome150"
+        )
+    return target
 
 
 def check_proxy_support(proxy: str | None) -> None:
@@ -293,7 +428,7 @@ def check_proxy_support(proxy: str | None) -> None:
         return
     import httpx
 
-    for value in _env_proxies():
+    for value in filter(None, _env_proxy_mounts().values()):
         # httpx parses these itself, so they aren't encoded for it (see
         # encode_proxy_userinfo); stricter than httpx, which would misroute them
         if encode_proxy_userinfo(value) != value:
@@ -307,12 +442,72 @@ def check_proxy_support(proxy: str | None) -> None:
             raise ValueError(f"{_ENV_PROXY_PREFIX}{exc}") from None
         if scheme not in PROXY_SCHEMES:
             raise ValueError(f"{_ENV_PROXY_PREFIX}unknown scheme in {redact_url(value)!r}")
+    # httpx fails to build its client on these; env_proxy_for would skip them, so
+    # CurlCffiFetcher would proxy what the user meant to send direct
+    for pattern in _env_proxy_mounts():
+        try:
+            _URLPattern.parse(pattern)
+        except (httpx.InvalidURL, UnicodeError, ValueError) as exc:
+            host = pattern.removeprefix("all://").removeprefix("*")
+            raise ValueError(f"NO_PROXY in the environment: bad entry {host!r} ({exc})") from None
+
+
+_CA_FILE_VARIABLES = ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
+
+
+def ca_locations(trust_env: bool = True) -> tuple[str | None, str | None]:
+    """The CA file and directory both fetchers trust instead of certifi's bundle.
+
+    Read from the environment when called, and only with ``trust_env``: the file
+    from the first of SSL_CERT_FILE, REQUESTS_CA_BUNDLE and CURL_CA_BUNDLE that is
+    set, the directory (OpenSSL's hashed layout) from SSL_CERT_DIR. Either one, or
+    both together, replaces the default bundle, as httpx does with SSL_CERT_FILE.
+    (None, None) means certifi's bundle.
+
+    Raises ValueError, naming the variable, for a file that can't be opened: httpx
+    would fail building its client and curl on every request, each its own way.
+    So does a directory with no hashed certificate, which httpx would trust nothing
+    from and curl would back with libcurl's built-in bundle (see _curl_ca_options).
+    """
+    if not trust_env:
+        return None, None
+    cafile = None
+    for name in _CA_FILE_VARIABLES:
+        if cafile := os.environ.get(name):
+            try:
+                open(cafile, "rb").close()
+            except OSError as exc:
+                raise ValueError(
+                    f"{name} in the environment: can't read the CA file {cafile!r} "
+                    f"({exc.strerror or exc})"
+                ) from None
+            break
+    capath = os.environ.get("SSL_CERT_DIR") or None
+    if capath is not None:
+        _hashed_cert_in(capath)
+    return cafile or None, capath
+
+
+def _ssl_context(trust_env: bool) -> ssl.SSLContext:
+    cafile, capath = ca_locations(trust_env)
+    if cafile is None and capath is None:
+        cafile = certifi.where()
+    return ssl.create_default_context(cafile=cafile, capath=capath)
+
+
+def _proxy_with(url: str, context: ssl.SSLContext) -> httpx.Proxy:
+    import httpx
+
+    # httpcore refuses a context for an http:// proxy, which has no TLS to use it
+    https = httpx.URL(url).scheme == "https"
+    return httpx.Proxy(url, ssl_context=context if https else None)
 
 
 class HttpxFetcher:
     """Default transport: httpx over HTTP/1.1, one hop per fetch.
 
     An explicit ``proxy`` replaces any proxy from the environment (NO_PROXY included).
+    CAs come from ca_locations, read on entry, for the store and an https:// proxy.
     """
 
     capabilities = FetcherCapabilities()
@@ -328,12 +523,29 @@ class HttpxFetcher:
     async def __aenter__(self) -> Self:
         import httpx  # imported here: it's slow to import and only needed for real HTTP
 
+        # An SSLContext, so httpx's own reading of SSL_CERT_FILE/DIR never applies
+        context = _ssl_context(self._trust_env) if self._verify else None
+        proxy: str | httpx.Proxy | None = self._proxy
+        mounts: dict[str, httpx.AsyncBaseTransport | None] | None = None
+        if context is not None:
+            # httpcore checks an https:// proxy against its own default context
+            # unless the Proxy carries one, which httpx never gives the environment's
+            if proxy is not None:
+                proxy = _proxy_with(proxy, context)
+            elif self._trust_env:
+                mounts = {
+                    pattern: None
+                    if url is None
+                    else httpx.AsyncHTTPTransport(verify=context, proxy=_proxy_with(url, context))
+                    for pattern, url in _env_proxy_mounts().items()
+                }
         self._client = httpx.AsyncClient(
             http1=True,
             http2=False,
-            verify=self._verify,
+            verify=context or False,
             trust_env=self._trust_env,
-            proxy=self._proxy,
+            proxy=proxy,
+            mounts=mounts,
             follow_redirects=False,
             headers={"Accept-Encoding": ACCEPT_ENCODING},
             timeout=None,  # a total deadline is enforced per fetch instead
@@ -412,6 +624,272 @@ class HttpxFetcher:
             body=body,
             latency=latency,
         )
+
+
+# httpx's default max_connections; curl_cffi's own default of 10 would queue
+# requests the run's concurrency limits allow
+MAX_CURL_CLIENTS = 100
+
+# curl_cffi warns on every https:// request through an https:// proxy; ours are
+# deliberate, and its advice (use http://) would change how the proxy is reached
+_HTTPS_PROXY_WARNING = "Make sure you are using https over https proxy"
+
+
+class _UndecodableBody(Exception):
+    """libcurl refused a Content-Encoding before writing any body."""
+
+
+def _socks_on_proxy(proxy: str) -> str:
+    """``socks5://`` as ``socks5h://``: httpx resolves names on the proxy for both."""
+    scheme, sep, rest = proxy.partition("://")
+    return f"socks5h://{rest}" if sep and scheme.lower() == "socks5" else proxy
+
+
+def _scrub(message: str, proxy: str | None) -> str:
+    return message.replace(proxy, redact_url(proxy)) if proxy else message
+
+
+def _curl_ca_options(trust_env: bool) -> dict[Any, Any]:
+    """libcurl options for ca_locations, for the store and the proxy alike.
+
+    Both locations are always set, so neither curl_cffi's import-time CA file nor
+    libcurl's built-in CA directory adds to them. An unused one gets a placeholder,
+    not NULL: the libcurl in curl_cffi 0.16 (8.21) takes NULL as the built-in default.
+    A CA file stands in as the directory (nothing can be found under a file), and
+    a certificate from the directory as the file (the directory trusts it anyway).
+    """
+    from curl_cffi import CurlOpt
+
+    cafile, capath = ca_locations(trust_env)
+    if cafile is None:
+        cafile = _hashed_cert_in(capath) if capath else certifi.where()
+    path = capath or cafile
+    return {
+        CurlOpt.CAINFO: cafile,
+        CurlOpt.CAPATH: path,
+        CurlOpt.PROXY_CAINFO: cafile,
+        CurlOpt.PROXY_CAPATH: path,
+    }
+
+
+def _hashed_cert_in(directory: str) -> str:
+    """A PEM certificate the directory serves under its hashed name.
+
+    Raises ValueError naming SSL_CERT_DIR when there is none, or no directory.
+    """
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError:
+        names = []
+    for name in names:
+        if re.fullmatch(r"[0-9a-f]{8}\.\d+", name):
+            path = os.path.join(directory, name)
+            try:
+                with open(path, "rb") as file:
+                    if b"CERTIFICATE-----" in file.read(65536):
+                        return path
+            except OSError:
+                continue
+    raise ValueError(
+        f"SSL_CERT_DIR in the environment: no CA certificate under a hashed name in "
+        f"{directory!r} (lay it out with openssl rehash)"
+    )
+
+
+class CurlCffiFetcher:
+    """Transport that presents a browser profile's TLS and HTTP/2 fingerprint and
+    headers, through curl_cffi. One hop per fetch.
+
+    It keeps HttpxFetcher's contract: no redirects followed, no cookies kept, the
+    MAX_SIZE cap, the same errors, a total deadline on the loop clock, and proxies
+    chosen by httpx's rules (an explicit ``proxy`` replaces the environment's).
+    CAs come from ca_locations, read on entry, as in HttpxFetcher.
+    Each request uses ``Request.identity.impersonate``, or ``impersonate`` when that
+    is None. The profile brings its own user agent and headers, so the identity's
+    are never applied; ``Request.headers`` override the profile's.
+    """
+
+    capabilities = FetcherCapabilities(applies_identity_headers=False, can_impersonate=True)
+
+    def __init__(
+        self,
+        impersonate: str = DEFAULT_IMPERSONATE,
+        *,
+        verify: bool = True,
+        trust_env: bool = True,
+        proxy: str | None = None,
+    ) -> None:
+        self._impersonate = impersonate
+        self._verify = verify
+        self._trust_env = trust_env
+        self._proxy = None if proxy is None else encode_proxy_userinfo(proxy)
+        # One session per (profile, raw): a session's connections keep the TLS and
+        # HTTP/2 settings of the profile that opened them, so profiles never share
+        # one. Raw sessions read bodies libcurl can't decode; all open on first use
+        self._sessions: dict[tuple[str, bool], Any] = {}
+        self._curls: list[Any] = []
+        self._ca_options: dict[Any, Any] = {}
+        self._entered = False
+
+    async def __aenter__(self) -> Self:
+        from curl_cffi.utils import CurlCffiWarning
+
+        # Installed on every entry: a caller's catch_warnings may have reset the
+        # filters since. Never removed, since that could drop someone else's entry
+        warnings.filterwarnings("ignore", message=_HTTPS_PROXY_WARNING, category=CurlCffiWarning)
+        self._ca_options = _curl_ca_options(self._trust_env) if self._verify else {}
+        self._entered = True
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        for session in self._sessions.values():
+            await session.close()
+        for acurl in self._curls:  # a session doesn't close an AsyncCurl it was given
+            await acurl.close()
+        self._sessions = {}
+        self._curls = []
+        self._entered = False
+
+    def _session(self, profile: str, raw: bool = False) -> Any:
+        from curl_cffi import AsyncCurl, CurlOpt
+        from curl_cffi.requests import AsyncSession
+        from curl_cffi.utils import CurlCffiWarning
+
+        session = self._sessions.get((profile, raw))
+        if session is not None:
+            return session
+        # On a Windows Proactor loop curl_cffi warns that it runs select() in a
+        # thread and to change the loop policy, which scrape() and the CLI own; the
+        # thread hands control back to the loop, so callbacks stay on it
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", CurlCffiWarning)
+            acurl = AsyncCurl()
+        self._curls.append(acurl)
+        session = self._sessions[profile, raw] = AsyncSession(
+            async_curl=acurl,
+            max_clients=MAX_CURL_CLIENTS,
+            impersonate=profile,
+            verify=self._verify,
+            discard_cookies=True,  # the session is shared by every store in a run
+            allow_redirects=False,
+            # Every request sets its proxy, empty for direct, so libcurl never reads
+            # the proxy environment; NOPROXY "" stops it applying NO_PROXY to that
+            curl_options={
+                CurlOpt.NOPROXY: "",
+                **({CurlOpt.HTTP_CONTENT_DECODING: 0} if raw else {}),
+                **self._ca_options,
+            },
+        )
+        return session
+
+    async def fetch(self, request: Request) -> Response:
+        import httpx
+
+        assert self._entered, "use CurlCffiFetcher as an async context manager"
+        profile = request.identity.impersonate or self._impersonate
+        try:
+            # httpx's rule, so both fetchers refuse the same URLs; curl_cffi would
+            # percent-encode control characters and send them
+            scheme = httpx.URL(request.url).scheme
+        except (httpx.InvalidURL, UnicodeError, ValueError) as exc:
+            raise FetchInvalidURL(f"{request.url!r}: {exc}") from exc
+        if scheme not in ("http", "https"):
+            # libcurl would read file:// and open dict://, ftp:// and the rest;
+            # httpx raises UnsupportedProtocol, a transport error
+            raise FetchConnectionError(f"unsupported protocol in {request.url!r}")
+        proxy = self._proxy or (env_proxy_for(request.url) if self._trust_env else None)
+        if proxy:
+            proxy = _socks_on_proxy(proxy)
+        # proxies={"all": ""} sets an empty CURLOPT_PROXY: direct, whatever the
+        # environment says (proxy="" would count as unset)
+        route: dict[str, Any] = {"proxy": proxy} if proxy else {"proxies": {"all": ""}}
+        try:
+            # timeout=None on the request: libcurl's timers run on the wall clock,
+            # which keeps going while scrape() is paused
+            async with asyncio.timeout(request.timeout):
+                try:
+                    return await self._attempt(profile, False, request, route, proxy)
+                except _UndecodableBody:
+                    # Every request the adapters make is a GET, so resending is safe
+                    return await self._attempt(profile, True, request, route, proxy)
+        except TimeoutError as exc:
+            raise FetchTimeout(f"no complete response within {request.timeout}s") from exc
+
+    async def _attempt(
+        self, profile: str, raw: bool, request: Request, route: dict[str, Any], proxy: str | None
+    ) -> Response:
+        from curl_cffi.curl import CURL_WRITEFUNC_ERROR
+        from curl_cffi.requests.exceptions import RequestException
+
+        session = self._session(profile, raw)
+        loop = asyncio.get_running_loop()
+        chunks: list[bytes] = []
+        size = 0
+        first_byte: float | None = None
+
+        def on_chunk(chunk: bytes) -> int:
+            nonlocal size, first_byte
+            if first_byte is None:
+                first_byte = loop.time()
+            size += len(chunk)
+            if size > MAX_SIZE:
+                return CURL_WRITEFUNC_ERROR  # aborts the transfer at once
+            chunks.append(chunk)
+            return len(chunk)
+
+        start = loop.time()  # the loop clock excludes time the sync API is paused
+        try:
+            resp = await session.request(
+                request.method,
+                request.url,
+                headers=dict(request.headers) or None,
+                data=request.body,
+                content_callback=on_chunk,
+                allow_redirects=False,
+                timeout=None,
+                **route,
+            )
+        except RequestException as exc:
+            if size > MAX_SIZE:
+                raise FetchTooLarge(f"response exceeded {MAX_SIZE} bytes") from exc
+            raise _map_curl_error(
+                exc, received=first_byte is not None, raw=raw, proxy=proxy
+            ) from exc
+        latency = (loop.time() if first_byte is None else first_byte) - start
+        body = b"".join(chunks)
+        headers = {k.lower(): v for k, v in resp.headers.items()}
+        if raw:
+            try:
+                body = _decode(body, headers.get("content-encoding", ""))
+            except zlib.error as exc:
+                raise FetchIncomplete(f"corrupt compressed body: {exc}") from exc
+        if len(body) > WARN_SIZE:
+            logger.warning("Large response (%d bytes) from %s", len(body), request.url)
+        return Response(
+            url=str(resp.url), status=resp.status_code, headers=headers, body=body, latency=latency
+        )
+
+
+def _map_curl_error(exc: Any, *, received: bool, raw: bool, proxy: str | None) -> Exception:
+    """The Fetch* error (or _UndecodableBody) for a curl_cffi RequestException."""
+    from curl_cffi.const import CurlECode
+    from curl_cffi.requests import exceptions as cx
+
+    message = _scrub(str(exc) or repr(exc), proxy)
+    code = getattr(exc, "code", None)
+    if isinstance(exc, cx.Timeout):
+        return FetchTimeout(message)
+    if isinstance(exc, cx.CertificateVerifyError):
+        return FetchTLSError(message)
+    if isinstance(exc, (cx.InvalidURL, cx.InvalidSchema, cx.MissingSchema)):
+        return FetchInvalidURL(message)
+    if code == CurlECode.BAD_CONTENT_ENCODING and not received:
+        return FetchIncomplete(message) if raw else _UndecodableBody(message)
+    # A failure once the body has started is a body-read error, as in HttpxFetcher
+    incomplete = (cx.IncompleteRead, cx.ChunkedEncodingError, cx.ContentDecodingError)
+    if received or code == CurlECode.PARTIAL_FILE or isinstance(exc, incomplete):
+        return FetchIncomplete(message)
+    return FetchConnectionError(message)
 
 
 # Transports for tests and for replaying recorded traffic

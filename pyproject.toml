@@ -57,6 +57,8 @@ dependencies = [
     "httpx[socks]>=0.28",
     "protego>=0.4",
     "defusedxml>=0.7",
+    "curl_cffi>=0.16.3,<0.18",
+    "certifi",
 ]
 
 [project.optional-dependencies]
@@ -111,4 +113,5 @@ dev = [
     "pre-commit>=4.0",
     "xlsxwriter>=3.0",
     "openpyxl>=3.1",
+    "trustme>=1.2.1",
 ]

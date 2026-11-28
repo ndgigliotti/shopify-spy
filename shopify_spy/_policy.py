@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import email.utils
-import json
 import math
 import random
 import time
+from collections.abc import Collection
 from dataclasses import dataclass, field
-from importlib import resources
 
 from protego import Protego
 
-from shopify_spy._fetch import FetcherCapabilities, Identity
+from shopify_spy._fetch import IMPERSONATE_PROFILES, FetcherCapabilities, Identity, Response
 
 # Headers Scrapy sends by default; kept so servers see the same requests as before
 DEFAULT_HEADERS = {
@@ -29,6 +28,17 @@ RETRY_MAX_DELAY = 60.0  # longest wait before a retry; a longer Retry-After paus
 ROTATE_ON_STATUSES = frozenset({403, 429})
 # "Slow down" responses: they pause the host and raise its delay floor (HostSlot.pause)
 RATE_LIMIT_STATUSES = frozenset({429, 503})
+# Cloudflare marks its challenge responses with this header; older challenge pages
+# only have the interstitial's title
+_CHALLENGE_TITLE = b"<title>Just a moment...</title>"
+
+
+def is_challenge(response: Response) -> bool:
+    """Whether a response is a bot challenge page, which only a real browser that runs
+    its script can pass: no retry or identity change gets past it."""
+    if response.headers.get("cf-mitigated", "").strip().lower() == "challenge":
+        return True
+    return response.status in (403, 429, 503) and _CHALLENGE_TITLE in response.body[:65536]
 
 
 def now() -> float:
@@ -221,52 +231,74 @@ class RetryPolicy:
 
 
 def retry_policy_for(capabilities: FetcherCapabilities, retries: int, backoff: bool) -> RetryPolicy:
-    """Pick retry behavior for a transport. Browsers don't rotate identities."""
-    rotate = frozenset() if not capabilities.applies_identity_headers else ROTATE_ON_STATUSES
-    return RetryPolicy(retries=retries, rotate_on=rotate, backoff=backoff)
+    """Pick retry behavior for a transport.
 
-
-def load_user_agents() -> list[str]:
-    """Browser user agents from user_agents.json (browser -> platform -> strings).
-
-    scripts/update_user_agents.py maintains the JSON. importlib.resources (not a
-    path next to __file__) so it also loads from zipped installs.
+    A transport rotates identities if it sends the identity's user agent or its
+    impersonation profile; one that brings its own (a real browser) doesn't.
     """
-    text = resources.files("shopify_spy").joinpath("user_agents.json").read_text("utf-8")
-    data = json.loads(text)
-    return [a for platforms in data["agents"].values() for p in platforms.values() for a in p]
-
-
-USER_AGENTS = load_user_agents()
+    rotates = capabilities.applies_identity_headers or capabilities.can_impersonate
+    rotate = ROTATE_ON_STATUSES if rotates else frozenset()
+    return RetryPolicy(retries=retries, rotate_on=rotate, backoff=backoff)
 
 
 @dataclass
 class IdentityPool:
-    """A store's browser identity: one random UA, swapped only after a 403 or 429.
+    """A store's identity: a browser profile, switched only after a 403 or 429, or a
+    fixed ``user_agent``, never switched.
 
-    A fixed ``user_agent`` disables rotation.
+    The identity starts as the first of ``profiles``, and each switch moves to the
+    next, wrapping around; the profile brings its own user agent. ``rotation=False``
+    keeps the first profile.
+
+    A switch tests whether a refusal is specific to the identity (#62: Shopify
+    refusing one user agent). If the new profile is refused before it is answered
+    normally, the block isn't, and the store stops switching.
     """
 
     user_agent: str | None = None
-    agents: list[str] = field(default_factory=lambda: list(USER_AGENTS))
+    profiles: tuple[str, ...] = IMPERSONATE_PROFILES  # ignored with a user_agent
+    rotation: bool = True
     current: Identity = field(init=False)
+    stopped: bool = field(default=False, init=False)  # a switched-to profile was refused
+    _index: int = field(default=0, init=False, repr=False)
+    # The identity switched to, until it is answered normally
+    _on_trial: Identity | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        ua = self.user_agent or random.choice(self.agents)
-        self.current = Identity(user_agent=ua, headers=dict(DEFAULT_HEADERS))
+        if self.user_agent is not None:
+            self.profiles = ()
+            self.current = Identity(user_agent=self.user_agent, headers=dict(DEFAULT_HEADERS))
+            return
+        self.current = Identity(user_agent=None, impersonate=self.profiles[0])
 
     @property
     def rotates(self) -> bool:
-        return self.user_agent is None and len(self.agents) > 1
+        return self.rotation and not self.stopped and len(self.profiles) > 1
 
-    def rotate(self) -> None:
+    def answered(self, sent: Identity) -> None:
+        """``sent`` got a normal answer: a refusal it had escaped was about identity."""
+        if sent == self._on_trial:
+            self._on_trial = None
+
+    def refused(self, sent: Identity) -> None:
+        """``sent`` got a 403 or 429; refusing a switched-to profile stops the switches."""
+        if sent == self._on_trial:
+            self.stopped = True
+
+    def rotate(self, exclude: Collection[str] = ()) -> bool:
+        """Switch to the next profile not in ``exclude``; False if none is left."""
         if not self.rotates:
-            return
-        previous = self.current.user_agent
-        ua = previous
-        while ua == previous:
-            ua = random.choice(self.agents)
-        self.current = Identity(user_agent=ua, headers=dict(DEFAULT_HEADERS))
+            return False
+        profiles = self.profiles
+        n = len(profiles)
+        for step in range(1, n):
+            index = (self._index + step) % n
+            if profiles[index] not in exclude:
+                self._index = index
+                self.current = Identity(user_agent=None, impersonate=profiles[index])
+                self._on_trial = self.current
+                return True
+        return False
 
 
 class RobotsRules:
