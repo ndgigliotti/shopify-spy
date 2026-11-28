@@ -442,8 +442,8 @@ def write_status(
     ``items_written`` how many items the data file holds; it falls short of
     ``items_scraped`` when a write failed. ``products_from`` names the host a store's
     products came from when its own /products.json was a 404 (None otherwise), and
-    ``identity_changes`` how often the store switched browser profile after a refusal,
-    and ``hint`` is ``StoreResult.hint`` (None when there is none).
+    ``identity_changes`` how often the store switched browser profile after a refusal.
+    ``hint`` is ``StoreResult.hint`` (None when there is none).
     """
     entries = [
         {
