@@ -10,6 +10,10 @@ pageSize`` reaches ``total_count``, or when a page comes back empty. A page-size
 limit named in a GraphQL error on the first page, or a smaller ``page_info.page_size``
 than asked for in its answer (a store that caps it silently), shrinks the page size;
 later pages keep it, since changing it would shift every later offset.
+
+An item a resolver failed on comes back null, with an error whose ``path`` names
+it; the store is then incomplete. A null without such an error is a product the
+storefront hides, and isn't.
 """
 
 from __future__ import annotations
@@ -92,6 +96,7 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
     base = ctx.url
     page, size = 1, PAGE_SIZE
     seen = _Seen()
+    missed = 0  # items a resolver failed on
     while (response := await _get(ctx, get_api_url(base, page, size))) is not None:
         where = f"{_endpoint(response.url)} page {page}"
         products, problem = _read(response)
@@ -107,11 +112,14 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
                 # Resolver errors null out the items they hit, so this is a failed page
                 return await _failed(ctx, response, where, page, problem)
             logger.warning("Magento GraphQL answered with errors for %s: %s", where, problem)
+            if failed := _failed_items(response, products["items"]):
+                logger.warning("Magento: %d products failed to resolve on %s", failed, where)
+                missed += failed
         if page == 1:
             size = _effective_page_size(products, size, where)
         done = await _take_page(ctx, emit, response, products, seen, where, page, size)
         if done is not None:
-            return done
+            return done and not missed
         page += 1
         # Past a redirect (http to https, apex to www), not through it on every page
         base = origin(response.url)
@@ -188,6 +196,21 @@ def _effective_page_size(products: dict[str, Any], size: int, where: str) -> int
         return size
     logger.info("Magento answered page size %d for %d at %s; paging with it", answered, size, where)
     return answered
+
+
+def _failed_items(response: Response, items: list[Any]) -> int:
+    """How many of a page's null ``items`` a GraphQL error's ``path`` names
+    (``["products", "items", 1, ...]``): products a resolver failed on."""
+    errors = _dig(response.json_or_none(), "errors")
+    failed = set()
+    for error in dicts(errors if isinstance(errors, list) else []):
+        path = error.get("path")
+        if not isinstance(path, list) or len(path) < 3 or path[:2] != ["products", "items"]:
+            continue
+        index = _int(path[2])
+        if index is not None and 0 <= index < len(items) and items[index] is None:
+            failed.add(index)
+    return len(failed)
 
 
 async def _failed(

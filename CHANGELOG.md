@@ -170,6 +170,9 @@
   `page_info.page_size` smaller than the 100 asked for) is paged with that size,
   and paging follows `page_info.total_pages`; before, such a store stopped after
   its first page and reported `ok`.
+- A Magento page with a null product and a GraphQL error whose `path` names it
+  keeps its other products and makes the store `partial`; a null without such an
+  error (a hidden product) still leaves it `ok`.
 
 ## 0.5.1
 

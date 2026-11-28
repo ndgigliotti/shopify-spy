@@ -390,3 +390,22 @@ def test_total_pages_ends_paging():
     assert len(items) == 150
     assert fetcher.count(magento_url(3)) == 0
     assert result.stores[0].complete
+
+
+def test_a_null_item_with_an_error_is_partial(caplog):
+    error = {"message": "Internal server error", "path": ["products", "items", 1]}
+    routes = {magento_url(1): answer([mg_product(1), None], 2, errors=[error])}
+    with caplog.at_level(logging.WARNING, logger="shopify_spy"):
+        items, result, _ = scrape_mg(routes)
+    assert [i["sku"] for i in items] == ["SKU1"]
+    assert result.stores[0].status == "partial"
+    assert not result.stores[0].complete
+
+
+def test_a_null_item_without_an_error_stays_complete():
+    other = {"message": "Could not resolve image", "path": ["products", "items", 0, "image"]}
+    routes = {magento_url(1): answer([mg_product(1), None], 2, errors=[other])}
+    items, result, _ = scrape_mg(routes)
+    assert [i["sku"] for i in items] == ["SKU1"]
+    assert result.stores[0].status == "ok"
+    assert result.stores[0].complete
