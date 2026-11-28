@@ -235,7 +235,8 @@ def jsonld_id(node: dict[str, Any], keys: tuple[str, ...]) -> str | None:
 
 def _jsonld(item: dict[str, Any]) -> ItemSummary:
     low, high, currency = jsonld_prices(item)
-    urls = item.get("image_urls") or jsonld.image_urls(item.get("image"), item.get("html_url"))
+    # Not ``image_urls``, which is filled only with --images
+    urls = jsonld.product_image_urls(item, item.get("html_url"))
     return ItemSummary(
         kind="product",
         platform="jsonld",

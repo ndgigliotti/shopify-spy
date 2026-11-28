@@ -355,6 +355,14 @@ def image_urls(value: Any, base: Any = None) -> list[str]:
     return urls
 
 
+def product_image_urls(node: dict[str, Any], page: Any) -> list[str]:
+    """A product's images, then its variants' (see ``variants``) not already listed."""
+    urls = image_urls(node.get("image"), page)
+    for variant in variants(node):
+        urls += [u for u in image_urls(variant.get("image"), page) if u not in urls]
+    return urls
+
+
 # A price as a page may format it: "$1,299.00", "1.234,56 €", "19,99", "1'234.50"
 _FORMATTED_PRICE = re.compile(r"[^\d.,-]*?(\d[\d.,'\s]*)[^\d.,]*")
 MAX_PRICE_TEXT = 64  # characters of a formatted price read

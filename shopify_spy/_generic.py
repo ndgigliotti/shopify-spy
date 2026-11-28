@@ -403,14 +403,5 @@ def _item(node: dict[str, Any], response: Response, images: bool) -> dict[str, A
     node["store"] = urllib.parse.urlsplit(response.url).netloc
     node["platform"] = "jsonld"
     node["html_url"] = response.url.split("#", 1)[0]
-    node["image_urls"] = _image_urls(node, response.url) if images else []
+    node["image_urls"] = jsonld.product_image_urls(node, response.url) if images else []
     return node
-
-
-def _image_urls(node: dict[str, Any], page: str) -> list[str]:
-    """The node's images, then its variants' images not already listed."""
-    urls = jsonld.image_urls(node.get("image"), page)
-    for variant in jsonld.listify(node.get("hasVariant")):
-        if isinstance(variant, dict):
-            urls += [u for u in jsonld.image_urls(variant.get("image"), page) if u not in urls]
-    return urls

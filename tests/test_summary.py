@@ -298,8 +298,16 @@ def test_jsonld_product():
     assert (s.kind, s.platform, s.id, s.title) == ("product", "jsonld", "HAT-1", "Hat & Scarf")
     assert (s.min_price, s.max_price, s.currency) == (Decimal("12.50"), Decimal("20"), "USD")
     assert (s.html_url, s.store) == ("https://j.test/products/hat", "j.test")
-    # image_urls is empty without images; the node's image stands in
     assert s.image_urls == ["https://j.test/hat.jpg"]
+
+
+def test_jsonld_image_urls_do_not_depend_on_images():
+    variant = {"@type": "Product", "sku": "S", "image": "/hat-s.jpg"}
+    stub = {"@type": "Product", "url": "https://j.test/products/red", "image": "/red.jpg"}
+    group = {**JSONLD_PRODUCT, "@type": "ProductGroup", "hasVariant": [variant, stub]}
+    expected = ["https://j.test/hat.jpg", "https://j.test/hat-s.jpg"]
+    assert spy.summarize(group).image_urls == expected
+    assert spy.summarize({**group, "image_urls": [*expected, "x"]}).image_urls == expected
 
 
 def test_jsonld_product_group_prices_span_its_variants():
