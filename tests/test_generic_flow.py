@@ -749,7 +749,7 @@ def test_magento_hint():
     [s] = result.stores
     assert s.status == "error"
     assert s.suggested_platform == "magento"
-    assert s.hint == "looks like Magento; pass platform='magento'"
+    assert s.hint == "looks like Magento; use the magento platform"
     assert fetcher.count(f"{STORE}/products.json") == 1
     assert fetcher.count(f"{STORE}/wp-json/") == 1
     assert fetcher.count(STORE_CONFIG) == 1

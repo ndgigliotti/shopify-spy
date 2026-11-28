@@ -1581,7 +1581,7 @@ def test_mixed_run_prints_failed_store_hint(cli):
     run = cli(routes, "https://ok.com", "https://woo.com")
 
     assert run.exit_code == 0
-    assert "woo.com: looks like WooCommerce; pass platform='woocommerce'" in run.stdout
+    assert "woo.com: looks like WooCommerce; use the woocommerce platform" in run.stdout
     assert "ok.com: 2 items" in run.stdout
 
 
@@ -1591,14 +1591,14 @@ def test_wrong_platform_hint_printed(cli):
     run = cli(routes, "store.com")
 
     assert run.exit_code == 1
-    assert "store.com: looks like WooCommerce; pass platform='woocommerce'" in run.stdout
+    assert "store.com: looks like WooCommerce; use the woocommerce platform" in run.stdout
 
 
 def test_wrong_platform_hint_woocommerce_run(cli):
     routes = {"https://store.com/products.json": bulk(1)}
     run = cli(routes, "--platform", "woocommerce", "store.com")
 
-    assert "store.com: looks like Shopify; pass platform='shopify'" in run.stdout
+    assert "store.com: looks like Shopify; use the shopify platform" in run.stdout
 
 
 # --- Status file tests ---
@@ -1650,7 +1650,7 @@ def test_status_file_records_hint(cli):
     run = cli(routes, "store.com")
 
     [entry] = run.status()["urls"]
-    assert entry["hint"] == "looks like WooCommerce; pass platform='woocommerce'"
+    assert entry["hint"] == "looks like WooCommerce; use the woocommerce platform"
 
 
 def test_no_status_file_in_peek_mode(cli):

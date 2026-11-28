@@ -134,8 +134,8 @@
   ([#81](https://github.com/ndgigliotti/shopify-spy/issues/81)). The summary of a
   run that scraped items also prints the hints of stores that failed or produced
   nothing, and a store's hint replaces the status hint it would otherwise share
-  with other stores. The CLI's wrong-platform hint now reads like the library's
-  (`looks like WooCommerce; pass platform='woocommerce'`).
+  with other stores. The wrong-platform hint now reads the same in the CLI and the
+  library (`looks like WooCommerce; use the woocommerce platform`).
 
 ## 0.5.1
 
