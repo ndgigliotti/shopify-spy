@@ -44,6 +44,7 @@ class ThrottleSettings:
     # Minimum gaps between request starts while enabled (pages and API, images)
     min_delay: float = 1.0
     image_delay: float = 0.25
+    jitter: float = 0.5  # spread of the spacing between request starts, 0 to 1
     target_concurrency: float = 1.0
 
 
@@ -54,8 +55,9 @@ class HostSlot:
     download slots (https://github.com/scrapy/scrapy, BSD-3-Clause).
 
     One request leaves the slot per gate pass; while throttling is enabled, passes are
-    spaced since the previous request by ``uniform(0.5, 1.5)`` times the delay when it
-    is above the minimum gap, else by ``uniform(1.0, 1.5)`` times the minimum gap, and
+    spaced since the previous request by ``uniform(1 - jitter, 1 + jitter)`` times the
+    delay when it is above the minimum gap, else by ``uniform(1, 1 + jitter)`` times the
+    minimum gap (``jitter`` 0.5 by default), and
     never closer than the minimum gap: robots.txt Crawl-delay and ``min_delay``
     (``image_delay`` for an image download). Those are
     floors on the spacing, not on the adaptive delay. Without throttling, only the
@@ -114,9 +116,10 @@ class HostSlot:
                 # just the Crawl-delay
                 if self.throttle.enabled:
                     if self.delay > spacing:
-                        jittered = self.delay * random.uniform(0.5, 1.5)
+                        spread = self.throttle.jitter
+                        jittered = self.delay * random.uniform(1 - spread, 1 + spread)
                     else:
-                        jittered = spacing * random.uniform(1.0, 1.5)
+                        jittered = spacing * random.uniform(1.0, 1 + self.throttle.jitter)
                     spacing = max(jittered, spacing)
                 wait = spacing - (now() - self.last_seen)
                 if wait > 0:

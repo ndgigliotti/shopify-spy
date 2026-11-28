@@ -124,10 +124,11 @@ throttle:
   max_delay: 60            # Maximum download delay (seconds)
   min_delay: 1             # Minimum seconds between page and API requests to one host
   image_delay: 0.25        # Minimum seconds between image downloads from one host
+  jitter: 0.5              # Random spread of the gaps, 0 (exact) to 1
   target_concurrency: 1.0  # Target concurrent requests (higher = faster)
 ```
 
-`network.timeout`, `network.retries`, `output.images_subdir` and the `throttle` settings other than `enabled`, `min_delay` and `image_delay` have no command-line option, so the config file is the only way to change them from the CLI. The library reads no config file; it takes the same settings as [options](library.md#options).
+`network.timeout`, `network.retries`, `output.images_subdir` and the `throttle` settings other than `enabled`, `min_delay` and `image_delay` (such as `jitter`) have no command-line option, so the config file is the only way to change them from the CLI. The library reads no config file; it takes the same settings as [options](library.md#options).
 
 ## Proxies
 

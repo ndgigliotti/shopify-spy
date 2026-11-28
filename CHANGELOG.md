@@ -33,7 +33,7 @@
   `--min-delay` option, config `throttle.min_delay` and library option
   `throttle_min_delay`. Throttled image downloads from one host, the store's own
   included, are at least 0.25 seconds apart, set by the new `--image-delay`
-  option, config `throttle.image_delay` and library option `throttle_image_delay`. A `Retry-After` longer than 60 seconds is no longer
+  option, config `throttle.image_delay` and library option `throttle_image_delay`. The gaps vary randomly by up to half again (config `throttle.jitter`, library option `throttle_jitter`, 0 for exact spacing). A `Retry-After` longer than 60 seconds is no longer
   retried after 60 seconds: the host is paused for the whole `Retry-After` and the
   request ends as if its retries had run out, so a store with no successful
   response ends `rate_limited` for a 429 (`unavailable` for a 503).

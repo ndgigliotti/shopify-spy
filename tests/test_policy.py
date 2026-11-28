@@ -170,6 +170,34 @@ async def test_wait_turn_jitters_around_a_delay_above_min_delay(monkeypatch):
     assert draws == [(0.5, 1.5)]
 
 
+async def test_jitter_setting_scales_the_spread(monkeypatch):
+    draws = []
+
+    def uniform(a, b):
+        draws.append((a, b))
+        return a
+
+    monkeypatch.setattr(policy.random, "uniform", uniform)
+    below = slot(start_delay=0.0, min_delay=0.2, jitter=0.2)
+    above = slot(start_delay=0.3, min_delay=0.1, jitter=0.2)
+    async with asyncio.timeout(2):
+        for s in (below, above):
+            await s.wait_turn()
+            await s.wait_turn()
+    assert draws == [(1.0, 1.2), (0.8, 1.2)]
+
+
+async def test_zero_jitter_spaces_exactly_at_the_minimum():
+    s = slot(start_delay=0.0, min_delay=0.2, jitter=0.0)
+    loop = asyncio.get_running_loop()
+    async with asyncio.timeout(2):
+        await s.wait_turn()
+        t1 = loop.time()
+        await s.wait_turn()
+        t2 = loop.time()
+    assert 0.19 <= t2 - t1 < 0.25
+
+
 def test_default_image_delay_is_a_quarter_second():
     assert ThrottleSettings().image_delay == 0.25
 
