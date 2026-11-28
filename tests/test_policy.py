@@ -187,6 +187,24 @@ async def test_jitter_setting_scales_the_spread(monkeypatch):
     assert draws == [(1.0, 1.2), (0.8, 1.2)]
 
 
+async def test_jitter_draw_starts_at_the_minimum_just_above_it(monkeypatch):
+    """A delay just above the minimum draws from the minimum up, so it's never faster
+    on average than a delay just below it."""
+    draws = []
+
+    def uniform(a, b):
+        draws.append((a, b))
+        return a
+
+    monkeypatch.setattr(policy.random, "uniform", uniform)
+    s = slot(start_delay=0.202, min_delay=0.2)
+    async with asyncio.timeout(2):
+        await s.wait_turn()
+        await s.wait_turn()
+    [(low, high)] = draws
+    assert low == pytest.approx(0.2 / 0.202) and high == 1.5
+
+
 async def test_zero_jitter_spaces_exactly_at_the_minimum():
     s = slot(start_delay=0.0, min_delay=0.2, jitter=0.0)
     loop = asyncio.get_running_loop()

@@ -55,9 +55,10 @@ class HostSlot:
     download slots (https://github.com/scrapy/scrapy, BSD-3-Clause).
 
     One request leaves the slot per gate pass. While throttling is enabled, passes are
-    spaced since the previous request by ``uniform(1 - jitter, 1 + jitter)`` times the
-    delay when it exceeds the minimum gap, else by ``uniform(1, 1 + jitter)`` times the
-    minimum gap (``jitter`` defaults to 0.5), and never closer than the minimum gap.
+    spaced since the previous request by the larger of the delay and the minimum gap
+    times ``uniform(low, 1 + jitter)``, where ``low`` is ``1 - jitter`` but never below
+    the minimum gap (``jitter`` defaults to 0.5). A gap at the minimum is 1 to
+    ``1 + jitter`` times it, and the spacing never drops below it.
     The minimum gap is the larger of robots.txt Crawl-delay and ``min_delay``
     (``image_delay`` for an image download); it floors the spacing, not the adaptive
     delay. Without throttling, only the Crawl-delay spaces requests, unjittered.
@@ -110,12 +111,13 @@ class HostSlot:
                 await asyncio.sleep(pause)
             if self.last_seen is not None:
                 spacing = self._min_gap(image)
-                # Jitter only upward from the minimum gap so sends don't pile on the
-                # floor; --no-throttle keeps just the Crawl-delay
-                if self.throttle.enabled:
+                # Never draw below the minimum gap, so sends don't pile on the floor and
+                # a delay just above it isn't faster on average than one just below;
+                # --no-throttle keeps just the Crawl-delay
+                pace = max(self.delay, spacing)
+                if self.throttle.enabled and pace > 0:
                     jitter = self.throttle.jitter
-                    low = 1 - jitter if self.delay > spacing else 1.0
-                    pace = max(self.delay, spacing)
+                    low = max(1 - jitter, spacing / pace)
                     spacing = max(pace * random.uniform(low, 1 + jitter), spacing)
                 wait = spacing - (now() - self.last_seen)
                 if wait > 0:
