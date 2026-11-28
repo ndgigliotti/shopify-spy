@@ -144,6 +144,26 @@
 - A Shopify store read from its sitemap, where every listed product failed, was
   reported `empty` (a store with no products); it now ends `failed`, with how many
   listed products couldn't be read in `StoreResult.errors`.
+- A POST (BigCommerce's `/graphql`) whose response libcurl can't decode is no longer
+  sent a second time inside the transport to read the body raw. It fails once,
+  without retries, since the same encoding would refuse every resend; GET requests
+  still reread the body raw.
+- A request already waiting out the gap since the host's previous request no longer
+  leaves before a `Retry-After` pause the host got meanwhile: it waits out the pause
+  too, then the slowed spacing, as the docs say.
+- An unknown key in the config file, such as `scrape: {limt: 1}`, was ignored,
+  silently dropping the setting; it is now an error naming the key, its section and
+  the closest known key (`unknown key 'limt' in the scrape section; did you mean
+  'limit'?`), and the CLI exits with status 1. An invalid config file is reported
+  as an error instead of a traceback.
+- The config example in the command-line docs said `impersonate: false` turns
+  impersonation off, which fails validation; it now matches `spy init`'s file, where
+  a `user_agent` turns browser profiles off and `rotate: false` keeps one.
+- The CLI's prompt for a store URL, shown when none is given in a terminal, went
+  to stdout, ahead of `--peek`'s JSONL; it goes to stderr.
+- An output directory, config file or log path holding Rich markup, such as
+  `--output 'run[/batch]'`, crashed the CLI with a `MarkupError` when it was printed;
+  paths are printed as typed.
 - The CLI's end-of-run summary prints each store's `StoreResult.hint`, so a store
   that never answered through a proxy (`--proxy`, `network.proxy` or a proxy
   environment variable) gets the hint to check the proxy, or its credentials after
@@ -171,6 +191,42 @@
   one that produced no item while its platform reported part of the catalog
   missed, such as a generic store whose sitemaps all answered 5xx. It was True
   for these when the store's run otherwise finished.
+- A WooCommerce store read from its product pages picks the page's Product when
+  its `@id` or `url` is written with `http://` on an `https://` page, beside a
+  related product, and a listed product page with no Product data for it makes the
+  store `partial` instead of being skipped (not the shop page Yoast lists in its
+  product sitemap, nor a listed page that redirects to another path, as a
+  deleted product sent to its category does).
+- A Squarespace store whose listed `/<collection>/p/<slug>` page answers without
+  Product data is `partial`, when product pages are read by default and when an
+  `--ignore-robots` run falls back to them; before, only the pages read after the
+  collections counted; a listed page that redirects to another path doesn't
+  count. A generic store's sitemaps can list pages that aren't
+  products, so they still don't count there.
+- A `ProductGroup` that lists some variants in `hasVariant` while others name it
+  in `isVariantOf` keeps all of them, skipping an `isVariantOf` one whose `@id`
+  or `sku` a listed one has, for generic, Squarespace and WooCommerce product-page items; before, the
+  `isVariantOf` ones were dropped when `hasVariant` was set.
+- A BigCommerce product whose later variants page fails (or that stops at the
+  2,500-variant bound) keeps the variants read so far and makes the store
+  `partial`, instead of `ok`.
+- A Magento store that caps the page size without an error (its first answer's
+  `page_info.page_size` smaller than the 100 asked for) is paged with that size,
+  and paging follows `page_info.total_pages`; before, such a store stopped after
+  its first page and reported `ok`.
+- A Magento page with a null product and a GraphQL error whose `path` names it
+  keeps its other products and makes the store `partial`; a null without such an
+  error (a hidden product) still leaves it `ok`.
+- Appending to a CSV with `fields` in another order than the file's header wrote
+  values under the wrong columns; rows now follow the header's order, and `fields`
+  naming other columns raises `ValueError` before anything is written.
+- Appending to a JSONL or CSV file whose last line had no newline ran the first new
+  record on from it; a newline is written first.
+- XML files declare `encoding="UTF-8"` instead of Scrapy's `utf8`, which
+  ElementTree and other parsers reject once the file holds non-ASCII text. This is
+  the one byte-level change from the Scrapy-era XML.
+- Characters XML 1.0 forbids (control characters other than tab and newlines,
+  U+FFFE, U+FFFF and lone surrogates) made XML files invalid; they become U+FFFD.
 
 ## 0.5.1
 

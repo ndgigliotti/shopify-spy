@@ -3,9 +3,10 @@
 Two schemas: ``native`` writes each item as scraped, and ``unified`` writes a scraped
 item's rows (one per variant, the same columns on every platform; see ``_flatten``).
 JSONL, JSON and XML default to native, which matches what Scrapy's feed exporters wrote
-(UTF-8, ``ensure_ascii=False``, no indentation). CSV is always unified; other dicts get a
-column per key, nested values as JSON. XLSX is always unified too, as typed cells (see
-``_xlsx``).
+(UTF-8, ``ensure_ascii=False``, no indentation), except that XML declares ``UTF-8``, not
+Scrapy's ``utf8``, and replaces characters XML forbids. CSV is always unified; other dicts
+get a column per key, nested values as JSON. XLSX is always unified too, as typed cells
+(see ``_xlsx``).
 """
 
 from __future__ import annotations
@@ -40,6 +41,8 @@ UNIFIED_ONLY_FORMATS = {"csv", "xlsx"}
 # An XML element name: a letter or _, then letters, digits, _, - or .
 _XML_NAME = re.compile(r"[^\W\d][\w.-]*")
 _XML_INVALID = re.compile(r"[^\w.-]")
+# Characters XML 1.0 doesn't allow, even as character references
+_XML_FORBIDDEN = re.compile("[^\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
 
 
 def format_for(path: str | Path, format: str | None = None) -> str:
@@ -138,7 +141,7 @@ class ItemWriter:
         # One buffer per format, reused for every item
         self._buffer = io.StringIO() if self.format == "csv" else io.BytesIO()
         self._csv = csv.writer(self._buffer) if self.format == "csv" else None
-        self._xml = XMLGenerator(self._buffer, encoding="utf8") if self.format == "xml" else None
+        self._xml = XMLGenerator(self._buffer, encoding="utf-8") if self.format == "xml" else None
         self._xlsx: XlsxWriter | None = None
         self._dropped: set[str] = set()
         # Columns the caller picked may leave out fields without a warning
@@ -170,9 +173,13 @@ class ItemWriter:
             if self.format == "json":
                 self._write_all(b"[\n")
             elif self.format == "xml":
-                self._write_all(b'<?xml version="1.0" encoding="utf8"?>\n<items>\n')
+                # Scrapy wrote "utf8", which ElementTree and other parsers reject
+                self._write_all(b'<?xml version="1.0" encoding="UTF-8"?>\n<items>\n')
             elif self.format == "csv" and not existing:
                 self._write_all(self._csv_rows([self.fields]))
+            elif existing and not self._ends_with_newline():
+                # Else the first new record would run on from the file's last one
+                self._write_all(b"\r\n" if self.format == "csv" else b"\n")
         except BaseException:
             # Without its header the file is no use; the next write starts it again
             self._file.close()
@@ -180,6 +187,11 @@ class ItemWriter:
             if not existing:
                 self.path.unlink(missing_ok=True)
             raise
+
+    def _ends_with_newline(self) -> bool:
+        with open(self.path, "rb") as f:
+            f.seek(-1, io.SEEK_END)
+            return f.read(1) == b"\n"
 
     def _check_jsonl_schema(self) -> None:
         """Refuse to append scraped items in one schema to a JSONL file in the other."""
@@ -213,8 +225,14 @@ class ItemWriter:
                     f"{self.path} has CSV columns from shopify-spy 0.3 or earlier "
                     "(one per item field); write the new one-row-per-variant CSV to a new file"
                 )
-            if self.fields is None:
-                self.fields = header or None
+            if self.fields is None or (header and set(self.fields) == set(header)):
+                # Rows follow the header the file has, whatever order fields lists
+                self.fields = header or self.fields
+            elif header:
+                raise ValueError(
+                    f"{self.path} has the columns {', '.join(header)}, not "
+                    f"{', '.join(self.fields)}; append the same fields or write to a new file"
+                )
         if self.fields is None:
             self.fields = default_columns(item) or list(item.keys())
         elif known and self._picked:
@@ -374,7 +392,8 @@ def _xml_field(xml: XMLGenerator, name: str, value: Any) -> None:
         for v in value:
             _xml_field(xml, "value", v)
     else:
-        xml.characters(value if isinstance(value, str) else str(value))
+        text = value if isinstance(value, str) else str(value)
+        xml.characters(_XML_FORBIDDEN.sub("\ufffd", text))
     xml.endElement(name)
 
 
@@ -391,9 +410,10 @@ def write_items(
 
     ``items`` can be any iterable, including a run from ``scrape()``. The format
     comes from the extension (.jsonl, .json, .csv, .xlsx, .xml) unless ``format`` is given.
-    ``append=True`` adds to an existing JSONL or CSV file (CSV keeps its header, and
-    refuses a 0.3.0 CSV of scraped items, which had a column per item field;
-    JSONL refuses scraped items in the other schema).
+    ``append=True`` adds to an existing JSONL or CSV file. CSV keeps its header and
+    writes rows in its column order; ``fields`` naming other columns raises
+    ValueError, as does a 0.3.0 CSV of scraped items, which had a column per item
+    field. JSONL refuses scraped items in the other schema.
 
     ``schema="native"`` writes each item as scraped; ``schema="unified"`` writes one
     row per product variant (WooCommerce: per variation; Magento: per configurable
@@ -415,6 +435,9 @@ def write_items(
     built when the writer closes (a failure there removes the partial file), so a
     killed process leaves no usable file; write JSONL for long runs and convert it
     afterwards.
+
+    XML has a UTF-8 declaration, and characters XML 1.0 forbids (control characters
+    other than tab and newlines, U+FFFE, U+FFFF, lone surrogates) become U+FFFD.
 
     A write that fails partway is cut off, so the file ends on the last whole item.
     """

@@ -306,7 +306,8 @@ def _looks_like_shopify(data: Any) -> bool:
 async def _product_pages(ctx: StoreContext, emit: Emit) -> bool:
     """Emit a partial item for every listed product page with schema.org Product data.
 
-    Returns whether the listing was read to the end and every page was fetched.
+    Returns whether the listing was read to the end and every page that still exists
+    gave an item.
     """
     limiter = asyncio.Semaphore(FETCH_CONCURRENCY)
     failed = False
@@ -335,6 +336,7 @@ async def _product_pages(ctx: StoreContext, emit: Emit) -> bool:
             )
             if product is None:
                 logger.info("No schema.org Product on %s", response.url)
+                failed |= _missed_product(url, response, text)
                 return
             post_id = post_id or listed_id
             form = jsonld.variation_form(text, post_id)
@@ -360,6 +362,21 @@ async def _product_pages(ctx: StoreContext, emit: Emit) -> bool:
             await limiter.acquire()
             tg.create_task(fetch(url.split("#", 1)[0], listed_id))
     return listing.complete and not failed
+
+
+def _missed_product(url: str, response: Response, text: str) -> bool:
+    """Whether a listed page without a Product is a missed product. Every listed
+    URL is a product page but for the shop page, which Yoast lists first in
+    product-sitemap.xml, and a deleted product redirected elsewhere."""
+    return "archive" not in jsonld.body_classes(text) and not moved_away(url, response)
+
+
+def moved_away(listed: str, response: Response) -> bool:
+    """Whether a listed page redirected to another path: a deleted product sent to
+    its category or the home page, which, like a 404, doesn't make the store
+    incomplete."""
+    paths = {urllib.parse.urlsplit(u).path.rstrip("/") for u in (listed, response.url)}
+    return len(paths) > 1
 
 
 def _site(host: str) -> str:

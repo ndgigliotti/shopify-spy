@@ -277,6 +277,7 @@ class _Pager:
         # The page size was halved on this page after a 2xx, which counted as a success
         self.resized = False
         self.refreshed = False  # the token was refreshed since the last good page
+        self.missed_variants = False  # a product kept only part of its variants
 
     @property
     def where(self) -> str:
@@ -297,7 +298,7 @@ class _Pager:
                 return False
             done = await self._answer(response)
             if done is not None:
-                return done
+                return done and not self.missed_variants
 
     def _body(self) -> bytes:
         variables = {"first": self.first, "after": self.cursor}
@@ -404,12 +405,17 @@ class _Pager:
         """Page the product's ``variants`` past its first page, into ``node``.
 
         A failure keeps the variants read so far, with ``hasNextPage`` still true and
-        a warning, rather than failing the store.
+        a warning, and makes the store partial rather than failing it.
         """
         connection = node["variants"]
         edges = connection.get("edges")
         product = node.get("entityId")
         if not isinstance(edges, list) or not isinstance(product, int):
+            self.missed_variants = True
+            logger.warning(
+                "BigCommerce product %s: more variants, but no edges or entityId to page them",
+                product,
+            )
             return
         info = connection["pageInfo"]
         cursors: set[str] = set()
@@ -456,6 +462,7 @@ class _Pager:
             more_info = more.get("pageInfo")
             info = connection["pageInfo"] = more_info if isinstance(more_info, dict) else {}
         if stopped is not None:
+            self.missed_variants = True
             logger.warning(
                 "BigCommerce product %s: only the first %d variants (%s)",
                 product,

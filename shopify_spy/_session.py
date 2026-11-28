@@ -32,6 +32,7 @@ from shopify_spy._fetch import (
     FetchInvalidURL,
     FetchTLSError,
     FetchTooLarge,
+    FetchUndecodable,
     Identity,
     Request,
     Response,
@@ -675,7 +676,7 @@ class StoreSession:
                     self._count_error(error, kind)
                     logger.debug("Error fetching %s: %s", url, error)
                     retryable = not isinstance(
-                        error, (FetchTLSError, FetchTooLarge, FetchInvalidURL)
+                        error, (FetchTLSError, FetchTooLarge, FetchInvalidURL, FetchUndecodable)
                     )
                     if not (retryable and attempt < self.retry.retries):
                         raise RequestFailed(url, error) from error

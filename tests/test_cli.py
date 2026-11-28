@@ -8,6 +8,7 @@ accounting. Plan references (§, D) are to .context/httpx-library-rewrite.md.
 import asyncio
 import csv
 import dataclasses
+import io
 import json
 import sys
 from dataclasses import dataclass, field
@@ -1972,3 +1973,45 @@ def test_finish_reason_item_limit_needs_a_store_at_its_limit():
     # two stores with 3 items each and --limit 5 reported "item_limit"
     stores = [_store(3, "finished"), _store(3, "finished")]
     assert run_finish_reason(stores) == "finished"
+
+
+def test_unknown_config_key_exits_1_naming_it(cli, tmp_path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("scrape:\n  limt: 1\n")
+    run = cli({}, "--config", str(config_file), "https://shop.example.com")
+    assert run.exit_code == 1
+    err = strip_ansi(run.stderr)
+    assert "scrape.limt" in err and "did you mean 'limit'?" in err
+    assert "Traceback" not in err
+    assert not run.fetchers
+
+
+def test_url_prompt_goes_to_stderr(monkeypatch, capsys):
+    # --peek prints JSONL on stdout, so a prompt there would come before the item
+    class Terminal(io.StringIO):
+        def isatty(self):
+            return True
+
+    monkeypatch.setattr(sys, "stdin", Terminal("https://shop.example.com\n"))
+    assert get_urls(None, None) == ["https://shop.example.com"]
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "store URL" in captured.err
+
+
+def test_paths_with_markup_characters_print_as_typed(cli, tmp_path):
+    out = tmp_path / "run[/batch]" / "[bold]x"
+    run = cli(shop("shop.test", 1), "shop.test", "-o", str(out), output=False)
+    assert run.exit_code == 0, run.stderr
+    assert f"Output: {out}" in run.stdout.replace("\n", "")
+
+
+def test_init_paths_with_markup_characters_print_as_typed(tmp_path):
+    config_file = tmp_path / "run[/batch]" / "config.yaml"
+    for args in ([], ["--force"]):
+        result = runner.invoke(app, ["init", *args, str(config_file)])
+        assert result.exit_code == 0, result.output
+        assert str(config_file) in strip_ansi(result.stdout).replace("\n", "")
+    result = runner.invoke(app, ["init", str(config_file)])
+    assert result.exit_code == 1
+    assert str(config_file) in strip_ansi(result.stdout).replace("\n", "")

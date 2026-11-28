@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 import platformdirs
 import typer
+from pydantic import ValidationError
 from rich.console import Console
 from rich.markup import escape
 from typer.core import MarkupMode, TyperCommand, TyperGroup
@@ -501,8 +502,11 @@ def scrape(
 ) -> None:
     """Scrape products and collections from Shopify, WooCommerce, Magento, BigCommerce
     and other stores."""
-    # Load config file (or defaults)
-    config = load_config(config_path)
+    try:
+        config = load_config(config_path)
+    except ValidationError as exc:
+        err_console.print(f"[red]Error: Invalid config file: {escape(str(exc))}[/red]")
+        raise typer.Exit(1) from None
 
     # Checked before the overrides so a bad --proxy is a clean error, not a
     # ValidationError traceback from Config()
@@ -631,12 +635,12 @@ def init(
     target = target.expanduser().resolve()
 
     if target.exists() and not force:
-        console.print(f"[yellow]File already exists: {target}[/yellow]")
+        console.print(f"[yellow]File already exists: {escape(str(target))}[/yellow]")
         console.print("Use --force to overwrite.")
         raise typer.Exit(1)
 
     created = create_default_config(target)
-    console.print(f"[green]Created config file: {created}[/green]")
+    console.print(f"[green]Created config file: {escape(str(created))}[/green]")
 
 
 def _given(**values: Any) -> dict[str, Any]:
@@ -722,7 +726,12 @@ def get_urls(urls: list[str] | None, url_file: Path | None) -> list[str]:
 
     # Interactive prompt if stdin is a TTY
     if sys.stdin.isatty():
-        url = typer.prompt("Enter Shopify store URL").strip()
+        # On stderr, so --peek's stdout holds only JSONL (typer.prompt(err=True)
+        # still writes a space to stdout)
+        try:
+            url = err_console.input("Enter Shopify store URL: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            raise typer.Abort() from None
         if url:
             return [url]
 
@@ -805,7 +814,7 @@ def run_scrape(
         console.print(f"  Images: {config.scrape.images}")
         console.print(f"  Format: {config.output.format}")
         console.print(f"  Schema: {schema_for(config.output.format, config.output.schema_)}")
-        console.print(f"  Output: {output_dir}")
+        console.print(f"  Output: {escape(str(output_dir))}")
 
     saved = (logger.level, logger.propagate)
     handlers = _setup_logging(log_file, verbose, quiet)
@@ -858,7 +867,7 @@ def run_scrape(
         if close_error is None and writer.count:
             err_console.print(f"  The {writer.count} item(s) written before it are kept.")
         if log_file:
-            err_console.print(f"  Log: {log_file}")
+            err_console.print(f"  Log: {escape(str(log_file))}")
         raise typer.Exit(1)
 
     if total > 0:
@@ -879,7 +888,7 @@ def run_scrape(
     for hint in summary_hints(stores, config):
         out.print(f"  {hint}")
     if log_file:
-        out.print(f"  Log: {log_file}")
+        out.print(f"  Log: {escape(str(log_file))}")
     raise typer.Exit(1)
 
 
@@ -996,7 +1005,7 @@ def _print_done(
     if not multi and stores and stores[0].products_from:
         console.print(f"  Products came from {escape(stores[0].products_from)}.")
     if log_file:
-        console.print(f"  Log: {log_file}")
+        console.print(f"  Log: {escape(str(log_file))}")
     if multi:
         for s in stores:
             console.print(f"  {escape(_host(s.input_url))}: {_display_status(s)}")

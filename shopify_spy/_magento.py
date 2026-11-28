@@ -5,9 +5,15 @@ number written into its text, so each page has its own URL and the session's ded
 robots.txt, retries and redirects apply as for any other request. No ``Store``
 header is sent, so the default store view and its currency are scraped.
 
-Paging ends when ``currentPage * pageSize`` reaches ``total_count`` or a page comes
-back empty. A page-size limit named in a GraphQL error on the first page shrinks the
-page size; later pages keep it, since changing it would shift every later offset.
+Paging ends at the answer's ``page_info.total_pages``, else when ``currentPage *
+pageSize`` reaches ``total_count``, or when a page comes back empty. A page-size
+limit named in a GraphQL error on the first page, or a smaller ``page_info.page_size``
+than asked for in its answer (a store that caps it silently), shrinks the page size;
+later pages keep it, since changing it would shift every later offset.
+
+An item a resolver failed on comes back null, with an error whose ``path`` names
+it; the store is then incomplete. A null without such an error is a product the
+storefront hides, and isn't.
 """
 
 from __future__ import annotations
@@ -90,24 +96,27 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
     base = ctx.url
     page, size = 1, PAGE_SIZE
     seen = _Seen()
+    missed = False  # whether a resolver failed on an item
     while (response := await _get(ctx, get_api_url(base, page, size))) is not None:
         where = f"{_endpoint(response.url)} page {page}"
         products, problem = _read(response)
         if products is None:
             smaller = _smaller_page_size(page, size, problem)
             if smaller is None:
-                return await _failed(ctx, response, where, page, problem, size != PAGE_SIZE)
+                ended = await _failed(ctx, response, where, page, problem, size != PAGE_SIZE)
+                return ended and not missed
             logger.info("Magento page size limit (%s); retrying with %d", problem, smaller)
             size = smaller
             continue
-        if problem is not None:
-            if not dicts(products["items"]):
-                # Resolver errors null out the items they hit, so this is a failed page
-                return await _failed(ctx, response, where, page, problem)
-            logger.warning("Magento GraphQL answered with errors for %s: %s", where, problem)
-        done = await _take_page(ctx, emit, response, products, seen, where, page * size)
+        if problem is not None and not dicts(products["items"]):
+            # Resolver errors null out the items they hit, so this is a failed page
+            return await _failed(ctx, response, where, page, problem) and not missed
+        missed = _missed_items(response, products["items"], problem, where) or missed
+        if page == 1:
+            size = _effective_page_size(products, size, where)
+        done = await _take_page(ctx, emit, response, products, seen, where, page, size)
         if done is not None:
-            return done
+            return done and not missed
         page += 1
         # Past a redirect (http to https, apex to www), not through it on every page
         base = origin(response.url)
@@ -146,12 +155,13 @@ async def _take_page(
     products: dict[str, Any],
     seen: _Seen,
     where: str,
-    read: int,
+    page: int,
+    size: int,
 ) -> bool | None:
     """Emit a page's new products; return whether the store got to the end, or None
-    to read the next page. ``read`` is ``currentPage * pageSize``."""
-    total = products.get("total_count")
-    total = total if isinstance(total, int) and not isinstance(total, bool) else None
+    to read the next page."""
+    total = _int(products.get("total_count"))
+    last = _int(_dig(products, "page_info", "total_pages"))
     batch = dicts(products["items"])
     if not batch:
         return seen.finish(total, where)
@@ -163,9 +173,51 @@ async def _take_page(
         return False
     for product in fresh:
         await emit(_item(product, response, ctx.images))
-    if total is not None and read >= total:
+    if last is not None and last > 0:
+        if page >= last:
+            return seen.finish(total, where)
+    elif total is not None and page * size >= total:
         return seen.finish(total, where)
     return None
+
+
+def _int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _effective_page_size(products: dict[str, Any], size: int, where: str) -> int:
+    """The page size to page with: the first answer's ``page_info.page_size`` when
+    it is smaller than ``size`` and the page holds no more items than that."""
+    answered = _int(_dig(products, "page_info", "page_size"))
+    if answered is None or not 1 <= answered < size or len(products["items"]) > answered:
+        return size
+    logger.info("Magento answered page size %d for %d at %s; paging with it", answered, size, where)
+    return answered
+
+
+def _missed_items(response: Response, items: list[Any], problem: str | None, where: str) -> bool:
+    """Log a page's GraphQL errors; return whether a resolver failed on an item."""
+    if problem is None:
+        return False
+    logger.warning("Magento GraphQL answered with errors for %s: %s", where, problem)
+    if failed := _failed_items(response, items):
+        logger.warning("Magento: %d products failed to resolve on %s", failed, where)
+    return failed > 0
+
+
+def _failed_items(response: Response, items: list[Any]) -> int:
+    """How many of a page's null ``items`` a GraphQL error's ``path`` names
+    (``["products", "items", 1, ...]``): products a resolver failed on."""
+    errors = _dig(response.json_or_none(), "errors")
+    failed = set()
+    for error in dicts(errors):
+        path = error.get("path")
+        if not isinstance(path, list) or len(path) < 3 or path[:2] != ["products", "items"]:
+            continue
+        index = _int(path[2])
+        if index is not None and 0 <= index < len(items) and items[index] is None:
+            failed.add(index)
+    return len(failed)
 
 
 async def _failed(

@@ -77,6 +77,7 @@ The options match the CLI: `platform`, `products`, `collections`, `images` (with
 - Other dicts, such as `summarize(item).asdict()`, get a column per key.
 - `"products.xlsx"` writes the unified rows as typed cells (see [Excel output](output.md#excel-output)), keeping rows in a temporary folder next to the file until it closes.
 - A write that fails partway leaves the file ending on the last whole item.
+- `append=True` adds to a JSONL or CSV file. A CSV keeps its header, and rows follow its column order whatever order `fields` lists them in; `fields` naming other columns raises `ValueError` before anything is written.
 
 ## No side effects
 

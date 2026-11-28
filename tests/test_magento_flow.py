@@ -360,3 +360,64 @@ def test_failed_page_size_retry_is_an_error(retry):
     assert items == []
     assert result.stores[0].status == "error"
     assert "after a page-size retry" in result.stores[0].errors[-1]
+
+
+def paged(items, total, page_size, current, total_pages):
+    body = answer(items, total)
+    info = {"current_page": current, "page_size": page_size, "total_pages": total_pages}
+    body["data"]["products"]["page_info"] = info
+    return body
+
+
+def test_a_smaller_effective_page_size_drives_paging():
+    routes = {
+        magento_url(1): paged([mg_product(1)], 2, 1, 1, 2),
+        magento_url(2, 1): paged([mg_product(2)], 2, 1, 2, 2),
+    }
+    items, result, fetcher = scrape_mg(routes)
+    assert [i["sku"] for i in items] == ["SKU1", "SKU2"]
+    assert requested(fetcher) == [magento_url(1), magento_url(2, 1)]
+    assert result.stores[0].status == "ok"
+    assert result.stores[0].complete
+
+
+def test_total_pages_ends_paging():
+    routes = {
+        magento_url(1): paged([mg_product(i) for i in range(100)], 500, 100, 1, 2),
+        magento_url(2): paged([mg_product(i) for i in range(100, 150)], 500, 100, 2, 2),
+    }
+    items, result, fetcher = scrape_mg(routes)
+    assert len(items) == 150
+    assert fetcher.count(magento_url(3)) == 0
+    assert result.stores[0].complete
+
+
+def test_a_null_item_with_an_error_is_partial(caplog):
+    error = {"message": "Internal server error", "path": ["products", "items", 1]}
+    routes = {magento_url(1): answer([mg_product(1), None], 2, errors=[error])}
+    with caplog.at_level(logging.WARNING, logger="shopify_spy"):
+        items, result, _ = scrape_mg(routes)
+    assert [i["sku"] for i in items] == ["SKU1"]
+    assert result.stores[0].status == "partial"
+    assert not result.stores[0].complete
+
+
+def test_a_null_item_without_an_error_stays_complete():
+    other = {"message": "Could not resolve image", "path": ["products", "items", 0, "image"]}
+    routes = {magento_url(1): answer([mg_product(1), None], 2, errors=[other])}
+    items, result, _ = scrape_mg(routes)
+    assert [i["sku"] for i in items] == ["SKU1"]
+    assert result.stores[0].status == "ok"
+    assert result.stores[0].complete
+
+
+def test_a_null_item_stays_partial_when_the_next_page_is_past_the_end():
+    # total_count counts hidden products, so a second page is asked for
+    error = {"message": "Internal server error", "path": ["products", "items", 99]}
+    message = "currentPage value 2 specified is greater than the 1 page(s) available."
+    items_ = [*(mg_product(i) for i in range(99)), None]
+    routes = {magento_url(1): answer(items_, 150, errors=[error]), magento_url(2): errors(message)}
+    items, result, _ = scrape_mg(routes)
+    assert len(items) == 99
+    assert result.stores[0].status == "partial"
+    assert not result.stores[0].complete
