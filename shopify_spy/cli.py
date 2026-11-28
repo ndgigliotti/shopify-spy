@@ -264,7 +264,7 @@ def scrape(
             "microdata) from each product page the sitemaps list, one request per product, "
             "so it's slow; use --limit for a sample. A store that fails because it looks like "
             "Shopify, WooCommerce or Magento gets a hint naming that platform (in the end-of-run "
-            "summary when nothing was scraped, and in StoreResult.hint).",
+            "summary when nothing was scraped, and in the library's StoreResult.hint).",
             rich_help_panel=SCRAPE_PANEL,
         ),
     ] = None,
