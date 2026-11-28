@@ -1,6 +1,6 @@
 ## Project Overview
 
-Shopify Spy is a Python library and CLI for extracting product and collection data from Shopify, WooCommerce, Magento, BigCommerce and other stores through their public JSON and GraphQL endpoints and product-page JSON-LD (httpx + asyncio).
+Shopify Spy is a Python library and CLI for extracting product and collection data from Shopify, WooCommerce, Magento, BigCommerce, Squarespace and other stores through their public JSON and GraphQL endpoints and product-page JSON-LD (httpx + asyncio).
 
 ## Common Commands
 
@@ -19,7 +19,7 @@ Layers, top to bottom; lower layers never import higher ones, and only the CLI i
 - **CLI** (`cli.py`, `_config.py`): Typer app built on `scrape_async`. YAML config precedence: defaults -> config file -> CLI args; `Config.to_kwargs()` maps config to library options. `FETCHER_FACTORY` is the test hook for a fake transport.
 - **Public API** (`_api.py`, `_export.py`, `_summary.py`, `_types.py`): `scrape()` (sync; steps a private event loop whose clock excludes paused time) and `scrape_async()`; `on_failure` raises `ScrapeFailed` by default. Writers match the old Scrapy exporters byte for byte (JSONL/JSON/XML).
 - **Runner** (`_runner.py`, `_results.py`): one driver task owns all store tasks and feeds a bounded queue; per-store error isolation, `max_items_per_store`, bail, graceful shutdown; `StoreResult`/`StoreStatus`/`RunResult`. Never hold a TaskGroup or timeout across a `yield`.
-- **Adapters** (`_shopify.py`, `_woocommerce.py`, `_magento.py`, `_bigcommerce.py`, `_generic.py`, `_sitemap.py`, `_images.py`): `run(ctx, emit)` coroutines. Shopify tries bulk `/products.json`, falls back to the sitemap; WooCommerce pages the Store API; Magento pages the storefront GraphQL `products` query; BigCommerce reads the homepage's Storefront API token and pages `site.products` over POST `/graphql`; `_generic.py` (`jsonld`) reads schema.org Product JSON-LD from sitemap-listed product pages.
+- **Adapters** (`_shopify.py`, `_woocommerce.py`, `_magento.py`, `_bigcommerce.py`, `_generic.py`, `_squarespace.py`, `_sitemap.py`, `_images.py`): `run(ctx, emit)` coroutines. Shopify tries bulk `/products.json`, falls back to the sitemap; WooCommerce pages the Store API; Magento pages the storefront GraphQL `products` query; BigCommerce reads the homepage's Storefront API token and pages `site.products` over POST `/graphql`; `_generic.py` (`jsonld`) reads schema.org Product JSON-LD from sitemap-listed product pages; `_squarespace.py` reads those pages with robots.txt obeyed, else `?format=json` collections.
 - **Session** (`_session.py`, `_policy.py`): per-store `StoreSession` (dedupe, robots.txt, retries with UA rotation on 403, hop-by-hop redirects, stats) over a run-wide `HostRegistry` (robots cache, concurrency and AutoThrottle slots keyed by origin).
 - **Transport** (`_fetch.py`): `Fetcher` protocol; `HttpxFetcher`, plus `FakeFetcher`/`ReplayFetcher` for tests.
 
