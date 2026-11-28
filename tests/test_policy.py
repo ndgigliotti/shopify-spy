@@ -211,6 +211,19 @@ async def test_crawl_delay_spaces_requests_without_throttle():
     assert t2 - t1 >= 0.19
 
 
+async def test_crawl_delay_not_jittered_without_throttle(monkeypatch):
+    monkeypatch.setattr(policy.random, "uniform", lambda a, b: 1.5)
+    s = slot(enabled=False)
+    s.set_crawl_delay(0.2)
+    loop = asyncio.get_running_loop()
+    async with asyncio.timeout(2):
+        await s.wait_turn()
+        t1 = loop.time()
+        await s.wait_turn()
+        t2 = loop.time()
+    assert 0.19 <= t2 - t1 < 0.28
+
+
 def test_adjust_never_goes_below_crawl_delay():
     s = slot(start_delay=1.0)
     s.set_crawl_delay(3.0)

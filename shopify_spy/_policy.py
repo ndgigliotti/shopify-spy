@@ -53,11 +53,12 @@ class HostSlot:
     The throttle algorithm is adapted from Scrapy's AutoThrottle extension and
     download slots (https://github.com/scrapy/scrapy, BSD-3-Clause).
 
-    One request leaves the slot per gate pass; passes are spaced by
-    ``uniform(0.5, 1.5)`` times the larger of the delay and the minimum gap since the
-    previous request, but never closer than the minimum gap: robots.txt Crawl-delay,
-    and while throttling is enabled ``min_delay`` (``image_delay`` for an image
-    download). Those are floors on the spacing, not on the adaptive delay.
+    One request leaves the slot per gate pass; while throttling is enabled, passes are
+    spaced by ``uniform(0.5, 1.5)`` times the larger of the delay and the minimum gap
+    since the previous request, but never closer than the minimum gap: robots.txt
+    Crawl-delay and ``min_delay`` (``image_delay`` for an image download). Those are
+    floors on the spacing, not on the adaptive delay. Without throttling, only the
+    Crawl-delay spaces requests, unjittered.
 
     Rate limits work like TCP congestion control: a rate limit doubles a delay floor
     (multiplicative decrease of the rate) and each answered request lowers it a
@@ -107,9 +108,11 @@ class HostSlot:
                 await asyncio.sleep(pause)
             if self.last_seen is not None:
                 spacing = self._min_gap(image)
-                # Jitter from the minimum gap too, or a delay below it sends on a fixed beat
-                pace = max(self.delay, spacing)
-                spacing = max(pace * random.uniform(0.5, 1.5), spacing)
+                # Jitter from the minimum gap too, or a delay below it sends on a fixed
+                # beat; --no-throttle keeps just the Crawl-delay
+                if self.throttle.enabled:
+                    pace = max(self.delay, spacing)
+                    spacing = max(pace * random.uniform(0.5, 1.5), spacing)
                 wait = spacing - (now() - self.last_seen)
                 if wait > 0:
                     await asyncio.sleep(wait)
