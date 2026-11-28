@@ -8,6 +8,7 @@ import pytest
 
 import shopify_spy as spy
 from shopify_spy import StoreStatus, cli
+from shopify_spy._config import Platform
 from tests import test_e2e_diagnosis as e2e
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -86,6 +87,15 @@ def test_scrape_doc_names_every_platform():
     assert doc.count('"squarespace"') >= 2
     assert "SquarespaceProductItem" in doc
     assert '"woocommerce" or "magento"' not in doc
+
+
+def test_platforms_page_covers_every_platform():
+    text = (DOCS / "platforms.md").read_text(encoding="utf-8")
+    sections = {_slug(h) for h in re.findall(r"^## (.+)$", text, re.M)}
+    rows = set(re.findall(r"^\| `(\w+)` \|", text, re.M))
+    for platform in Platform:
+        assert platform.value in sections, f"no section for {platform.value}"
+        assert platform.value in rows, f"no table row for {platform.value}"
 
 
 def test_troubleshooting_covers_every_status():

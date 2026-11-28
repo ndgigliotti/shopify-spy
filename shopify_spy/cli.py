@@ -67,6 +67,7 @@ LIBRARY_EPILOG = (
 # Whole pages, not headings: installed help keeps these links for good
 DOCS_EPILOG = (
     f"Docs: {DOCS_URL}/cli.md (options, config, proxies), "
+    f"{DOCS_URL}/platforms.md (how each platform is read), "
     f"{DOCS_URL}/output.md (files and item shapes), "
     f"{DOCS_URL}/troubleshooting.md (store statuses and exit codes), "
     f"{DOCS_URL}/library.md (the Python API)."
