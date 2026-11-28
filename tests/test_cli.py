@@ -228,7 +228,7 @@ def test_cli_scrape_help_platform_values():
     assert "woocommerce" in output
     assert "magento" in output
     assert "bigcommerce" in output
-    assert "jsonld" in output
+    assert "generic" in output
 
 
 def test_cli_scrape_help_new_flags():
@@ -301,12 +301,15 @@ def test_cli_scrape_warns_shopify_only_flags_magento(flag, warning):
 @pytest.mark.parametrize(
     ("flag", "warning"),
     [
-        ("--collections", "--collections has no effect with JSON-LD"),
-        ("--no-products", "--no-products has no effect with JSON-LD (JSON-LD always"),
+        ("--collections", "--collections has no effect with the generic platform"),
+        (
+            "--no-products",
+            "--no-products has no effect with the generic platform (the generic platform always",
+        ),
     ],
 )
-def test_cli_scrape_warns_shopify_only_flags_jsonld(flag, warning):
-    result = runner.invoke(app, ["scrape", "--platform", "jsonld", flag])
+def test_cli_scrape_warns_shopify_only_flags_generic(flag, warning):
+    result = runner.invoke(app, ["scrape", "--platform", "generic", flag])
     assert warning in strip_ansi(result.stderr)
 
 
@@ -314,7 +317,7 @@ def test_cli_init_lists_platforms(tmp_path):
     config_file = tmp_path / "test-config.yaml"
     runner.invoke(app, ["init", str(config_file)])
     assert (
-        "# Platform: shopify, woocommerce, magento, bigcommerce, jsonld" in config_file.read_text()
+        "# Platform: shopify, woocommerce, magento, bigcommerce, generic" in config_file.read_text()
     )
 
 
@@ -848,16 +851,16 @@ def test_limit_passed_to_bigcommerce(cli):
     assert log_file.name.startswith("bigcommerce_spider_")
 
 
-def test_limit_passed_to_jsonld(cli):
+def test_limit_passed_to_generic(cli):
     pages = [f"https://store.com/products/p{i}" for i in range(10)]
     routes = {"https://store.com/sitemap.xml": urlset(*pages)}
     for i, page in enumerate(pages):
         routes[page] = product_page({"@type": "Product", "name": f"P{i}", "url": page})
-    run = cli(routes, "--platform", "jsonld", "--limit", "3", "https://store.com")
+    run = cli(routes, "--platform", "generic", "--limit", "3", "https://store.com")
 
     assert run.exit_code == 0
     assert len(run.items()) == 3
-    assert run.data_files()[0].name.startswith("jsonld_spider_")
+    assert run.data_files()[0].name.startswith("generic_spider_")
 
 
 def test_limit_passed_to_shopify(cli):

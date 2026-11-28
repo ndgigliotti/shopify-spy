@@ -29,7 +29,7 @@ blocked = [s.input_url for s in result.failed if s.status == "robots_blocked"]
 spy.write_items(spy.scrape(blocked, respect_robots_txt=False), "products.jsonl", append=True)
 ```
 
-Items are plain dicts with typed definitions (`ShopifyProductItem`, `ShopifyCollectionItem`, `WooCommerceProductItem`, `MagentoProductItem`, `BigCommerceProductItem`, `JsonLdProductItem`), in the native shapes described under [Output](output.md#shopify-items). Pass `platform="woocommerce"`, `platform="magento"` or `platform="bigcommerce"` for those stores; Shopify is the default. `platform="jsonld"` reads any other store from the schema.org Product data on its product pages, at one request per product, so set `max_items_per_store` for a sample (see [JSON-LD stores](troubleshooting.md#json-ld-stores)). `summarize()` gives the same fields on every platform.
+Items are plain dicts with typed definitions (`ShopifyProductItem`, `ShopifyCollectionItem`, `WooCommerceProductItem`, `MagentoProductItem`, `BigCommerceProductItem`, `GenericProductItem`), in the native shapes described under [Output](output.md#shopify-items). Pass `platform="woocommerce"`, `platform="magento"` or `platform="bigcommerce"` for those stores; Shopify is the default. `platform="generic"` reads any other store from the schema.org Product data on its product pages, at one request per product, so set `max_items_per_store` for a sample (see [Generic stores](troubleshooting.md#generic-stores)). `summarize()` gives the same fields on every platform.
 
 ## A workflow for coding agents
 
@@ -70,7 +70,7 @@ The options match the CLI: `platform`, `products`, `collections`, `images` (with
 
 ## Schemas
 
-`write_items(run, "products.jsonl")` writes items as scraped. With `schema="unified"`, it writes the same one-row-per-variant records as the CLI's `--schema unified`, shared by every platform (see [Unified schema](output.md#unified-schema)), so items from Shopify, WooCommerce, Magento, BigCommerce and JSON-LD runs can go in one file.
+`write_items(run, "products.jsonl")` writes items as scraped. With `schema="unified"`, it writes the same one-row-per-variant records as the CLI's `--schema unified`, shared by every platform (see [Unified schema](output.md#unified-schema)), so items from Shopify, WooCommerce, Magento, BigCommerce and generic runs can go in one file.
 
 - CSV and Excel are always unified; `schema="native"` raises `ValueError`.
 - `fields=[...]` picks unified columns. A name that isn't one of them is logged and left empty.

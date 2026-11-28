@@ -397,7 +397,7 @@ def write_items(
 
     ``schema="native"`` writes each item as scraped; ``schema="unified"`` writes one
     row per product variant (WooCommerce: per variation; Magento: per configurable
-    variant; BigCommerce: per variant; JSON-LD: per ``hasVariant`` entry or per
+    variant; BigCommerce: per variant; generic: per ``hasVariant`` entry or per
     offer; collections and products without variants: one row), every value a
     scalar, with the same columns on every platform and a ``platform`` column.
     JSONL, JSON and XML default to native; CSV and XLSX are always unified

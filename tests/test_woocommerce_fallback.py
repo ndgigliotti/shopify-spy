@@ -273,7 +273,7 @@ def test_pages_without_product_data_are_skipped():
 
 
 def test_page_of_unmatched_products_is_skipped():
-    # Related-product cards, and no product that names the page: as for --platform jsonld
+    # Related-product cards, and no product that names the page: as for --platform generic
     card = '<div itemscope itemtype="https://schema.org/Product"><b itemprop="name">{}</b></div>'
     routes = {
         woo_url(1): (500, ""),

@@ -59,7 +59,7 @@ ADAPTERS: dict[str, Callable[[StoreContext, Emit], Awaitable[bool]]] = {
     "woocommerce": woocommerce.run,
     "magento": magento.run,
     "bigcommerce": bigcommerce.run,
-    "jsonld": generic.run,
+    "generic": generic.run,
 }
 
 

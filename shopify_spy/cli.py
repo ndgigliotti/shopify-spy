@@ -257,7 +257,7 @@ def scrape(
         typer.Option(
             "--platform",
             "-p",
-            help="Ecommerce platform: shopify, woocommerce, magento, bigcommerce or jsonld "
+            help="Ecommerce platform: shopify, woocommerce, magento, bigcommerce or generic "
             f"(default: {_DEFAULTS.scrape.platform.value}).",
             rich_help_panel=SCRAPE_PANEL,
         ),
@@ -267,7 +267,7 @@ def scrape(
         typer.Option(
             "--products/--no-products",
             help="Scrape products. Shopify only; WooCommerce, Magento, BigCommerce and "
-            "JSON-LD always do "
+            "generic always do "
             f"(default: {_on_off(_DEFAULTS.scrape.products)}).",
             rich_help_panel=SCRAPE_PANEL,
         ),

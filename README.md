@@ -51,8 +51,8 @@ spy scrape --platform magento https://www.example.com
 
 # Scrape a BigCommerce store
 spy scrape --platform bigcommerce https://www.example.com
-# Any other store, from its product pages' JSON-LD (one request per product)
-spy scrape --platform jsonld https://www.example.com --limit 100
+# Any other store, from its product pages' schema.org data (one request per product)
+spy scrape --platform generic https://www.example.com --limit 100
 
 # Several stores, with collections (Shopify only) and images
 spy scrape https://store1.com https://store2.com --collections --images
@@ -111,7 +111,7 @@ An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an i
 | WooCommerce | `/wp-json/wc/store/v1/products`, then each page's variations (`?type=variation`); product pages' structured data as a fallback | No authentication required |
 | Magento | storefront GraphQL `products` query at `/graphql` | No authentication required; default store view |
 | BigCommerce | Storefront GraphQL `site.products` at `/graphql`, with the public API token from the homepage | Stencil storefronts whose theme exposes the token, and headless ones whose page names its `mybigcommerce.com` endpoint; default currency |
-| JSON-LD | product pages from the sitemaps, schema.org `Product` JSON-LD or microdata | Best-effort fallback; one request per product |
+| Generic | product pages from the sitemaps, schema.org `Product` JSON-LD or microdata | Best-effort fallback; one request per product |
 
 ## Documentation
 
