@@ -119,7 +119,7 @@ class StoreState:
         status = diagnose(
             items=self.items,
             errored=self.errored,
-            truncated=not self.covered and self.items > 0,
+            truncated=not self.covered,
             finish_reason=reason,
             stats=stats,
         )
