@@ -54,14 +54,13 @@ class HostSlot:
     The throttle algorithm is adapted from Scrapy's AutoThrottle extension and
     download slots (https://github.com/scrapy/scrapy, BSD-3-Clause).
 
-    One request leaves the slot per gate pass; while throttling is enabled, passes are
+    One request leaves the slot per gate pass. While throttling is enabled, passes are
     spaced since the previous request by ``uniform(1 - jitter, 1 + jitter)`` times the
-    delay when it is above the minimum gap, else by ``uniform(1, 1 + jitter)`` times the
-    minimum gap (``jitter`` 0.5 by default), and
-    never closer than the minimum gap: robots.txt Crawl-delay and ``min_delay``
-    (``image_delay`` for an image download). Those are
-    floors on the spacing, not on the adaptive delay. Without throttling, only the
-    Crawl-delay spaces requests, unjittered.
+    delay when it exceeds the minimum gap, else by ``uniform(1, 1 + jitter)`` times the
+    minimum gap (``jitter`` defaults to 0.5), and never closer than the minimum gap.
+    The minimum gap is the larger of robots.txt Crawl-delay and ``min_delay``
+    (``image_delay`` for an image download); it floors the spacing, not the adaptive
+    delay. Without throttling, only the Crawl-delay spaces requests, unjittered.
 
     Rate limits work like TCP congestion control: a rate limit doubles a delay floor
     (multiplicative decrease of the rate) and each answered request lowers it a
@@ -111,16 +110,13 @@ class HostSlot:
                 await asyncio.sleep(pause)
             if self.last_seen is not None:
                 spacing = self._min_gap(image)
-                # Below the minimum gap, jitter only upward from it, so sends neither
-                # fall on a fixed beat nor half land on the floor; --no-throttle keeps
-                # just the Crawl-delay
+                # Jitter only upward from the minimum gap so sends don't pile on the
+                # floor; --no-throttle keeps just the Crawl-delay
                 if self.throttle.enabled:
-                    if self.delay > spacing:
-                        spread = self.throttle.jitter
-                        jittered = self.delay * random.uniform(1 - spread, 1 + spread)
-                    else:
-                        jittered = spacing * random.uniform(1.0, 1 + self.throttle.jitter)
-                    spacing = max(jittered, spacing)
+                    jitter = self.throttle.jitter
+                    low = 1 - jitter if self.delay > spacing else 1.0
+                    pace = max(self.delay, spacing)
+                    spacing = max(pace * random.uniform(low, 1 + jitter), spacing)
                 wait = spacing - (now() - self.last_seen)
                 if wait > 0:
                     await asyncio.sleep(wait)
