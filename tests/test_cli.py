@@ -19,7 +19,7 @@ import shopify_spy._config as config_module
 import shopify_spy._runner as engine
 import shopify_spy._xlsx as xlsx_module
 from shopify_spy import cli as cli_module
-from shopify_spy._config import Config, Platform
+from shopify_spy._config import Config, Platform, load_config
 from shopify_spy._fetch import FakeFetcher, FetchConnectionError, FetchTLSError, Seq
 from shopify_spy._flatten import COLUMNS
 from shopify_spy._results import StoreResult, StoreStatus, run_finish_reason
@@ -27,6 +27,7 @@ from shopify_spy._utils import is_valid_url
 from shopify_spy.cli import app, apply_cli_overrides, get_urls
 
 from .conftest import runner, strip_ansi
+from .flow_support import magento_url
 from .test_xlsx import read_rows
 
 DISALLOW_ALL = "User-agent: *\nDisallow: /\n"
@@ -225,6 +226,7 @@ def test_cli_scrape_help_platform_values():
     output = strip_ansi(result.stdout)
     assert "shopify" in output
     assert "woocommerce" in output
+    assert "magento" in output
 
 
 def test_cli_scrape_help_new_flags():
@@ -280,6 +282,24 @@ def test_cli_scrape_warns_collections_woocommerce():
 def test_cli_scrape_warns_no_products_woocommerce():
     result = runner.invoke(app, ["scrape", "--platform", "woocommerce", "--no-products"])
     assert "--no-products has no effect with WooCommerce" in strip_ansi(result.stderr)
+
+
+@pytest.mark.parametrize(
+    ("flag", "warning"),
+    [
+        ("--collections", "--collections has no effect with Magento"),
+        ("--no-products", "--no-products has no effect with Magento (Magento always"),
+    ],
+)
+def test_cli_scrape_warns_shopify_only_flags_magento(flag, warning):
+    result = runner.invoke(app, ["scrape", "--platform", "magento", flag])
+    assert warning in strip_ansi(result.stderr)
+
+
+def test_cli_init_lists_magento(tmp_path):
+    config_file = tmp_path / "test-config.yaml"
+    runner.invoke(app, ["init", str(config_file)])
+    assert "# Platform: shopify, woocommerce, magento" in config_file.read_text()
 
 
 def test_cli_scrape_no_warn_shopify_collections():
@@ -436,6 +456,34 @@ def test_overrides_map_to_kwargs():
     assert kwargs["respect_robots_txt"] is False
     assert kwargs["bail"] == 0  # 0 = off; the library treats it like None
     assert kwargs["concurrent_requests"] == 2
+
+
+def test_min_delay_overrides_config(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("throttle:\n  min_delay: 2\n")
+    config = load_config(path)
+    assert _overrides(config).to_kwargs()["throttle_min_delay"] == 2.0
+    assert _overrides(config, min_delay=0.5).to_kwargs()["throttle_min_delay"] == 0.5
+
+
+def test_negative_min_delay_exits_with_an_error(cli):
+    run = cli(None, "--min-delay", "-1", "shop.test")
+    assert run.exit_code != 0
+    assert "min-delay" in run.result.output
+
+
+def test_image_delay_overrides_config(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("throttle:\n  image_delay: 2\n")
+    config = load_config(path)
+    assert _overrides(config).to_kwargs()["throttle_image_delay"] == 2.0
+    assert _overrides(config, image_delay=0.5).to_kwargs()["throttle_image_delay"] == 0.5
+
+
+def test_negative_image_delay_exits_with_an_error(cli):
+    run = cli(None, "--image-delay", "-1", "shop.test")
+    assert run.exit_code != 0
+    assert "image-delay" in run.result.output
 
 
 def test_get_urls_single_url():
@@ -600,6 +648,23 @@ def test_limit_passed_to_woocommerce(cli):
     assert len(run.items()) == 3
     assert run.status()["urls"][0]["items"] == 3
     assert run.data_files()[0].name.startswith("woocommerce_spider_")
+
+
+def test_limit_passed_to_magento(cli):
+    items = [{"uid": f"u{i}", "name": f"P{i}", "price_range": {}} for i in range(10)]
+    body = {"data": {"products": {"total_count": 10, "items": items}}}
+    run = cli(
+        {magento_url(1, store="https://store.com"): body},
+        "--platform",
+        "magento",
+        "--limit",
+        "3",
+        "https://store.com",
+    )
+
+    assert run.exit_code == 0
+    assert len(run.items()) == 3
+    assert run.data_files()[0].name.startswith("magento_spider_")
 
 
 def test_limit_passed_to_shopify(cli):
@@ -965,6 +1030,14 @@ def test_diagnose_robots(cli):
 
     assert _single_status(run) == "blocked by robots.txt"
     assert "--ignore-robots" in run.stdout
+
+
+def test_diagnose_magento_query_string_rule(cli):
+    routes = {"https://store.com/robots.txt": (200, "User-agent: *\nDisallow: /*?")}
+    run = cli(routes, "--platform", "magento", "store.com")
+
+    assert _single_status(run) == "blocked by robots.txt"
+    assert "store.com's robots.txt disallows URLs with query strings" in run.stdout
 
 
 def test_ignore_robots_bypasses_block(cli):

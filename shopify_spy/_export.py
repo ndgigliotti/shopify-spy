@@ -1,7 +1,7 @@
 """Item writers (JSONL, JSON, CSV, XLSX, XML) and the CLI's status file.
 
 Two schemas: ``native`` writes each item as scraped, and ``unified`` writes a scraped
-item's rows (one per variant, the same columns on both platforms; see ``_flatten``).
+item's rows (one per variant, the same columns on every platform; see ``_flatten``).
 JSONL, JSON and XML default to native, which matches what Scrapy's feed exporters wrote
 (UTF-8, ``ensure_ascii=False``, no indentation). CSV is always unified; other dicts get a
 column per key, nested values as JSON. XLSX is always unified too, as typed cells (see
@@ -102,7 +102,7 @@ class ItemWriter:
     so a run without items leaves no file (like the CLI always did). ``schema``
     (see ``write_items``) picks between items as scraped and unified rows, a row per
     variant of a scraped item; ``fields`` picks a unified row's columns, which
-    otherwise are ``_flatten.COLUMNS`` for scraped items of either platform (or the
+    otherwise are ``_flatten.COLUMNS`` for scraped items of any platform (or the
     first item's keys, for other dicts). XLSX needs the ``excel`` extra and is only
     written on close.
 
@@ -396,12 +396,13 @@ def write_items(
     JSONL refuses scraped items in the other schema).
 
     ``schema="native"`` writes each item as scraped; ``schema="unified"`` writes one
-    row per product variant (WooCommerce: per variation; collections and products
-    without variants: one row), every value a scalar, with the same columns on both
-    platforms and a ``platform`` column. JSONL, JSON and XML default to native; CSV and
-    XLSX are always unified (``schema="native"`` raises ValueError). ``fields`` picks a unified
-    row's columns. Dicts that aren't scraped items, such as ``summarize().asdict()``,
-    get a column per key of the first one. Returns the number of items, not rows. No
+    row per product variant (WooCommerce: per variation; Magento: per configurable
+    variant; collections and products without variants: one row), every value a
+    scalar, with the same columns on every platform and a ``platform`` column.
+    JSONL, JSON and XML default to native; CSV and XLSX are always unified
+    (``schema="native"`` raises ValueError). ``fields`` picks a unified row's
+    columns. Dicts that aren't scraped items, such as ``summarize().asdict()``, get
+    a column per key of the first one. Returns the number of items, not rows. No
     file is created when there are no items.
 
     XLSX (needs ``pip install 'shopify-spy[excel]'``) has the unified rows as typed

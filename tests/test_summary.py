@@ -171,3 +171,49 @@ def test_woocommerce_prices_survive_odd_amounts_and_units(caplog):
     assert woo_money({"currency_minor_unit": 2})("Infinity") == Decimal("Infinity")
     assert woo_money({"currency_minor_unit": "x"})("7") == Decimal("7")
     assert "Unreadable currency_minor_unit" in caplog.text
+
+
+def _money(value, currency="CHF"):
+    return {"value": value, "currency": currency}
+
+
+MAGENTO_PRODUCT = {
+    "uid": "MTIz",
+    "sku": "TEE",
+    "name": "Tee",
+    "url_key": "tee",
+    "url_suffix": ".html",
+    "price_range": {
+        "minimum_price": {"regular_price": _money(30), "final_price": _money(19.9)},
+        "maximum_price": {"regular_price": _money(30), "final_price": _money(25)},
+    },
+    "media_gallery": [
+        {"url": "https://m.test/b.jpg", "position": 2, "disabled": False},
+        {"url": "https://m.test/a.jpg", "position": 1, "disabled": False},
+    ],
+    "store": "m.test",
+    "platform": "magento",
+    "html_url": "https://m.test/tee.html",
+    "image_urls": [],
+}
+
+
+def test_magento_product():
+    s = spy.summarize(MAGENTO_PRODUCT)
+    assert (s.kind, s.platform, s.id, s.title) == ("product", "magento", "MTIz", "Tee")
+    assert (s.min_price, s.max_price) == (Decimal("19.9"), Decimal("25"))
+    assert s.currency == "CHF"
+    assert (s.html_url, s.store) == ("https://m.test/tee.html", "m.test")
+    # image_urls is empty without images; the gallery stands in, by position
+    assert s.image_urls == ["https://m.test/a.jpg", "https://m.test/b.jpg"]
+
+
+def test_magento_product_without_prices():
+    s = spy.summarize({**MAGENTO_PRODUCT, "price_range": {}})
+    assert (s.min_price, s.max_price, s.currency) == (None, None, None)
+
+
+def test_magento_summary_dict_is_not_a_magento_item():
+    from shopify_spy._flatten import flatten
+
+    assert flatten(spy.summarize(MAGENTO_PRODUCT).asdict()) is None
