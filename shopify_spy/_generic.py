@@ -5,6 +5,9 @@ A store whose pages have no Product data (it renders products in the browser, sa
 raises JsonLdError after ``PROBE_PAGES`` pages, so it reports ``error`` with the
 reason rather than ``empty``; ``ctx.no_item_reason`` holds that reason for the
 runner in case ``--bail`` stops the store first.
+
+``read_pages`` is the same flow for another platform's adapter: it can read only the
+pages a ``keep`` test accepts and label the items with that platform and a ``source``.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ import contextlib
 import logging
 import urllib.parse
 from collections import Counter
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,7 +29,7 @@ from shopify_spy._session import Emit, RequestFailed, StoreContext
 from shopify_spy._utils import canonicalize_url, hostname
 from shopify_spy._woocommerce import FETCH_CONCURRENCY, GONE, _site
 
-__all__ = ["JsonLdError", "run"]
+__all__ = ["JsonLdError", "read_pages", "run"]
 
 logger = logging.getLogger("shopify_spy")
 
@@ -54,8 +57,29 @@ class JsonLdError(Exception):
 async def run(ctx: StoreContext, emit: Emit) -> bool:
     """Emit an item for every listed page with schema.org Product data; return
     whether the listing was read to the end and every page was fetched."""
-    listing = _Listing(ctx)
-    pages = _Pages(ctx, emit, listing)
+    return await read_pages(ctx, emit)
+
+
+async def read_pages(
+    ctx: StoreContext,
+    emit: Emit,
+    *,
+    platform: str = "jsonld",
+    source: str | None = None,
+    keep: Callable[[str], bool] | None = None,
+    product_shape: str | None = None,
+) -> bool:
+    """``run`` for any platform: items get ``platform`` and, when given, ``source``.
+
+    With ``keep``, only the listed pages it accepts are fetched, and a sitemap that
+    lists pages but none it accepts raises JsonLdError naming ``product_shape``,
+    the URL shape ``keep`` looks for (a filter that misses the store's product
+    URLs would otherwise look like an empty store).
+    """
+    if keep is not None and product_shape is None:
+        raise ValueError("read_pages needs product_shape with keep")
+    listing = _Listing(ctx, keep)
+    pages = _Pages(ctx, emit, listing, platform=platform, source=source)
     await pages.run()
     if pages.emitted:
         return listing.complete and not pages.failed
@@ -69,6 +93,12 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
             # diagnose() would call it empty: the sitemap index's 2xx is a success
             await pages.probe_others()
             raise JsonLdError(f"no page listed; unreadable sitemaps: {', '.join(listing.unread)}")
+        if listing.filtered:
+            await pages.probe_others()
+            raise JsonLdError(
+                f"no product page ({product_shape}) among the {listing.filtered} pages "
+                f"listed ({', '.join(listing.roots)})"
+            )
         return listing.complete  # no on-site page listed: empty
     await pages.probe_others()
     raise JsonLdError(f"{pages.reason()}; {pages.stopped_by()}")
@@ -106,11 +136,14 @@ class _Listing:
     ``roots`` are the top-level sitemaps that parsed; ``answered`` is whether any
     candidate answered 2xx; ``complete`` becomes True once every sitemap chosen for
     pages was readable and no off-site URL among them was left out; ``unread``
-    lists those that weren't readable.
+    lists those that weren't readable; ``filtered`` counts the page locs that
+    ``keep`` turned down.
     """
 
-    def __init__(self, ctx: StoreContext) -> None:
+    def __init__(self, ctx: StoreContext, keep: Callable[[str], bool] | None = None) -> None:
         self.ctx = ctx
+        self.keep = keep
+        self.filtered = 0
         self.sites = {_site(hostname(ctx.url))}
         self.roots: list[str] = []
         self.tried: list[str] = []
@@ -125,6 +158,14 @@ class _Listing:
         self._dropped += 1
         return False
 
+    def _kept(self, url: str) -> bool:
+        # Tested before _on_site, so an off-site page that wouldn't be read anyway
+        # doesn't make the listing incomplete
+        if self.keep is None or self.keep(url):
+            return True
+        self.filtered += 1
+        return False
+
     async def locs(self) -> AsyncIterator[str]:
         found, missing = await self._top_level()
         read = {doc.url: doc for doc in found if doc.root == "urlset"}
@@ -135,7 +176,7 @@ class _Listing:
                 self.unread.append(source)
             elif self._on_site(source):
                 async for loc in self._source_locs(source, read):
-                    if self._on_site(loc):
+                    if self._kept(loc) and self._on_site(loc):
                         yield loc
         if self._dropped:
             logger.info("Sitemaps listed %d off-site links", self._dropped)
@@ -232,10 +273,20 @@ class _Pages:
     """Fetches the listed pages and emits their Products, up to ``PROBE_PAGES``
     pages without an item before the first."""
 
-    def __init__(self, ctx: StoreContext, emit: Emit, listing: _Listing) -> None:
+    def __init__(
+        self,
+        ctx: StoreContext,
+        emit: Emit,
+        listing: _Listing,
+        *,
+        platform: str = "jsonld",
+        source: str | None = None,
+    ) -> None:
         self.ctx = ctx
         self._emit = emit
         self.listing = listing
+        self.platform = platform
+        self.source = source
         self.counts = _Counts()
         self.emitted = False
         self.failed = False  # a page that should have been read wasn't
@@ -311,7 +362,8 @@ class _Pages:
                 self.counts.skipped += 1
                 self._missed()
             elif (node := self._node(response)) is not None:
-                await self._emit_item(_item(node, response, self.ctx.images))
+                item = _item(node, response, self.ctx.images, self.platform, self.source)
+                await self._emit_item(item)
         finally:
             self._limiter.release()
 
@@ -390,9 +442,17 @@ async def _probe_others(ctx: StoreContext) -> None:
         await ctx.probe_platform(magento.STORE_CONFIG_PATH, magento.looks_like_magento, "magento")
 
 
-def _item(node: dict[str, Any], response: Response, images: bool) -> dict[str, Any]:
+def _item(
+    node: dict[str, Any],
+    response: Response,
+    images: bool,
+    platform: str = "jsonld",
+    source: str | None = None,
+) -> dict[str, Any]:
     node["store"] = urllib.parse.urlsplit(response.url).netloc
-    node["platform"] = "jsonld"
+    node["platform"] = platform
     node["html_url"] = response.url.split("#", 1)[0]
     node["image_urls"] = jsonld.product_image_urls(node, response.url) if images else []
+    if source is not None:
+        node["source"] = source
     return node
