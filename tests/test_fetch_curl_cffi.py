@@ -675,14 +675,14 @@ async def test_https_with_bypassed_environment_proxy(tls_server, clean_proxy_env
     assert (response.status, response.body) == (200, b"ok")
 
 
-async def test_https_proxy_receives_connect(clean_proxy_env, tls):
+async def test_https_proxy_receives_connect(clean_proxy_env, ca_env, tls):
     httpd = _serve(_RecordingProxyHandler, tls=tls, records=[])
     proxy = f"https://127.0.0.1:{httpd.server_address[1]}"
+    # The proxy's certificate is checked even with verify=False, as in httpx
+    ca_env.setenv("SSL_CERT_FILE", tls.ca)
     try:
-        # The proxy's certificate is checked even with verify=False, as in httpx;
-        # curl_cffi takes a CA bundle path as verify, which trusts the test CA here
         with pytest.raises(FetchConnectionError) as info:  # the proxy's 502 to CONNECT
-            await fetch("https://store.example:8443/", proxy=proxy, verify=tls.ca)
+            await fetch("https://store.example:8443/", proxy=proxy)
         assert not isinstance(info.value, FetchTLSError)
         assert httpd.records[0][:2] == ("CONNECT", "store.example:8443")
     finally:
