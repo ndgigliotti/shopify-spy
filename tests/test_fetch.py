@@ -495,16 +495,6 @@ def test_validate_impersonate_rejects(target):
     assert repr(target) in str(info.value)
 
 
-CA_VARIABLES = ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_DIR")
-
-
-@pytest.fixture
-def ca_env(monkeypatch):
-    for name in CA_VARIABLES:
-        monkeypatch.delenv(name, raising=False)
-    return monkeypatch
-
-
 @pytest.mark.parametrize(
     ("env", "expected"),
     [

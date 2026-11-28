@@ -38,7 +38,7 @@ from shopify_spy._fetch import (
     Request,
 )
 from shopify_spy._policy import DEFAULT_HEADERS
-from tests.conftest import _RecordingProxyHandler
+from tests.conftest import CA_VARIABLES, _RecordingProxyHandler
 
 pytestmark = [
     pytest.mark.e2e,
@@ -269,10 +269,11 @@ def socks_proxy():
     srv.server_close()
 
 
-async def fetch(url: str, **kwargs) -> _fetch.Response:
+async def fetch(url: str, transport: str = "curl", **kwargs) -> _fetch.Response:
     timeout = kwargs.pop("timeout", 3.0)
     headers = kwargs.pop("headers", None)
-    async with CurlCffiFetcher("chrome", **kwargs) as fetcher:
+    fetcher = CurlCffiFetcher("chrome", **kwargs) if transport == "curl" else HttpxFetcher(**kwargs)
+    async with fetcher:
         return await fetcher.fetch(make_request(url, timeout=timeout, headers=headers))
 
 
@@ -540,25 +541,6 @@ def _subject_hash(pem: bytes) -> str:
     return f"{int.from_bytes(hashlib.sha1(out).digest()[:4], 'little'):08x}"
 
 
-CA_VARIABLES = ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_DIR")
-
-
-def _make_fetcher(transport: str, **kwargs):
-    return CurlCffiFetcher("chrome", **kwargs) if transport == "curl" else HttpxFetcher(**kwargs)
-
-
-async def _fetch_with(transport: str, url: str, **kwargs) -> _fetch.Response:
-    async with _make_fetcher(transport, **kwargs) as fetcher:
-        return await fetcher.fetch(make_request(url))
-
-
-@pytest.fixture
-def ca_env(monkeypatch):
-    for name in CA_VARIABLES:
-        monkeypatch.delenv(name, raising=False)
-    return monkeypatch
-
-
 def _ca_dir(directory, pem: bytes) -> str:
     """Laid out as OpenSSL's c_rehash would; BoringSSL reads it the same way."""
     directory.mkdir(exist_ok=True)
@@ -575,7 +557,7 @@ async def test_ca_from_the_environment_is_trusted(
     pem = open(tls.ca, "rb").read()
     location = _ca_dir(tmp_path / "ca", pem) if variable == "SSL_CERT_DIR" else tls.ca
     ca_env.setenv(variable, location)
-    response = await _fetch_with(transport, f"{tls_server}/ok")
+    response = await fetch(f"{tls_server}/ok", transport)
     assert (response.status, response.body) == (200, b"ok")
 
 
@@ -585,9 +567,9 @@ async def test_ca_file_comes_first(tls, tls_server, tmp_path, ca_env, transport)
     ca_env.setenv("SSL_CERT_FILE", str(tmp_path / "other.pem"))
     ca_env.setenv("REQUESTS_CA_BUNDLE", tls.ca)
     with pytest.raises(FetchTLSError):
-        await _fetch_with(transport, f"{tls_server}/ok")
+        await fetch(f"{tls_server}/ok", transport)
     ca_env.setenv("SSL_CERT_FILE", "")
-    assert (await _fetch_with(transport, f"{tls_server}/ok")).status == 200
+    assert (await fetch(f"{tls_server}/ok", transport)).status == 200
 
 
 @pytest.mark.parametrize("transport", ["curl", "httpx"])
@@ -596,7 +578,7 @@ async def test_ca_file_and_directory_are_both_trusted(tls, tls_server, tmp_path,
     (tmp_path / "other.pem").write_bytes(trustme.CA().cert_pem.bytes())
     ca_env.setenv("SSL_CERT_FILE", str(tmp_path / "other.pem"))
     ca_env.setenv("SSL_CERT_DIR", _ca_dir(tmp_path / "ca", pem))
-    assert (await _fetch_with(transport, f"{tls_server}/ok")).status == 200
+    assert (await fetch(f"{tls_server}/ok", transport)).status == 200
 
 
 @pytest.mark.parametrize("transport", ["curl", "httpx"])
@@ -615,8 +597,8 @@ async def test_ca_from_the_environment_replaces_the_default(
     )
     ca_env.setenv(variable, location)
     with pytest.raises(FetchTLSError):
-        await _fetch_with(transport, f"{tls_server}/ok")
-    assert (await _fetch_with(transport, f"{tls_server}/ok", verify=False)).status == 200
+        await fetch(f"{tls_server}/ok", transport)
+    assert (await fetch(f"{tls_server}/ok", transport, verify=False)).status == 200
 
 
 @pytest.mark.parametrize("transport", ["curl", "httpx"])
@@ -626,7 +608,7 @@ async def test_trust_env_off_ignores_the_ca_environment(
     ca_env.setenv("SSL_CERT_FILE", tls.ca)
     ca_env.setenv("SSL_CERT_DIR", _ca_dir(tmp_path / "ca", open(tls.ca, "rb").read()))
     with pytest.raises(FetchTLSError):
-        await _fetch_with(transport, f"{tls_server}/ok", trust_env=False)
+        await fetch(f"{tls_server}/ok", transport, trust_env=False)
 
 
 # --- Proxies -------------------------------------------------------------------------------
