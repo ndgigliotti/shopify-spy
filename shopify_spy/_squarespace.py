@@ -10,7 +10,8 @@ with ``platform="squarespace"`` and ``source="product_page"``.
 
 Sitemap locs that aren't product pages are left out, and so is any loc with a
 ``format`` query parameter, so the guarantee holds even when robots.txt can't be
-read (the session's rules are then permissive).
+read (the session's rules are then permissive). Every page read is then a product
+page, so one that answers without Product data makes the store incomplete.
 
 With robots.txt ignored (``respect_robots_txt=False``), the collections are the
 parents of the listed product pages, and each collection's ``?format=json`` pages
@@ -278,13 +279,14 @@ class _JsonSource:
                 platform="squarespace",
                 source="product_page",
                 urls=missing,
+                products_only=True,
             )
             # The store's first item came from the collections, so no missed page
             # counts toward PROBE_PAGES or the no-item reason, and no other platform
             # is probed
             pages.emitted = True
             await pages.run()
-            pages_read = not pages.failed and not pages.counts.no_product
+            pages_read = not pages.failed
         return (
             self.listing.complete
             and not self.incomplete
@@ -308,6 +310,7 @@ class _JsonSource:
             source="product_page",
             urls=self.product_urls,
             json_reason=json_reason,
+            products_only=True,
         )
         await pages.run()
         if pages.emitted:

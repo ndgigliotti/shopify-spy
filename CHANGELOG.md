@@ -154,6 +154,11 @@
   its `@id` or `url` is written with `http://` on an `https://` page, beside a
   related product, and a listed product page with no Product data for it makes the
   store `partial` instead of being skipped.
+- A Squarespace store whose listed `/<collection>/p/<slug>` page answers without
+  Product data is `partial`, when product pages are read by default and when an
+  `--ignore-robots` run falls back to them; before, only the pages read after the
+  collections counted. A generic store's sitemaps can list pages that aren't
+  products, so they still don't count there.
 
 ## 0.5.1
 
