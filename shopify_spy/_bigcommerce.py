@@ -125,20 +125,13 @@ def get_api_url(store_url: str) -> str:
     return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, API_PATH, "", "", ""))
 
 
-def find_token(html: str, site: str, now: float | None = None) -> str | None:
-    """The page's best unexpired BigCommerce-issued JWT (``iss`` "BC"), or None.
-
-    The claims, not a setting name, pick it out: themes call the setting
-    ``graphQLToken``, ``storefrontApiToken`` or ``BC_GraphQL_Token``, and pages can
-    carry other JWTs and base64 JSON that also start with "eyJ". See ``_tokens`` for
-    the order.
-    """
-    tokens, _ = _tokens(html, site, time.time() if now is None else now)
-    return tokens[0] if tokens else None
-
-
 def _tokens(html: str, site: str, now: float) -> tuple[list[str], int]:
-    """The page's unexpired BigCommerce tokens, best first, and how many expired.
+    """The page's unexpired BigCommerce-issued JWTs (``iss`` "BC"), best first, and
+    how many expired.
+
+    The claims, not a setting name, pick them out: themes call the setting
+    ``graphQLToken``, ``storefrontApiToken`` or ``BC_GraphQL_Token``, and pages can
+    carry other JWTs and base64 JSON that also start with "eyJ".
 
     One whose ``cors`` names ``site`` comes first, then Stencil's own (``sub`` "BC")
     over an app's or a merchant script's, which can be scoped differently; ties keep

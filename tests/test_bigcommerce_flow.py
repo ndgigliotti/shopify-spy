@@ -6,7 +6,7 @@ import logging
 import pytest
 
 from shopify_spy import _bigcommerce
-from shopify_spy._bigcommerce import _QUERY, _VARIANTS_QUERY, PAGE_SIZE, find_token
+from shopify_spy._bigcommerce import _QUERY, _VARIANTS_QUERY, PAGE_SIZE, _tokens
 from shopify_spy._fetch import FetchConnectionError, Seq
 from tests.flow_support import STORE, bc_token, bigcommerce_api, redirect, scrape
 
@@ -166,7 +166,7 @@ def test_app_token_used_without_a_stencil_one():
 def test_cors_outranks_stencil_sub():
     elsewhere = bc_token(cors=["https://other.test"])
     app = bc_token(sub="client-id")
-    assert find_token(homepage(elsewhere, app)[1], STORE) == app
+    assert _tokens(homepage(elsewhere, app)[1], STORE, now=0)[0][0] == app
 
 
 def test_expired_token_skipped():
@@ -181,8 +181,8 @@ def test_expired_token_skipped():
 
 def test_expiry_is_checked_against_now():
     token = bc_token(eat=1_000)
-    assert find_token(homepage(token)[1], STORE, now=999) == token
-    assert find_token(homepage(token)[1], STORE, now=1_000) is None
+    assert _tokens(homepage(token)[1], STORE, now=999) == ([token], 0)
+    assert _tokens(homepage(token)[1], STORE, now=1_000) == ([], 1)
 
 
 def test_only_expired_tokens_is_an_error():
