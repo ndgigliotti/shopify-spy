@@ -141,6 +141,9 @@
 
 ### Fixed
 
+- A request already waiting out the gap since the host's previous request no longer
+  leaves before a `Retry-After` pause the host got meanwhile: it waits out the pause
+  too, then the slowed spacing, as the docs say.
 - The CLI's end-of-run summary prints each store's `StoreResult.hint`, so a store
   that never answered through a proxy (`--proxy`, `network.proxy` or a proxy
   environment variable) gets the hint to check the proxy, or its credentials after

@@ -116,23 +116,36 @@ class HostSlot:
     async def wait_turn(self, image: bool = False) -> float:
         """Wait until the throttle allows the next request to leave; return its send time."""
         async with self._gate:
-            # A rate limit can extend the pause while we sleep, so check again
-            while (pause := self.paused_until - now()) > 0:
-                await asyncio.sleep(pause)
-            if self.last_seen is not None:
-                spacing = self._min_gap(image)
-                # Never draw below the minimum gap, so sends don't pile on the floor and
-                # a delay just above it isn't faster on average than one just below;
-                # --no-throttle keeps just the Crawl-delay
-                pace = max(self.delay, spacing)
-                if self.throttle.enabled:
-                    jitter = self.throttle.jitter
-                    spacing = random.uniform(max(pace * (1 - jitter), spacing), pace * (1 + jitter))
+            spacing: float | None = None
+            # A rate limit can pause the host while we sleep out either wait, so check
+            # both again until neither is left
+            while True:
+                if (pause := self.paused_until - now()) > 0:
+                    await asyncio.sleep(pause)
+                    spacing = None  # the pause slowed the host: draw at the new pace
+                    continue
+                if self.last_seen is None:
+                    break
+                if spacing is None:
+                    spacing = self._draw_spacing(image)
                 wait = spacing - (now() - self.last_seen)
-                if wait > 0:
-                    await asyncio.sleep(wait)
+                if wait <= 0:
+                    break
+                await asyncio.sleep(wait)
             self.last_seen = now()
             return self.last_seen
+
+    def _draw_spacing(self, image: bool) -> float:
+        """The gap to leave after the previous request for this one."""
+        spacing = self._min_gap(image)
+        # Never draw below the minimum gap, so sends don't pile on the floor and a delay
+        # just above it isn't faster on average than one just below; --no-throttle keeps
+        # just the Crawl-delay
+        pace = max(self.delay, spacing)
+        if self.throttle.enabled:
+            jitter = self.throttle.jitter
+            spacing = random.uniform(max(pace * (1 - jitter), spacing), pace * (1 + jitter))
+        return spacing
 
     def adjust(self, latency: float, status: int, sent_at: float = float("inf")) -> None:
         """AutoThrottle: move the delay toward latency / target_concurrency.
