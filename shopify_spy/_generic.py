@@ -272,7 +272,12 @@ class _Counts:
 
 class _Pages:
     """Fetches the listed pages and emits their Products, up to ``PROBE_PAGES``
-    pages without an item before the first."""
+    pages without an item before the first.
+
+    Given ``urls``, it reads those instead of the listing's locs (a caller that
+    already drained the listing); the listing then only names the sitemaps in
+    ``reason()``.
+    """
 
     def __init__(
         self,
@@ -282,10 +287,12 @@ class _Pages:
         *,
         platform: str = "jsonld",
         source: str | None = None,
+        urls: list[str] | None = None,
     ) -> None:
         self.ctx = ctx
         self._emit = emit
         self.listing = listing
+        self.urls = urls
         self.platform = platform
         self.source = source
         self.counts = _Counts()
@@ -303,7 +310,7 @@ class _Pages:
         seen: set[str] = set()
         async with (
             asyncio.TaskGroup() as tg,
-            contextlib.aclosing(self.listing.locs()) as locs,
+            contextlib.aclosing(self._locs()) as locs,
         ):
             self._tg = tg
             async for url in locs:
@@ -319,6 +326,15 @@ class _Pages:
                 task = tg.create_task(self._fetch(url.split("#", 1)[0]))
                 self._fetches.add(task)
                 task.add_done_callback(self._fetches.discard)
+
+    async def _locs(self) -> AsyncIterator[str]:
+        if self.urls is None:
+            async with contextlib.aclosing(self.listing.locs()) as locs:
+                async for url in locs:
+                    yield url
+        else:
+            for url in self.urls:
+                yield url
 
     def _gave_up(self) -> bool:
         return not self.emitted and self.counts.checked >= PROBE_PAGES
