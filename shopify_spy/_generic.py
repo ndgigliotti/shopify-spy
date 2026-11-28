@@ -1,18 +1,10 @@
 """The generic platform: schema.org Product JSON-LD (or microdata) on the product
 pages that the store's sitemaps list.
 
-The sitemaps are the robots.txt ``Sitemap:`` URLs on the store's site, else the first
-of ``/sitemap.xml``, ``/sitemap_index.xml`` and ``/xmlsitemap.php`` that parses. Of
-an index's children, only the product sitemaps are read when there are any. Each
-listed page is fetched, and one whose JSON-LD has a Product or ProductGroup for that
-page becomes an item: the node as found, with its ``{"@id": ...}`` references to
-the page's other nodes resolved, plus ``store``, ``platform``, ``html_url``
-and ``image_urls``.
-
 A store whose pages have no Product data (it renders products in the browser, say)
 raises JsonLdError after ``PROBE_PAGES`` pages, so it reports ``error`` with the
-reason rather than ``empty``. Until the first item, ``ctx.no_item_reason`` holds the
-same reason, which the runner reports if ``--bail`` stops the store first.
+reason rather than ``empty``; ``ctx.no_item_reason`` holds that reason for the
+runner in case ``--bail`` stops the store first.
 """
 
 from __future__ import annotations
