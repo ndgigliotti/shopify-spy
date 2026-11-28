@@ -159,13 +159,6 @@ def _prepare_urls(urls: str | Iterable[str]) -> list[tuple[str, str]]:
     return stores
 
 
-def _first_profile(opts: ScrapeOptions) -> str | None:
-    """The browser profile a run starts with, or None for httpx (a custom user agent)."""
-    if opts.user_agent is not None:
-        return None
-    return opts.impersonate or DEFAULT_IMPERSONATE
-
-
 def _config(opts: ScrapeOptions, backoff: bool) -> RunConfig:
     return RunConfig(
         platform=opts.platform,
@@ -182,7 +175,7 @@ def _config(opts: ScrapeOptions, backoff: bool) -> RunConfig:
         respect_robots_txt=opts.respect_robots_txt,
         verify_tls=opts.verify_tls,
         proxy=opts.proxy,
-        impersonate=_first_profile(opts),
+        impersonate=opts.impersonate,
         rotate=opts.rotate,
         max_concurrent_stores=opts.max_concurrent_stores,
         throttle=ThrottleSettings(

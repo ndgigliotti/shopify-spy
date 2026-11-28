@@ -77,8 +77,8 @@ class RunConfig:
     respect_robots_txt: bool = True
     verify_tls: bool = True
     proxy: str | None = field(default=None, repr=False)
-    # The first browser profile of the curl_cffi transport; None = httpx (with
-    # user_agent)
+    # The first browser profile (None = DEFAULT_IMPERSONATE); a user_agent means
+    # httpx instead
     impersonate: str | None = None
     rotate: bool = True  # swap the identity after a 403 or 429
     max_concurrent_stores: int | None = 16
@@ -201,19 +201,20 @@ class Runner:
         config = self.config
         if config.proxy:
             logger.info("Using proxy %s", redact_url(config.proxy))
-        if config.impersonate is None:
+        if config.user_agent is not None:
             return HttpxFetcher(verify=config.verify_tls, proxy=config.proxy)
+        first, *rest = self._profiles()
         version = importlib.metadata.version("curl_cffi")
         if config.rotate:
             logger.info(
                 "Impersonating %s, then %s after a refusal (curl_cffi %s)",
-                config.impersonate,
-                ", ".join(self._profiles()[1:]),
+                first,
+                ", ".join(rest),
                 version,
             )
         else:
-            logger.info("Impersonating %s (curl_cffi %s)", config.impersonate, version)
-        return CurlCffiFetcher(config.impersonate, verify=config.verify_tls, proxy=config.proxy)
+            logger.info("Impersonating %s (curl_cffi %s)", first, version)
+        return CurlCffiFetcher(first, verify=config.verify_tls, proxy=config.proxy)
 
     def _profiles(self) -> tuple[str, ...]:
         if self._rotation is None:
