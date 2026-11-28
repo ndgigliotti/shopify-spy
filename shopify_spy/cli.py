@@ -583,8 +583,8 @@ def _check_impersonate(target: str, user_agent: str | None) -> None:
     if user_agent is not None:
         raise ValueError(
             "--impersonate sets the user agent from the browser profile, so it can't be "
-            "combined with --user-agent, which turns impersonation off; drop one (each "
-            "may come from network.impersonate or network.user_agent in the config file)"
+            "combined with --user-agent, which turns impersonation off; drop one (or, in "
+            "the config file, network.impersonate or network.user_agent)"
         )
     # A test transport ignores the profile, as the library does with fetcher_factory
     if FETCHER_FACTORY is None:
@@ -664,6 +664,11 @@ def apply_cli_overrides(
         impersonate=impersonate,
         rotate=rotate,
     )
+    # The two pick the transport, so one given here replaces the config file's other
+    if user_agent is not None and impersonate is None:
+        network_dict["impersonate"] = None
+    if impersonate is not None and user_agent is None:
+        network_dict["user_agent"] = None
     if ignore_robots:
         network_dict["respect_robots_txt"] = False
     if insecure:

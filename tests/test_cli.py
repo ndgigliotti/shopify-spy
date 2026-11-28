@@ -515,15 +515,14 @@ def test_unknown_impersonate_target_is_a_clean_error():
     assert "Traceback" not in err
 
 
-@pytest.mark.parametrize("from_config", [None, "user_agent", "impersonate"])
-def test_impersonate_with_user_agent_is_a_clean_error(cli, tmp_path, from_config):
-    flags = {"impersonate": ["--impersonate", "chrome"], "user_agent": ["-A", "MyBot/1.0"]}
-    values = {"impersonate": "chrome", "user_agent": "MyBot/1.0"}
-    args = [arg for key, pair in flags.items() if key != from_config for arg in pair]
-    if from_config:
+@pytest.mark.parametrize("in_config", [False, True])
+def test_impersonate_with_user_agent_is_a_clean_error(cli, tmp_path, in_config):
+    if in_config:
         config_file = tmp_path / "spy.yaml"
-        config_file.write_text(f"network:\n  {from_config}: {values[from_config]}\n")
-        args += ["-c", str(config_file)]
+        config_file.write_text("network:\n  impersonate: chrome\n  user_agent: MyBot/1.0\n")
+        args = ["-c", str(config_file)]
+    else:
+        args = ["--impersonate", "chrome", "-A", "MyBot/1.0"]
     run = cli(shop("shop.test", 1), *args, "shop.test")
     assert run.exit_code == 1
     err = " ".join(run.stderr.split())
@@ -531,6 +530,24 @@ def test_impersonate_with_user_agent_is_a_clean_error(cli, tmp_path, from_config
     assert "--user-agent, which turns impersonation off" in err
     assert "network.impersonate or network.user_agent" in err
     assert not run.requests
+
+
+@pytest.mark.parametrize(
+    ("in_config", "flag", "expected"),
+    [
+        ("impersonate: safari", ["-A", "MyBot/1.0"], (None, "MyBot/1.0")),
+        ("user_agent: MyBot/1.0", ["-I", "safari"], ("safari", None)),
+    ],
+)
+def test_flag_replaces_the_config_files_other_transport(
+    cli, monkeypatch, tmp_path, in_config, flag, expected
+):
+    seen = _seen_kwargs(monkeypatch)
+    config_file = tmp_path / "spy.yaml"
+    config_file.write_text(f"network:\n  {in_config}\n")
+    run = cli(shop("shop.test", 1), "-c", str(config_file), *flag, "shop.test")
+    assert run.exit_code == 0, run.stderr
+    assert (seen["impersonate"], seen["user_agent"]) == expected
 
 
 def test_impersonate_is_not_checked_with_a_test_transport(cli):

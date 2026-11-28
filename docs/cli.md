@@ -152,6 +152,6 @@ spy scrape --user-agent 'MyBot/1.0 (+https://example.com)' https://www.example.c
 ```
 
 - `--impersonate BROWSER` (`network.impersonate` in the config file, `impersonate=` in the library) picks the first profile: `chrome`, `safari`, `firefox`, or any other target the installed curl_cffi accepts, such as a pinned `chrome150`. A profile outside those three comes first, followed by them. An unknown value is rejected before the run starts.
-- `--user-agent TEXT` (`network.user_agent`, `user_agent=`) is the only way to send plain requests: they go through httpx with exactly that User-Agent, never switched, so it can't be combined with `--impersonate`.
+- `--user-agent TEXT` (`network.user_agent`, `user_agent=`) is the only way to send plain requests: they go through httpx with exactly that User-Agent, never switched, so it can't be combined with `--impersonate`. Either flag replaces the other's config-file setting for that run.
 - robots.txt and its `Crawl-delay`, throttling (`--min-delay`, `--image-delay`), `Retry-After`, `--concurrent`, `--proxy`, `--insecure` and the [non-public address check](troubleshooting.md#refused-requests-to-non-public-addresses) work the same on both transports.
 
