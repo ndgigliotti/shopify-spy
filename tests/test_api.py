@@ -168,7 +168,7 @@ def test_rate_limited_woocommerce_fallback_fails():
     assert store.responses_by_status == {404: 1}  # fallback requests aren't counted
 
 
-def test_retry_after_wait_on_a_new_user_agent_outlasts_bail():
+def test_retry_after_wait_on_a_new_profile_outlasts_bail():
     """A 429 whose Retry-After is longer than --bail: the store waits and recovers."""
 
     async def slow_products(request):
@@ -181,8 +181,8 @@ def test_retry_after_wait_on_a_new_user_agent_outlasts_bail():
     [store] = result.stores
     assert store.status == spy.StoreStatus.ok
     assert len(items) == 1
-    first, retry = [r.identity.user_agent for r in fetcher.requests if r.url == bulk_url(1)]
-    assert first != retry
+    first, retry = [r.identity.impersonate for r in fetcher.requests if r.url == bulk_url(1)]
+    assert (first, retry) == ("chrome", "safari")
 
 
 def test_retry_after_waits_are_excused_from_bail_per_request():
@@ -450,9 +450,9 @@ def test_status_forbidden_after_retries():
     store = _status(fetcher, retries=2)
     assert store.status == "forbidden"
     assert fetcher.count(bulk_url(1)) == 3
-    # UA rotated after each 403
-    agents = [r.identity.user_agent for r in fetcher.requests if r.url == bulk_url(1)]
-    assert len(set(agents)) > 1
+    # One switch to the next profile, then the block is taken as not about identity
+    profiles = [r.identity.impersonate for r in fetcher.requests if r.url == bulk_url(1)]
+    assert profiles == ["chrome", "safari", "safari"]
 
 
 def test_status_not_found():

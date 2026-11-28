@@ -67,8 +67,7 @@ class RequestKind:
     check_robots: bool = True  # obey robots.txt for this request
     counted: bool = True  # counts toward the store's diagnosis stats
     dedupe: bool = True  # skip a URL this store already requested
-    # A 403 or 429 may swap the store's user agent or browser profile; without it a 403
-    # is final
+    # A 403 or 429 may switch the store's browser profile; without it a 403 is final
     rotate: bool = True
     # A 429 counts toward StoreStats.rate_limits: its pause holds up the store's data
     # (images come after the data they belong to)

@@ -23,6 +23,7 @@ from shopify_spy import _magento as magento
 from shopify_spy import _shopify as shopify
 from shopify_spy import _woocommerce as woocommerce
 from shopify_spy._fetch import (
+    DEFAULT_IMPERSONATE,
     CurlCffiFetcher,
     FetcherFactory,
     HttpxFetcher,
@@ -76,8 +77,8 @@ class RunConfig:
     respect_robots_txt: bool = True
     verify_tls: bool = True
     proxy: str | None = field(default=None, repr=False)
-    # The first browser profile of the curl_cffi transport; None = httpx with the
-    # user_agent or browser UAs
+    # The first browser profile of the curl_cffi transport; None = httpx (with
+    # user_agent)
     impersonate: str | None = None
     rotate: bool = True  # swap the identity after a 403 or 429
     max_concurrent_stores: int | None = 16
@@ -211,18 +212,16 @@ class Runner:
         return CurlCffiFetcher(config.impersonate, verify=config.verify_tls, proxy=config.proxy)
 
     def _profiles(self) -> tuple[str, ...]:
-        assert self.config.impersonate is not None
         if self._rotation is None:
-            self._rotation = impersonate_rotation(self.config.impersonate)
+            start = self.config.impersonate or DEFAULT_IMPERSONATE
+            self._rotation = impersonate_rotation(start)
         return self._rotation
 
-    def _identity(self, fetcher: Any) -> IdentityPool:
-        """A store's identity: a rotation of browser profiles on an impersonating
-        transport, else the fixed user agent or random browser UAs."""
-        rotation = self.config.rotate
-        if self.config.impersonate is not None and fetcher.capabilities.can_impersonate:
-            return IdentityPool(profiles=self._profiles(), rotation=rotation)
-        return IdentityPool(user_agent=self.config.user_agent, rotation=rotation)
+    def _identity(self) -> IdentityPool:
+        """A store's identity: the fixed user agent, else its browser profiles."""
+        if self.config.user_agent is not None:
+            return IdentityPool(user_agent=self.config.user_agent)
+        return IdentityPool(profiles=self._profiles(), rotation=self.config.rotate)
 
     async def _drive(self) -> None:
         watcher: asyncio.Task[None] | None = None
@@ -285,7 +284,7 @@ class Runner:
             fetcher=fetcher,
             registry=registry,
             retry=retry_policy_for(fetcher.capabilities, config.retries, config.backoff),
-            identity=self._identity(fetcher),
+            identity=self._identity(),
             request_timeout=config.request_timeout,
             store_url=state.url,
         )

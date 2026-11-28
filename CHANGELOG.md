@@ -50,6 +50,10 @@
 ### Removed
 
 - The unreleased `impersonate` extra: curl_cffi is always installed.
+- The built-in list of browser user agents (`user_agents.json`) and
+  `scripts/update_user_agents.py`, which refreshed it. Without `--user-agent`,
+  requests carry the browser profile's own user agent; with it, exactly the one
+  you set, so httpx never sends one Shopify Spy picks.
 
 ## 0.5.1
 

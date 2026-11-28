@@ -312,7 +312,7 @@ async def test_each_pool_profile_sends_its_own_desktop_user_agent(server, profil
     async with CurlCffiFetcher("firefox" if profile == "chrome" else "chrome") as fetcher:
         agent = (await fetcher.fetch(request)).json()["user-agent"]
     assert token in agent
-    # Shopify answers 429 to Linux desktop user agents (see policy.USER_AGENTS)
+    # Shopify answers 429 to every request from a plain Linux desktop user agent (#62)
     assert "Linux" not in agent and "Mobile" not in agent
     assert "Macintosh" in agent or "Windows" in agent
 

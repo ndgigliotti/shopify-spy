@@ -7,7 +7,12 @@ import time
 import pytest
 
 from shopify_spy import _policy as policy
-from shopify_spy._fetch import CurlCffiFetcher, FetcherCapabilities, Identity
+from shopify_spy._fetch import (
+    IMPERSONATE_PROFILES,
+    CurlCffiFetcher,
+    FetcherCapabilities,
+    Identity,
+)
 from shopify_spy._policy import (
     RETRY_MAX_DELAY,
     HostSlot,
@@ -544,16 +549,6 @@ def test_identity_fixed_user_agent_never_rotates():
     assert pool.current.user_agent == "fixed/1.0"
 
 
-def test_identity_rotate_picks_different_agent():
-    pool = IdentityPool(agents=["a", "b", "c"])
-    assert pool.rotates
-    for _ in range(20):
-        before = pool.current.user_agent
-        pool.rotate()
-        assert pool.current.user_agent != before
-        assert pool.current.user_agent in {"a", "b", "c"}
-
-
 def test_identity_profiles_rotate_in_order_and_wrap_around():
     pool = IdentityPool(profiles=("chrome", "safari", "firefox"))
     assert pool.rotates
@@ -615,13 +610,6 @@ def test_identity_rotate_skips_excluded_profiles():
     assert pool.current.impersonate == "firefox"
 
 
-def test_identity_rotate_skips_excluded_agents():
-    pool = IdentityPool(agents=["a", "b", "c"])
-    pool.current = Identity(user_agent="a")
-    assert pool.rotate(exclude={"b"})
-    assert pool.current.user_agent == "c"
-
-
 def test_identity_rotation_off():
     pool = IdentityPool(profiles=("chrome", "safari"), rotation=False)
     assert not pool.rotates
@@ -633,20 +621,16 @@ def test_identity_fixed_user_agent_with_profiles_is_refused():
         IdentityPool(user_agent="fixed/1.0", profiles=("chrome", "safari"))
 
 
-def test_identity_single_agent_cannot_rotate():
-    pool = IdentityPool(agents=["only"])
-    assert not pool.rotates
-    pool.rotate()
-    assert pool.current.user_agent == "only"
-
-
-def test_identity_default_headers():
+def test_identity_defaults_to_the_profile_pool():
     pool = IdentityPool()
-    assert pool.current.user_agent
+    assert pool.profiles == IMPERSONATE_PROFILES
+    assert pool.current == Identity(user_agent=None, impersonate="chrome")
+
+
+def test_identity_fixed_user_agent_sends_default_headers():
+    pool = IdentityPool(user_agent="MyBot/1.0")
     assert pool.current.headers["Accept"].startswith("text/html")
     assert pool.current.headers["Accept-Language"] == "en"
-    pool.rotate()
-    assert "Accept" in pool.current.headers
 
 
 # --- RobotsRules ----------------------------------------------------------------------

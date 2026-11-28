@@ -386,7 +386,7 @@ def test_apply_cli_overrides_none_values():
     assert overridden.scrape.limit is None
     assert overridden.output.dir == Path("./output")
     assert overridden.throttle.enabled is True
-    assert overridden.network.user_agent is None  # random browser UA
+    assert overridden.network.user_agent is None  # browser profiles
 
 
 def test_apply_cli_overrides_format():

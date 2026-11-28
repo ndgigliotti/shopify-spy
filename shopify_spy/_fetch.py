@@ -387,12 +387,12 @@ def impersonate_rotation(start: str) -> tuple[str, ...]:
     the pool without the profile it resolves to (``chrome150`` for ``chrome`` when
     that is curl_cffi's newest Chrome).
     """
-    from curl_cffi.requests.impersonate import resolve_latest_browser_type
-
     pool = IMPERSONATE_PROFILES
     if start in pool:
         i = pool.index(start)
         return pool[i:] + pool[:i]
+    from curl_cffi.requests.impersonate import resolve_latest_browser_type
+
     same = resolve_latest_browser_type(start)
     return (start, *(p for p in pool if resolve_latest_browser_type(p) != same))
 
