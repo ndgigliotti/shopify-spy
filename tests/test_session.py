@@ -709,6 +709,22 @@ async def test_myshopify_refusal_keeps_the_profile(status):
     assert session.identity.current.impersonate == "chrome"
 
 
+async def test_image_refusals_leave_the_store_able_to_switch():
+    session, fetcher = make_session(
+        {
+            f"{STORE}/a.jpg": (403, ""),
+            f"{STORE}/b.jpg": (403, ""),
+            f"{STORE}/p": Seq([(403, ""), (200, "ok")]),
+        },
+        robots=False,
+        identity=IdentityPool(profiles=PROFILES),
+    )
+    assert (await get(session, f"{STORE}/a.jpg", kind=IMAGE)).status == 403
+    assert (await get(session, f"{STORE}/b.jpg", kind=IMAGE)).status == 403
+    assert (await get(session, f"{STORE}/p")).status == 200
+    assert profiles_sent(fetcher) == ["chrome", "chrome", "chrome", "safari"]
+
+
 @pytest.mark.parametrize("status", [403, 429])
 async def test_concurrent_refusals_of_one_profile_switch_once(status):
     refuse = refuse_first_together((status, ""))

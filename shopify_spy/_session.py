@@ -80,7 +80,11 @@ class RequestKind:
 
 STORE = RequestKind("store")
 ROBOTS = RequestKind("robots", check_robots=False, counted=False, dedupe=False)
-IMAGE = RequestKind("image", counted=False, dedupe=False, rate_limits=False, image=True)
+# An image 403 is usually hotlink protection or an expired signed URL, not the store
+# refusing the identity, and must not use up the store's one identity test
+IMAGE = RequestKind(
+    "image", counted=False, dedupe=False, rotate=False, rate_limits=False, image=True
+)
 PROBE = RequestKind("probe", counted=False, dedupe=False)  # e.g. a wrong-platform check
 # A fallback source, e.g. WooCommerce product pages: if it finds nothing, the store's
 # diagnosis still explains why the primary source failed
