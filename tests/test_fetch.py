@@ -322,6 +322,9 @@ URL_PARTS_CASES = [
     ("https://shop.test/#\x7f", None),
     ("https://exa\x7fmple.com/", None),
     ("http://\xad.com/", None),
+    # IDNA 2003 and 2008 disagree on these, so they're refused rather than guessed
+    ("https://stra\xdfe.de/", None),
+    ("https://a\u200d.com/", None),
     ("https://shop.test/a b", ("https", "shop.test", None)),
     ("https://Shop.Test:443/x", ("https", "shop.test", None)),
     ("HTTPS://Shop.Test:443/x", ("https", "shop.test", 443)),

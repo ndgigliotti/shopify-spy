@@ -348,7 +348,9 @@ def _split_host(host: str) -> str:
         return re.sub(r"[ <>\[\]^]", lambda c: f"%{ord(c[0]):02X}", host.lower())
     # The stdlib codec would turn *münchen.de into xn--*mnchen-o2a.de, a NO_PROXY
     # pattern that matches nothing, so hosts meant to go direct would be proxied
-    if "*" in host:
+    # The stdlib codec maps these to other letters (straße.de to strasse.de) where
+    # libcurl's IDNA 2008 keeps them, so NO_PROXY would match a different domain
+    if "*" in host or any(c in host for c in "ßς\u200c\u200d"):
         raise ValueError(f"Invalid IDNA hostname: {host!r}")
     try:
         encoded = host.lower().encode("idna").decode("ascii")
@@ -623,7 +625,8 @@ class CurlCffiFetcher:
     is None. A browser profile brings its own TLS and HTTP/2 fingerprint, user agent
     and headers, so the identity's are never applied. With neither, the request is
     plain: the identity's user agent and headers over HTTP/1.1, and
-    ``capabilities`` says so. ``Request.headers`` override both.
+    ``capabilities`` says so. ``Request.headers`` override the profile's or the
+    identity's headers, apart from a plain request's User-Agent.
     """
 
     capabilities = FetcherCapabilities(applies_identity_headers=False, can_impersonate=True)
