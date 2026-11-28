@@ -1011,24 +1011,25 @@ def _display_status(store: StoreResult) -> str:
 def _store_hints(stores: list[StoreResult]) -> list[str]:
     """``StoreResult.hint`` of each store that failed or produced nothing, with its host.
 
-    A store that produced items has only the products_from hint, which the summary
-    already shows.
+    A store's products_from hint is left out once it has items, since the summary
+    already shows where they came from, even when the store then failed.
     """
     return [
         f"{escape(_host(s.input_url))}: {escape(s.hint)}"
         for s in stores
-        if s.hint is not None and (s.failed or s.items == 0)
+        if s.hint is not None and (s.items == 0 or (s.failed and s.products_from is None))
     ]
 
 
-def summary_hints(all_stores: list[StoreResult], config: Config) -> list[str]:
+def summary_hints(stores: list[StoreResult], config: Config) -> list[str]:
     """Return one hint per distinct zero-item status, in diagnosis order, then each
     store's own hint.
 
     A store with its own hint is left out of the status hints, so that a proxy that
     failed, for one, isn't also blamed on the network or a certificate.
     """
-    stores = [s for s in all_stores if s.hint is None]
+    store_hints = _store_hints(stores)
+    stores = [s for s in stores if s.hint is None]
 
     def total(status: StoreStatus, codes: Container[int]) -> int:
         return sum(
@@ -1091,7 +1092,7 @@ def summary_hints(all_stores: list[StoreResult], config: Config) -> list[str]:
         hints.append("The store may be empty or the endpoint returned no products.")
     if StoreStatus.stopped in present:
         hints.append("Stopped before every store finished.")
-    return hints + _store_hints(all_stores)
+    return hints + store_hints
 
 
 if __name__ == "__main__":

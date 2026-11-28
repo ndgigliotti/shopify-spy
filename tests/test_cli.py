@@ -7,6 +7,7 @@ accounting. Plan references (§, D) are to .context/httpx-library-rewrite.md.
 
 import asyncio
 import csv
+import dataclasses
 import json
 import sys
 from dataclasses import dataclass, field
@@ -1552,6 +1553,15 @@ def test_summary_hints_generic_hint_only_for_stores_without_one():
     hints = summary_hints(stores, Config())
     assert hints[0].startswith("No responses received")
     assert hints[1] == "a.com: requests went through a proxy; check that it is reachable"
+
+
+def test_summary_hints_skip_products_from_hint_of_errored_store_with_items():
+    store = dataclasses.replace(
+        _failed_store("store.com", StoreStatus.error),
+        items=50,
+        products_from="acme.myshopify.com",
+    )
+    assert not any("products came from" in h for h in summary_hints([store], Config()))
 
 
 def test_mixed_run_prints_failed_store_hint(cli):
