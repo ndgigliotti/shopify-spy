@@ -1,6 +1,6 @@
 # Use as a library
 
-The CLI is built on a Python API that scripts and coding agents can use directly. `scrape()` yields items as plain dicts while the stores are scraped, so a script can scrape, filter and save in one pass. `help(spy.scrape)` documents every option. A `uv tool` or `pipx` install only provides the command, so install the package where your script runs: `uv add shopify-spy` in a project, or `uv run --with 'shopify-spy>=0.5' python script.py` for a one-off script. [Installation](install.md#as-a-library) covers the rest.
+The CLI is built on a Python API that scripts and coding agents can use directly. `scrape()` yields items as plain dicts while the stores are scraped, so a script can scrape, filter and save in one pass. `help(spy.scrape)` documents every option. A `uv tool` or `pipx` install only provides the command, so install the package where your script runs: `uv add shopify-spy` in a project, or `uv run --with 'shopify-spy>=0.6' python script.py` for a one-off script. [Installation](install.md#as-a-library) covers the rest.
 
 ```python
 import shopify_spy as spy
@@ -36,7 +36,7 @@ Items are plain dicts with typed definitions (`ShopifyProductItem`, `ShopifyColl
 With nothing to install, an agent can learn a store's item shape and then write a script that keeps only what the task needs:
 
 1. `uvx shopify-spy scrape --peek URL` prints one item.
-2. A script run with `uv run --with 'shopify-spy>=0.5' python script.py` filters and saves the items.
+2. A script run with `uv run --with 'shopify-spy>=0.6' python script.py` filters and saves the items.
 3. The [CLI](cli.md) is simpler for whole-catalog dumps and image downloads.
 
 ## How a run works

@@ -82,7 +82,7 @@ def test_piped_scrape_help_content():
         "in the end-of-run summary and the status file",
         "Most requests in flight to one host at once",
         "they go out about one at a time",
-        "uv run --with 'shopify-spy>=0.5' python script.py",
+        "uv run --with 'shopify-spy>=0.6' python script.py",
         "./shopify-spy.yaml",
         "~/.config/shopify-spy/config.yaml",
     ):
