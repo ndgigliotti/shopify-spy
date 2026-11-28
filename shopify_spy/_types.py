@@ -142,7 +142,7 @@ enabled). schema.org has none of those four properties, so they can't collide.
 
 The ``squarespace`` platform gives this shape too when it reads product pages (with
 robots.txt obeyed, or when no ``?format=json`` collection gave a product), with
-``platform="squarespace"`` and ``source="product_page"``; ``jsonld`` items have no
+``platform="squarespace"`` and ``source="product_page"``; ``generic`` items have no
 ``source``.
 
 ``html_url`` is the page the node came from, without its fragment. ``image_urls``
@@ -165,7 +165,7 @@ class SquarespaceProductItem(TypedDict, total=False):
     origin plus ``fullUrl``. ``image_urls`` lists the record's ``items`` images (else
     its ``assetUrl``) and then each variant's ``mainImage`` not already listed.
 
-    Product pages give ``JsonLdProductItem`` instead, with ``source="product_page"``."""
+    Product pages give ``GenericProductItem`` instead, with ``source="product_page"``."""
 
     id: str
     title: str

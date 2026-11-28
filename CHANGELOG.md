@@ -44,8 +44,8 @@
 - A `squarespace` platform (`--platform squarespace`, `platform="squarespace"`)
   for Squarespace Commerce stores. Squarespace's robots.txt disallows its
   `?format=json` URLs, so by default it reads the product pages the store's sitemap
-  lists, as `jsonld` does, and never requests a `format=json` URL; those items are
-  `jsonld`-shaped with `platform: "squarespace"` and `source: "product_page"`. With
+  lists, as `generic` does, and never requests a `format=json` URL; those items are
+  `generic`-shaped with `platform: "squarespace"` and `source: "product_page"`. With
   `--ignore-robots` (`respect_robots_txt=False`), it reads each collection's
   `?format=json` pages instead, giving the Squarespace product records with every
   variant, price and stock (`SquarespaceProductItem`, `source: "format_json"`), and

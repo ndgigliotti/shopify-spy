@@ -909,13 +909,13 @@ def is_product(loc):
 
 @pytest.fixture
 def read_pages(monkeypatch):
-    """Route platform="jsonld" through read_pages with these options."""
+    """Route platform="generic" through read_pages with these options."""
 
     def use(**options):
         async def adapter(ctx, emit):
             return await generic.read_pages(ctx, emit, **options)
 
-        monkeypatch.setitem(runner.ADAPTERS, "jsonld", adapter)
+        monkeypatch.setitem(runner.ADAPTERS, "generic", adapter)
 
     return use
 

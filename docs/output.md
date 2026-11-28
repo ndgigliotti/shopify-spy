@@ -177,7 +177,7 @@ With `--platform generic`, each line holds the schema.org `Product` or `ProductG
 
 With `--platform squarespace`, an item's shape depends on where it was read from, which its `source` field records. Squarespace's robots.txt disallows `?format=json` URLs for every crawler, so which source is read depends on whether robots.txt is obeyed (see [Squarespace stores](troubleshooting.md#squarespace-stores)), and the log says which at INFO level.
 
-**From product pages** (`"source": "product_page"`, the default): each item is the page's schema.org `Product` or `ProductGroup` node, exactly as a [JSON-LD item](#json-ld-items) is, with `"platform": "squarespace"` and `source` added. Only the `/<collection>/p/<slug>` pages the store's sitemap lists are read, and no URL with a `format` query parameter is requested.
+**From product pages** (`"source": "product_page"`, the default): each item is the page's schema.org `Product` or `ProductGroup` node, exactly as a [generic item](#generic-items) is, with `"platform": "squarespace"` and `source` added. Only the `/<collection>/p/<slug>` pages the store's sitemap lists are read, and no URL with a `format` query parameter is requested.
 
 **From collection data** (`"source": "format_json"`, with `--ignore-robots`): each item is a product record from a collection's `?format=json` page, as Squarespace returned it, plus five added fields (`image_urls` is empty unless `--images` is given). The record has every variant, with its price, sale price and stock:
 

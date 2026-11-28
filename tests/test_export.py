@@ -1514,21 +1514,21 @@ def test_csv_squarespace_odd_records_never_raise(tmp_path, odd):
     assert {r["platform"] for r in rows} == {"squarespace"}
 
 
-def test_csv_squarespace_product_page_item_is_a_jsonld_row(tmp_path):
-    page_item = JSONLD_PRODUCT | {"platform": "squarespace", "source": "product_page"}
+def test_csv_squarespace_product_page_item_is_a_generic_row(tmp_path):
+    page_item = GENERIC_PRODUCT | {"platform": "squarespace", "source": "product_page"}
     path = tmp_path / "out.csv"
-    write_items([JSONLD_PRODUCT, page_item], path)
-    jsonld_row, page_row = read_csv(path)
+    write_items([GENERIC_PRODUCT, page_item], path)
+    generic_row, page_row = read_csv(path)
     assert (page_row["platform"], page_row["source"]) == ("squarespace", "product_page")
-    assert (jsonld_row["platform"], jsonld_row["source"]) == ("jsonld", "")
+    assert (generic_row["platform"], generic_row["source"]) == ("generic", "")
     unchanged = set(COLUMNS) - {"platform", "source", "image_paths"}
-    assert {c: page_row[c] for c in unchanged} == {c: jsonld_row[c] for c in unchanged}
+    assert {c: page_row[c] for c in unchanged} == {c: generic_row[c] for c in unchanged}
 
 
 def test_item_platform_names_squarespace():
     from shopify_spy._flatten import item_platform
 
-    page_item = JSONLD_PRODUCT | {"platform": "squarespace", "source": "product_page"}
+    page_item = GENERIC_PRODUCT | {"platform": "squarespace", "source": "product_page"}
     assert item_platform(SQUARESPACE_PRODUCT) == "squarespace"
     assert item_platform(page_item) == "squarespace"
     assert item_platform({"platform": "squarespace", "structuredContent": None}) is None

@@ -64,7 +64,7 @@ async def read_pages(
     ctx: StoreContext,
     emit: Emit,
     *,
-    platform: str = "jsonld",
+    platform: str = "generic",
     source: str | None = None,
     keep: Callable[[str], bool] | None = None,
     product_shape: str | None = None,
@@ -72,7 +72,7 @@ async def read_pages(
     """``run`` for any platform: items get ``platform`` and, when given, ``source``.
 
     With ``keep``, only the listed pages it accepts are fetched, and a sitemap that
-    lists pages but none it accepts raises JsonLdError naming ``product_shape``,
+    lists pages but none it accepts raises GenericError naming ``product_shape``,
     the URL shape ``keep`` looks for (a filter that misses the store's product
     URLs would otherwise look like an empty store).
     """
@@ -295,7 +295,7 @@ class _Pages:
         emit: Emit,
         listing: _Listing,
         *,
-        platform: str = "jsonld",
+        platform: str = "generic",
         source: str | None = None,
         urls: list[str] | None = None,
     ) -> None:
@@ -473,7 +473,7 @@ def _item(
     node: dict[str, Any],
     response: Response,
     images: bool,
-    platform: str = "jsonld",
+    platform: str = "generic",
     source: str | None = None,
 ) -> dict[str, Any]:
     node["store"] = urllib.parse.urlsplit(response.url).netloc

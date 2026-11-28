@@ -143,7 +143,7 @@ def item_platform(item: dict[str, Any]) -> str | None:
     """``"shopify"``, ``"woocommerce"``, ``"magento"``, ``"bigcommerce"``, ``"generic"``
     or ``"squarespace"``; None when it isn't a scraped item."""
     builder = _builder(item)
-    if builder is _jsonld:
+    if builder is _generic:
         return item["platform"]
     return _PLATFORMS.get(builder) if builder else None
 
@@ -406,7 +406,7 @@ def _generic(item: dict[str, Any]) -> list[dict[str, Any]]:
         "sku": jsonld.text(item.get("sku")),
         **jsonld.codes(item, *jsonld.listify(item.get("offers"))),
         **_jsonld_offer(item.get("offers")),
-        # "product_page" on Squarespace items; jsonld items have no source
+        # "product_page" on Squarespace items; generic items have no source
         "source": item.get("source"),
     } | _image_paths(item)
     if per_offer:

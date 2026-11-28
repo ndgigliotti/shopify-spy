@@ -195,18 +195,18 @@ def test_format_json_locs_count_as_filtered_out():
     assert_no_format_json(fetcher)
 
 
-def test_items_are_jsonld_items_labelled_squarespace():
+def test_items_are_generic_items_labelled_squarespace():
     items, _, _ = scrape_sq(store())
     product_locs = {SITEMAP: urlset(*map(url, SLUGS[:3]))}
-    jsonld_items, _, _ = scrape({**store(), **product_locs}, platform="jsonld")
+    generic_items, _, _ = scrape({**store(), **product_locs}, platform="generic")
     by_url = {i["html_url"]: i for i in items}
     assert len(by_url) == 3
-    for expected in jsonld_items:
+    for expected in generic_items:
         item = by_url[expected["html_url"]]
         assert item == {**expected, "platform": "squarespace", "source": "product_page"}
         assert item["store"] == "shop.test"
         assert item["image_urls"] == []
-    assert "source" not in jsonld_items[0]
+    assert "source" not in generic_items[0]
 
 
 def test_items_list_images_when_downloading(tmp_path):

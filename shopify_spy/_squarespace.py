@@ -4,8 +4,8 @@ Every Squarespace site serves the same robots.txt, which disallows ``?format=jso
 (and ``&format=json``, ``format=page-context``, ``format=json-pretty``) for every
 user agent but allows ``/sitemap.xml`` and the product pages. So with robots.txt
 obeyed, the default, no ``format=json`` URL is ever requested: the
-``/<collection>/p/<slug>`` pages the sitemap lists are read with the ``jsonld``
-platform's reader, and each item is the page's Product node as ``jsonld`` gives it,
+``/<collection>/p/<slug>`` pages the sitemap lists are read with the ``generic``
+platform's reader, and each item is the page's Product node as ``generic`` gives it,
 with ``platform="squarespace"`` and ``source="product_page"``.
 
 Sitemap locs that aren't product pages are left out, and so is any loc with a

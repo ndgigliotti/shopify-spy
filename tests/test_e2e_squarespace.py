@@ -14,7 +14,7 @@ import urllib.parse
 
 import pytest
 
-from tests.test_e2e_diagnosis import _free_port
+from tests.test_e2e_diagnosis import NO_THROTTLE_FLOORS, _free_port
 
 pytestmark = pytest.mark.e2e
 
@@ -178,8 +178,7 @@ def _scrape(out, urls, *options):
             "csv",
             "--output",
             str(out),
-            "--min-delay",
-            "0",
+            *NO_THROTTLE_FLOORS,
             "--bail",
             "30",
             "--quiet",
