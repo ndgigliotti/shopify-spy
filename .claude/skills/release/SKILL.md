@@ -36,29 +36,40 @@ If the version, the docs links or the CHANGELOG need updating, do it in a PR (ma
 the last commit of the release's PR, or a small PR of its own. Release once it's
 merged and master's CI has passed.
 
-## 2. Tag
+## 2. Build and test the artifacts
 
-- **(ask)** `git tag -a vX.Y.Z -m vX.Y.Z` on master's head (the merge commit),
-  then `git push origin vX.Y.Z`. Tagging first means the tag exists before
-  anything is published.
+Build once, from the release SHA, and publish exactly these files later; never
+rebuild after tagging.
 
-## 3. Build and smoke-test
-
-- `rm -rf dist && uv build -q --no-config`. Without `--no-config`, `uv build`
-  (like `uv run`, `uv sync` and `uv lock`) can rewrite `uv.lock`: check
-  `git status` afterwards and `git checkout uv.lock` if it changed.
+- On a clean checkout of master's head (`git status` empty, `git rev-parse HEAD` is
+  the SHA you'll tag): `rm -rf dist && uv build -q --no-config`. Without
+  `--no-config`, `uv build` (like `uv run`, `uv sync` and `uv lock`) can rewrite
+  `uv.lock`: check `git status` afterwards and `git checkout uv.lock` if it changed.
+  Record `sha256sum dist/*`.
 - Install the wheel into a fresh venv, **with the working directory outside the
-  repo** (0.1.0–0.2.2 shipped broken because a file in the checkout hid a
-  packaging bug), and check:
-  - `shopify-spy --version` prints X.Y.Z
-  - `shopify-spy scrape --peek <a Shopify store>` prints one item (a 429 or
-    other store failure means retry or pick another store, not a bad build)
-  - `python -c "import shopify_spy as spy; print(spy.scrape('<store>').first()['store'])"`
+  repo** (0.1.0–0.2.2 shipped broken because a file in the checkout hid a packaging
+  bug), and install the previous release from PyPI into another. Then, still outside
+  the repo:
+  - `shopify-spy --version` prints X.Y.Z, and
+    `python -c "import shopify_spy as spy; print(spy.__version__)"` does too.
+  - `python scripts/contract_test.py OLD/bin/shopify-spy NEW/bin/shopify-spy REPORT`
+    (path to the script in the checkout) runs both CLIs against loopback stores. It
+    exits 1 when the new CLI misses an expected outcome, or on a difference no
+    `--allow-diff REGEX` approves. Approve only the changes the CHANGELOG lists,
+    and read the report's --help diff.
+- No live store is involved in this step, so a failure here is a bad build.
+
+## 3. Tag
+
+- **(ask)** `git tag -a vX.Y.Z -m vX.Y.Z` on the SHA you built, then
+  `git push origin vX.Y.Z`. Tagging before publishing means the tag exists before
+  anything is on PyPI.
 
 ## 4. Publish
 
-- **(ask)** `uv publish dist/*`. `UV_PUBLISH_TOKEN` is set in the user's
-  environment and needs no flags; don't print it.
+- **(ask)** `uv publish dist/*`, the files built and tested in step 2.
+  `UV_PUBLISH_TOKEN` is set in the user's environment and needs no flags; don't
+  print it.
 - Check PyPI has exactly these files: the `digests.sha256` of each file in
   `https://pypi.org/pypi/shopify-spy/X.Y.Z/json` matches `sha256sum dist/*`.
   Use the version-specific URL; `/pypi/shopify-spy/json` is cached and can lag
@@ -75,6 +86,10 @@ merged and master's CI has passed.
   `~/.config/uv/uv.toml`), so exempt this package:
   `uvx --exclude-newer-package shopify-spy=false --refresh-package shopify-spy shopify-spy@X.Y.Z --version`
 - `gh release view vX.Y.Z` shows the notes.
+- Separately, check that the published release reaches a live store:
+  `shopify-spy scrape --peek <a Shopify store>` prints one item. This tests store
+  reachability, not the build (step 2 did that): a 429 or other store failure
+  means retry later or pick another store.
 
 Report the PyPI and GitHub release links now; step 6 can take days.
 
