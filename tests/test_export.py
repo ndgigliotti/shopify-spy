@@ -1142,6 +1142,14 @@ def test_csv_jsonld_variant_value_from_a_dict(tmp_path):
     assert row["variant_title"] == "Red / S"
 
 
+def test_csv_jsonld_prefixed_varies_by(tmp_path):
+    variant = _jl_variant("TEE-S", "S", "10") | {"color": "Red"}
+    path = tmp_path / "out.csv"
+    write_items([JSONLD_GROUP | {"variesBy": "schema:color", "hasVariant": [variant]}], path)
+    (row,) = read_csv(path)
+    assert (row["options"], row["option1"], row["variant_title"]) == ("color", "Red", "Red")
+
+
 def test_csv_jsonld_variant_without_price_keeps_product_price(tmp_path):
     variant = _jl_variant("TEE-S", "S", "10")
     del variant["offers"]

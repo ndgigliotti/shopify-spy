@@ -373,7 +373,7 @@ def _jsonld(item: dict[str, Any]) -> list[dict[str, Any]]:
     offers = dicts(item.get("offers"))
     # Without variants, a list of offers is the variants: one per size, say
     per_offer = not variants and len(offers) > 1
-    names = [n for v in jsonld.listify(item.get("variesBy")) if (n := _last_segment(v))]
+    names = [n for v in jsonld.listify(item.get("variesBy")) if (n := jsonld.term(v))]
     average, reviews = jsonld.rating(item.get("aggregateRating"))
     product = {
         "platform": "jsonld",
