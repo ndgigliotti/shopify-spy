@@ -4,6 +4,7 @@ import asyncio
 import gc
 import http.server
 import ipaddress
+import logging
 import subprocess
 import sys
 import threading
@@ -413,21 +414,23 @@ class _NotFound(http.server.BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):  # noqa: N802
+        self.server.agents.add(self.headers["User-Agent"])  # type: ignore[attr-defined]
         self.send_response(404)
         self.send_header("Content-Length", "0")
         self.end_headers()
 
 
-def test_run_with_a_user_agent_never_imports_curl_cffi(clean_proxy_env):
+def test_run_with_a_user_agent_sends_plain_requests(clean_proxy_env):
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _NotFound)
+    httpd.agents = set()  # type: ignore[attr-defined]
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     store = f"http://127.0.0.1:{httpd.server_address[1]}"
     code = (
-        "import sys, shopify_spy as spy; "
+        "import shopify_spy as spy; "
         f"run = spy.scrape({store!r}, user_agent='test-agent/1.0', on_failure='ignore', "
         "throttle=False); "
         "list(run); "
-        "print(404 in run.result.stores[0].responses_by_status, 'curl_cffi' in sys.modules)"
+        "print(404 in run.result.stores[0].responses_by_status)"
     )
     try:
         out = subprocess.run(
@@ -436,7 +439,8 @@ def test_run_with_a_user_agent_never_imports_curl_cffi(clean_proxy_env):
     finally:
         httpd.shutdown()
         httpd.server_close()
-    assert out.stdout.strip() == "True False"
+    assert out.stdout.strip() == "True"
+    assert httpd.agents == {"test-agent/1.0"}  # type: ignore[attr-defined]
 
 
 # --- Status diagnosis ---
@@ -614,7 +618,7 @@ def test_no_proxy_star_skips_environment_check(clean_proxy_env, name):
 
 
 @pytest.mark.parametrize("value", ["http://", "http://:8080", "http://h:99999"])
-def test_environment_proxies_httpx_accepts_still_accepted(clean_proxy_env, value):
+def test_lenient_environment_proxies_still_accepted(clean_proxy_env, value):
     clean_proxy_env.setenv("HTTPS_PROXY" if value.endswith("99999") else "HTTP_PROXY", value)
     spy.scrape("a.com")
 
@@ -725,19 +729,18 @@ def test_custom_fetcher_ignores_impersonate(monkeypatch):
 
 
 def _record_transports(monkeypatch, routes=None):
-    """Replace both default transports with fakes; return the constructor calls."""
+    """Replace the default transport with a fake; return the constructor calls.
+
+    Without a profile the fake has a plain fetcher's capabilities, as the real one does.
+    """
     made = []
 
     def curl_fetcher(impersonate, *, verify, proxy):
         made.append(("curl_cffi", impersonate, verify, proxy))
-        return _CurlLike(routes or ok_routes())
-
-    def httpx_fetcher(*, verify, proxy):
-        made.append(("httpx", verify, proxy))
-        return FakeFetcher(routes or ok_routes())
+        fake = FakeFetcher if impersonate is None else _CurlLike
+        return fake(routes or ok_routes())
 
     monkeypatch.setattr(_runner, "CurlCffiFetcher", curl_fetcher)
-    monkeypatch.setattr(_runner, "HttpxFetcher", httpx_fetcher)
     return made
 
 
@@ -775,10 +778,13 @@ def test_blank_user_agent_counts_as_unset(monkeypatch, clean_proxy_env, blank):
     assert made == [("curl_cffi", "chrome", True, None)]
 
 
-def test_user_agent_runs_on_httpx(monkeypatch, clean_proxy_env):
+def test_user_agent_runs_without_impersonation(monkeypatch, clean_proxy_env, caplog):
     made = _record_transports(monkeypatch)
+    caplog.set_level(logging.INFO, logger="shopify_spy")
     assert len(list(spy.scrape(STORE, user_agent="MyBot/1.0", **FAST))) == 2
-    assert made == [("httpx", True, None)]
+    assert made == [("curl_cffi", None, True, None)]
+    assert "Sending plain requests as MyBot/1.0 (curl_cffi " in caplog.text
+    assert "Impersonating" not in caplog.text
 
 
 def test_user_agent_is_sent_unchanged_without_rotation():
