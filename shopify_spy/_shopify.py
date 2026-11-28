@@ -602,21 +602,10 @@ async def _fetch_documents(
             limiter.release()
         if response is None:  # robots.txt, or a redirect target already fetched
             return
-        if not response.ok:
-            if response.status not in GONE:
-                logger.info("Product returned %d for %s", response.status, url)
+        data, missed = _listed_document(response, url)
+        if data is None:
+            if missed:
                 failed += 1
-            return
-        data = response.json_or_none()
-        if not _is_product_document(data):
-            if urllib.parse.urlsplit(response.url).path != urllib.parse.urlsplit(url).path:
-                # A stale sitemap entry the store redirects elsewhere (a collection,
-                # the homepage): the product no longer exists, like a 404
-                logger.info("Product %s redirected to %s", url, response.url)
-                return
-            # A 2xx can still be an error document ({"errors": ...}) or a page
-            logger.warning("No product in the response from %s", url)
-            failed += 1
             return
         data["url"] = response.url
         data["store"] = urllib.parse.urlsplit(response.url).netloc
@@ -636,6 +625,27 @@ async def _fetch_documents(
     if failed:
         logger.warning("%d listed products couldn't be read", failed)
     return failed
+
+
+def _listed_document(response: Response, url: str) -> tuple[dict[str, Any] | None, bool]:
+    """A listed product's document from its answer to ``url``, else None and whether
+    the product counts as failed rather than gone."""
+    if not response.ok:
+        if response.status in GONE:
+            return None, False
+        logger.info("Product returned %d for %s", response.status, url)
+        return None, True
+    data = response.json_or_none()
+    if _is_product_document(data):
+        return data, False
+    if urllib.parse.urlsplit(response.url).path != urllib.parse.urlsplit(url).path:
+        # A stale sitemap entry the store redirects elsewhere (a collection, the
+        # homepage): the product no longer exists, like a 404
+        logger.info("Product %s redirected to %s", url, response.url)
+        return None, False
+    # A 2xx can still be an error document ({"errors": ...}) or a page
+    logger.warning("No product in the response from %s", url)
+    return None, True
 
 
 def _is_product_document(data: Any) -> bool:
