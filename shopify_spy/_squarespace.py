@@ -37,7 +37,6 @@ from shopify_spy._utils import canonicalize_url, dicts, hostname
 from shopify_spy._woocommerce import GONE
 
 __all__ = [
-    "PRODUCT_SHAPE",
     "SquarespaceError",
     "collection_path",
     "image_urls",
@@ -83,22 +82,18 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
             "reading product pages' structured data",
             ctx.url,
         )
-        return await _product_pages(ctx, emit)
+        return await generic.read_pages(
+            ctx,
+            emit,
+            platform="squarespace",
+            source="product_page",
+            keep=is_product_url,
+            product_shape=PRODUCT_SHAPE,
+        )
     logger.info(
         "Squarespace %s: robots.txt is ignored; reading ?format=json collection pages", ctx.url
     )
     return await _JsonSource(ctx, emit).run()
-
-
-async def _product_pages(ctx: StoreContext, emit: Emit) -> bool:
-    return await generic.read_pages(
-        ctx,
-        emit,
-        platform="squarespace",
-        source="product_page",
-        keep=is_product_url,
-        product_shape=PRODUCT_SHAPE,
-    )
 
 
 @dataclass
