@@ -336,10 +336,7 @@ async def _product_pages(ctx: StoreContext, emit: Emit) -> bool:
             )
             if product is None:
                 logger.info("No schema.org Product on %s", response.url)
-                # Every other listed URL is a product page, so this product was
-                # missed. Yoast lists the shop page first in product-sitemap.xml
-                shop = "archive" in jsonld.body_classes(text)
-                failed = failed or not (shop or moved_away(url, response))
+                failed |= _missed_product(url, response, text)
                 return
             post_id = post_id or listed_id
             form = jsonld.variation_form(text, post_id)
@@ -365,6 +362,13 @@ async def _product_pages(ctx: StoreContext, emit: Emit) -> bool:
             await limiter.acquire()
             tg.create_task(fetch(url.split("#", 1)[0], listed_id))
     return listing.complete and not failed
+
+
+def _missed_product(url: str, response: Response, text: str) -> bool:
+    """Whether a listed page without a Product is a missed product. Every listed
+    URL is a product page but for the shop page, which Yoast lists first in
+    product-sitemap.xml, and a deleted product redirected elsewhere."""
+    return "archive" not in jsonld.body_classes(text) and not moved_away(url, response)
 
 
 def moved_away(listed: str, response: Response) -> bool:

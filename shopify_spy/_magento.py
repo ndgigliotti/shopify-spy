@@ -108,14 +108,10 @@ async def run(ctx: StoreContext, emit: Emit) -> bool:
             logger.info("Magento page size limit (%s); retrying with %d", problem, smaller)
             size = smaller
             continue
-        if problem is not None:
-            if not dicts(products["items"]):
-                # Resolver errors null out the items they hit, so this is a failed page
-                return await _failed(ctx, response, where, page, problem) and not missed
-            logger.warning("Magento GraphQL answered with errors for %s: %s", where, problem)
-            if failed := _failed_items(response, products["items"]):
-                logger.warning("Magento: %d products failed to resolve on %s", failed, where)
-                missed = True
+        if problem is not None and not dicts(products["items"]):
+            # Resolver errors null out the items they hit, so this is a failed page
+            return await _failed(ctx, response, where, page, problem) and not missed
+        missed = _missed_items(response, products["items"], problem, where) or missed
         if page == 1:
             size = _effective_page_size(products, size, where)
         done = await _take_page(ctx, emit, response, products, seen, where, page, size)
@@ -197,6 +193,16 @@ def _effective_page_size(products: dict[str, Any], size: int, where: str) -> int
         return size
     logger.info("Magento answered page size %d for %d at %s; paging with it", answered, size, where)
     return answered
+
+
+def _missed_items(response: Response, items: list[Any], problem: str | None, where: str) -> bool:
+    """Log a page's GraphQL errors; return whether a resolver failed on an item."""
+    if problem is None:
+        return False
+    logger.warning("Magento GraphQL answered with errors for %s: %s", where, problem)
+    if failed := _failed_items(response, items):
+        logger.warning("Magento: %d products failed to resolve on %s", failed, where)
+    return failed > 0
 
 
 def _failed_items(response: Response, items: list[Any]) -> int:
