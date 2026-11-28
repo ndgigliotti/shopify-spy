@@ -187,10 +187,7 @@ def _node(item: _Item, depth: int = 0) -> dict[str, Any]:
     if item.itemid:
         node["@id"] = item.itemid
     for name, values in item.properties.items():
-        found = [_node(v, depth + 1) if isinstance(v, _Item) and depth < 32 else v for v in values]
-        texts: set[str] = set()
-        found = [v for v in found if not isinstance(v, _Item) and not _repeat(v, texts)]
-        if found:
+        if found := _values(values, depth):
             node[name] = found[0] if len(found) == 1 else found
     kinds = set(item.types)
     # A rating is read only on a stated scale: without one, Magento's 60 (of 100)
@@ -205,14 +202,20 @@ def _node(item: _Item, depth: int = 0) -> dict[str, Any]:
     return node
 
 
-def _repeat(value: Any, texts: set[str]) -> bool:
-    """Whether ``value`` is a string already in ``texts``; adds it if not."""
-    if not isinstance(value, str):
-        return False
-    if value in texts:
-        return True
-    texts.add(value)
-    return False
+def _values(values: list[Any], depth: int) -> list[Any]:
+    """A property's values, items as nodes, without repeats of a string."""
+    found: list[Any] = []
+    texts: set[str] = set()
+    for value in values:
+        if isinstance(value, _Item):
+            if depth < 32:
+                found.append(_node(value, depth + 1))
+        elif not isinstance(value, str):
+            found.append(value)
+        elif value not in texts:
+            texts.add(value)
+            found.append(value)
+    return found
 
 
 def _list(value: Any) -> list[Any]:
