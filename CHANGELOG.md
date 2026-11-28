@@ -141,6 +141,9 @@
 
 ### Fixed
 
+- A Shopify store read from its sitemap, where every listed product failed, was
+  reported `empty` (a store with no products); it now ends `failed`, with how many
+  listed products couldn't be read in `StoreResult.errors`.
 - A POST (BigCommerce's `/graphql`) whose response libcurl can't decode is no longer
   sent a second time inside the transport to read the body raw. It fails once,
   without retries, since the same encoding would refuse every resend; GET requests
@@ -170,6 +173,24 @@
   nothing, and a store's hint replaces the status hint it would otherwise share
   with other stores. The wrong-platform hint now reads the same in the CLI and the
   library (`looks like WooCommerce; use the woocommerce platform`).
+- A Shopify store whose `/products.json` repeats a page (a server that ignores
+  `page`) now reads the sitemap for the products past it, instead of ending
+  `ok` with the rest missing.
+- A Shopify store read with `--collections` whose `/collections.json` fails or
+  repeats a page before the end of the list is now `partial`, keeping the
+  collections read, instead of `ok`.
+- A Shopify store read through its sitemap is now `partial` when a listed product
+  failed (no response, or an error status other than 404 or 410), instead of `ok`.
+  A listed product's `.json` that answers 2xx without a product (no `product`
+  object with an `id`, such as `{"errors": ...}`) is no longer emitted as an item,
+  and counts as failed, unless it was redirected to another page (a stale sitemap
+  entry), which counts as gone like a 404. A child sitemap of the store's sitemap
+  index that failed, answered an error status or didn't parse also makes the
+  store `partial`, since its products went unread.
+- `StoreResult.complete` is False for a store whose status is a failure, and for
+  one that produced no item while its platform reported part of the catalog
+  missed, such as a generic store whose sitemaps all answered 5xx. It was True
+  for these when the store's run otherwise finished.
 - A WooCommerce store read from its product pages picks the page's Product when
   its `@id` or `url` is written with `http://` on an `https://` page, beside a
   related product, and a listed product page with no Product data for it makes the

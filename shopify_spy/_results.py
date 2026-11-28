@@ -77,7 +77,8 @@ class StoreResult:
     """What happened to one store.
 
     ``complete`` is False when the store stopped early: item limit, bail, shutdown,
-    close, or an error. ``finish_reason`` says which.
+    close, or an error (``finish_reason`` says which), when part of its catalog
+    couldn't be read, or when its status is a failure.
     """
 
     input_url: str  # as given

@@ -178,7 +178,10 @@ def test_bulk_paging_stops_when_pages_repeat():
     fetcher = FakeFetcher({bulk_url(i): same_page for i in range(1, 5)})
     items, result, _ = scrape(fetcher)
     assert len(items) == 250
-    assert result.stores[0].status == spy.StoreStatus.ok
+    assert fetcher.count(bulk_url(3)) == 0
+    # The repeat proves nothing about the rest, and there's no sitemap to fill it
+    assert fetcher.count(f"{STORE}/sitemap.xml") == 1
+    assert result.stores[0].status == spy.StoreStatus.partial
 
 
 def test_woocommerce_paging_stops_when_pages_repeat():
@@ -226,3 +229,16 @@ def test_retry_waits_survive_zero_throttle_max_delay():
     items, _, _ = scrape(fetcher, throttle_max_delay=0, _backoff=True)
     assert len(items) == 1
     assert time.monotonic() - start >= 0.2  # a real backoff wait happened
+
+
+def test_store_failing_with_no_items_is_not_complete():
+    # Every sitemap the generic platform tries answers 503
+    fetcher = FakeFetcher(default_status=503)
+    items, result, _ = scrape(fetcher, platform="generic")
+    assert items == []
+    store = result.stores[0]
+    assert (store.status, store.finish_reason, store.complete) == (
+        spy.StoreStatus.unavailable,
+        "finished",
+        False,
+    )

@@ -101,7 +101,7 @@ class StoreState:
     ctx: StoreContext | None = None
     finish_reason: str | None = None
     errored: bool = False
-    truncated: bool = False  # the adapter stopped short of the catalog after items
+    covered: bool = True  # the adapter reached the whole catalog
     started: float | None = None
     ended: float | None = None
     errors: list[str] = field(default_factory=list)
@@ -116,20 +116,26 @@ class StoreState:
         duration = 0.0
         if self.started is not None:
             duration = (self.ended or time.monotonic()) - self.started
+        status = diagnose(
+            items=self.items,
+            errored=self.errored,
+            truncated=not self.covered,
+            finish_reason=reason,
+            stats=stats,
+        )
         return StoreResult(
             input_url=self.input_url,
             url=self.url,
             store=urllib.parse.urlsplit(self.url).netloc,
             platform=platform,
             items=self.items,
-            status=diagnose(
-                items=self.items,
-                errored=self.errored,
-                truncated=self.truncated,
-                finish_reason=reason,
-                stats=stats,
-            ),
-            complete=reason == "finished" and not self.errored and not self.truncated,
+            status=status,
+            # A store that failed, even one whose adapter said nothing was missed,
+            # didn't produce its catalog
+            complete=reason == "finished"
+            and not self.errored
+            and self.covered
+            and not status.is_failure,
             finish_reason=reason,
             suggested_platform=self.ctx.suggested_platform if self.ctx else None,
             products_from=self.ctx.products_from if self.ctx else None,
@@ -364,8 +370,7 @@ class Runner:
                 state.finish_reason = "bail"
                 _report_no_item_reason(state, ctx, config.bail)
             else:
-                complete = await adapter_task
-                state.truncated = not complete and ctx.items > 0
+                state.covered = await adapter_task
                 state.finish_reason = "shutdown" if self.shutdown.is_set() else "finished"
         except* StopStore as group:
             state.finish_reason = group.exceptions[0].reason  # type: ignore[attr-defined]
