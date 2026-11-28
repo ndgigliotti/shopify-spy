@@ -135,7 +135,7 @@ Each line holds a product node as the Storefront GraphQL `site.products` query a
 - **Fields:** `id`, `entityId`, `sku`, `gtin`, `mpn`, `upc`, `name`, `path`, `description` (HTML), `createdAt`, `brand`, `categories`, `prices` (`price`, `basePrice`, `salePrice`, `retailPrice` and `priceRange`), `inventory`, `availabilityV2`, `reviewSummary`, `images`, `productOptions` and `variants`. Prices are `{"value", "currencyCode"}` objects in the store's default currency; other currencies and channels aren't scraped.
 - **`html_url`** is the product page, `<scheme>://<host><path>`, or `null` without a `path`.
 - **`image_urls`** lists the `images` `urlOriginal` values, the default image first.
-- **Variants:** each variant node has its `entityId`, `sku`, `gtin`, `mpn`, `upc`, `isPurchasable`, `prices`, `inventory`, `defaultImage` and `options` (each with its `values`). Every variant is read, 250 per query, up to 2,500 a product; `variants.pageInfo.hasNextPage` is `true` only on a product whose variants weren't all read (past that bound, or after a failed variants query), and the log has a warning for it.
+- **Variants:** each variant node has its `entityId`, `sku`, `gtin`, `mpn`, `upc`, `isPurchasable`, `prices`, `inventory`, `defaultImage` and `options` (each with its `values`). Every variant is read, 250 per query, up to 2,500 a product; `variants.pageInfo.hasNextPage` is `true` only on a product whose variants weren't all read (past that bound, or after a failed variants query), the log has a warning for it, and the store is `partial`.
 
 ## Generic items
 

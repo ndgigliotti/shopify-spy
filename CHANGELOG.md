@@ -163,6 +163,9 @@
   in `isVariantOf` keeps all of them, without repeats by `@id` or `sku`, for
   generic, Squarespace and WooCommerce product-page items; before, the
   `isVariantOf` ones were dropped when `hasVariant` was set.
+- A BigCommerce product whose later variants page fails (or that stops at the
+  2,500-variant bound) keeps the variants read so far and makes the store
+  `partial`, instead of `ok`.
 
 ## 0.5.1
 

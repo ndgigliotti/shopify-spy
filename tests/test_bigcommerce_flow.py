@@ -656,7 +656,7 @@ def test_variants_stop_at_the_bound(monkeypatch, caplog):
     assert len(sent) == 2
     assert len(items[0]["variants"]["edges"]) == 750
     assert items[0]["variants"]["pageInfo"]["hasNextPage"] is True
-    assert result.stores[0].status == "ok"
+    assert result.stores[0].status == "partial"
     assert "only the first 750 variants (stopped at 750)" in caplog.text
 
 
@@ -682,12 +682,14 @@ def test_variants_query_too_complex_halves_its_page_size():
     ],
     ids=["graphql_error", "503", "repeated_cursor", "null_product"],
 )
-def test_variants_failure_keeps_what_was_read(spec, reason, caplog):
+def test_variants_failure_keeps_what_was_read_and_is_partial(spec, reason, caplog):
     with caplog.at_level(logging.WARNING, logger="shopify_spy"):
         items, result, _ = scrape_variants(lambda v: spec, retries=0)
     assert len(items) == 1
+    assert len(items[0]["variants"]["edges"]) >= 250
     assert items[0]["variants"]["pageInfo"]["hasNextPage"] is True
-    assert result.stores[0].status == "ok"
+    assert result.stores[0].status == "partial"
+    assert not result.stores[0].complete
     assert "BigCommerce product 0: only the first " in caplog.text
     assert reason in caplog.text
 
