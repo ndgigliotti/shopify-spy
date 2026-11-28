@@ -399,6 +399,12 @@ def test_squarespace_product_page_item_is_a_jsonld_product():
     )
 
 
+def test_squarespace_currency_comes_from_any_variant():
+    variants = [{"priceMoney": {"value": "9"}}, _sq_variant("v2", "22.00")]
+    s = spy.summarize(SQUARESPACE_PRODUCT | {"structuredContent": {"variants": variants}})
+    assert (s.min_price, s.max_price, s.currency) == (Decimal("9"), Decimal("22.00"), "USD")
+
+
 @pytest.mark.parametrize(
     "variant",
     [

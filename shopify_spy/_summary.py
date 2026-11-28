@@ -324,7 +324,7 @@ def _squarespace(item: dict[str, Any]) -> ItemSummary:
         title=title if isinstance(title, str) else None,
         min_price=low,
         max_price=high,
-        currency=squarespace_price(variants[0])[2] if variants else None,
+        currency=next((c for v in variants if (c := squarespace_price(v)[2])), None),
         html_url=item.get("html_url"),
         store=item.get("store"),
         image_urls=[u for u in urls if isinstance(u, str)],
