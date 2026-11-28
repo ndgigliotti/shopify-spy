@@ -305,3 +305,35 @@ def test_bad_non_proxy_value_keeps_its_input(tmp_path):
         load_config_from_file(path)
     assert "input_value='abc'" in str(info.value)
     assert info.value.errors()[0]["input"] == "abc"
+
+
+@pytest.mark.parametrize(
+    ("yaml_text", "loc", "hint"),
+    [
+        ("scrape:\n  limt: 1\n", "scrape.limt", "did you mean 'limit'?"),
+        ("scrap:\n  limit: 1\n", "scrap", "did you mean 'scrape'?"),
+        ("output:\n  shema: unified\n", "output.shema", "did you mean 'schema'?"),
+        ("network:\n  colour: red\n", "network.colour", None),
+    ],
+)
+def test_unknown_config_key_is_rejected(tmp_path, yaml_text, loc, hint):
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml_text)
+    with pytest.raises(ValidationError) as info:
+        load_config_from_file(path)
+    message = str(info.value)
+    assert loc in message
+    assert "unknown key" in message
+    if hint:
+        assert hint in message
+    else:
+        assert "did you mean" not in message
+
+
+def test_unknown_config_key_is_rejected_in_python():
+    with pytest.raises(ValidationError):
+        Config(scrape={"limt": 1})
+
+
+def test_config_still_takes_output_schema_by_its_yaml_name():
+    assert Config(output={"schema": "unified"}).output.schema_ == "unified"

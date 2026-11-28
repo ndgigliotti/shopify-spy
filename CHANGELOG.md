@@ -141,6 +141,19 @@
 
 ### Fixed
 
+- An unknown key in the config file, such as `scrape: {limt: 1}`, was ignored,
+  silently dropping the setting; it is now an error naming the key, its section and
+  the closest known key (`unknown key 'limt' in the scrape section; did you mean
+  'limit'?`), and the CLI exits with status 1. An invalid config file is reported
+  as an error instead of a traceback.
+- The config example in the command-line docs said `impersonate: false` turns
+  impersonation off, which fails validation; it now matches `spy init`'s file, where
+  a `user_agent` turns browser profiles off and `rotate: false` keeps one.
+- The CLI's prompt for a store URL, shown when none is given in a terminal, went
+  to stdout, ahead of `--peek`'s JSONL; it goes to stderr.
+- An output directory, config file or log path holding Rich markup, such as
+  `--output 'run[/batch]'`, crashed the CLI with a `MarkupError` when it was printed;
+  paths are printed as typed.
 - The CLI's end-of-run summary prints each store's `StoreResult.hint`, so a store
   that never answered through a proxy (`--proxy`, `network.proxy` or a proxy
   environment variable) gets the hint to check the proxy, or its credentials after
@@ -150,6 +163,16 @@
   nothing, and a store's hint replaces the status hint it would otherwise share
   with other stores. The wrong-platform hint now reads the same in the CLI and the
   library (`looks like WooCommerce; use the woocommerce platform`).
+- Appending to a CSV with `fields` in another order than the file's header wrote
+  values under the wrong columns; rows now follow the header's order, and `fields`
+  naming other columns raises `ValueError` before anything is written.
+- Appending to a JSONL or CSV file whose last line had no newline ran the first new
+  record on from it; a newline is written first.
+- XML files declare `encoding="UTF-8"` instead of Scrapy's `utf8`, which
+  ElementTree and other parsers reject once the file holds non-ASCII text. This is
+  the one byte-level change from the Scrapy-era XML.
+- Characters XML 1.0 forbids (control characters other than tab and newlines,
+  U+FFFE, U+FFFF and lone surrogates) made XML files invalid; they become U+FFFD.
 
 ## 0.5.1
 

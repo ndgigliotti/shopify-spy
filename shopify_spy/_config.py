@@ -4,11 +4,13 @@ The library never reads config files; the CLI maps a Config to ``scrape()`` opti
 with ``Config.to_kwargs()``.
 """
 
+import difflib
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic_core import PydanticCustomError
 
 from shopify_spy._fetch import validate_proxy
 from shopify_spy._utils import blank_to_none
@@ -26,7 +28,12 @@ class Platform(StrEnum):
     squarespace = "squarespace"
 
 
-class ScrapeConfig(BaseModel):
+class _Section(BaseModel):
+    # A misspelled key would otherwise be dropped, silently undoing what it set
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScrapeConfig(_Section):
     """Configuration for what to scrape."""
 
     platform: Platform = Platform.shopify
@@ -37,11 +44,11 @@ class ScrapeConfig(BaseModel):
     bail: int = Field(default=30, ge=0)
 
 
-class OutputConfig(BaseModel):
+class OutputConfig(_Section):
     """Configuration for output paths."""
 
     # "schema" would shadow a BaseModel attribute; the YAML key is still "schema"
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     dir: Path = Field(default=Path("./output"))
     format: OutputFormat = "jsonl"
@@ -54,7 +61,7 @@ class OutputConfig(BaseModel):
         return self.dir / self.images_subdir
 
 
-class NetworkConfig(BaseModel):
+class NetworkConfig(_Section):
     """Configuration for network settings."""
 
     concurrent_requests: int = Field(default=16, ge=1)
@@ -80,7 +87,7 @@ class NetworkConfig(BaseModel):
         return blank_to_none(value)
 
 
-class ThrottleConfig(BaseModel):
+class ThrottleConfig(_Section):
     """Configuration for auto-throttling."""
 
     enabled: bool = True
@@ -92,7 +99,7 @@ class ThrottleConfig(BaseModel):
     target_concurrency: float = Field(default=1.0, ge=0.1)
 
 
-class Config(BaseModel):
+class Config(_Section):
     """Root configuration model."""
 
     scrape: ScrapeConfig = Field(default_factory=ScrapeConfig)
@@ -222,12 +229,35 @@ def load_config_from_file(path: Path) -> Config:
         # network.proxy may hold credentials, so hide the input of any error at
         # it or at a level that contains it (the whole file, or all of network)
         line_errors = [
-            {**error, "input": "<hidden>"}
+            _unknown_key_error(error)
+            if error["type"] == "extra_forbidden"
+            else {**error, "input": "<hidden>"}
             if _PROXY_LOC[: len(error["loc"])] == error["loc"]
             else error
             for error in exc.errors(include_url=False)
         ]
         raise ValidationError.from_exception_data(exc.title, line_errors) from None
+
+
+def _unknown_key_error(error: Any) -> Any:
+    """The error for a key no section has, naming its section and a close match."""
+    *section, key = error["loc"]
+    model: type[BaseModel] = Config
+    for name in section:
+        annotation = model.model_fields[str(name)].annotation
+        assert isinstance(annotation, type) and issubclass(annotation, BaseModel)
+        model = annotation
+    known = [field.alias or name for name, field in model.model_fields.items()]
+    match = difflib.get_close_matches(str(key), known, n=1)
+    where = f"in the {'.'.join(map(str, section))} section" if section else "at the top level"
+    hint = f"did you mean {match[0]!r}?" if match else f"known keys: {', '.join(known)}"
+    return {
+        **error,
+        # No context, so braces in the key aren't read as placeholders
+        "type": PydanticCustomError("extra_forbidden", f"unknown key {key!r} {where}; {hint}"),
+        # The value may be a misplaced proxy URL with credentials
+        "input": "<hidden>",
+    }
 
 
 def create_default_config(path: Path | None = None) -> Path:
