@@ -547,10 +547,10 @@ _SCRAPE_DOC = """
     gave no product either), or a Squarespace store whose sitemap lists no product
     page); ``run.result.failed`` lists them with a status and, sometimes, a
     ``hint`` (e.g. a likely wrong ``platform``). A store stopped by ``bail`` can
-    also end ``error`` with a reason when its adapter recorded one (JSON-LD pages
-    checked without Product data). An empty store is not a failure. A store's
-    ``hint`` and ``products_from`` also name the ``myshopify.com`` domain a
-    headless store's products came from. Invalid URLs and options raise
+    also end ``error`` with a reason when its adapter recorded one (JSON-LD pages,
+    or Squarespace collection pages, checked without a product). An empty store is
+    not a failure. A store's ``hint`` and ``products_from`` also name the
+    ``myshopify.com`` domain a headless store's products came from. Invalid URLs and options raise
     ValueError at call time. Requests to non-public addresses (loopback, private
     networks, cloud metadata) are refused with a warning unless the store's own
     URL is on one.
