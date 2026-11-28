@@ -19,12 +19,12 @@ File names start with the platform and a UTC timestamp. `data/` holds the items,
 
 ## Schemas
 
-- **`native`** (the default for JSONL, JSON and XML): each item as the store's API returned it, described under [Shopify items](#shopify-items), [WooCommerce items](#woocommerce-items), [Magento items](#magento-items), [BigCommerce items](#bigcommerce-items) and [JSON-LD items](#json-ld-items). It keeps every field.
+- **`native`** (the default for JSONL, JSON and XML): each item as the store's API returned it, described under [Shopify items](#shopify-items), [WooCommerce items](#woocommerce-items), [Magento items](#magento-items), [BigCommerce items](#bigcommerce-items), [JSON-LD items](#json-ld-items) and [Squarespace items](#squarespace-items). It keeps every field.
 - **`unified`** (`--schema unified`, or `output.schema` in the config): one record per variant with the same columns on every platform, described under [Unified schema](#unified-schema). CSV and XLSX are always unified, and `--schema native` with them is an error. In XML each row is an `<item>`.
 
 ## Shopify items
 
-Each line holds the full product or collection JSON from Shopify's API, plus four added fields. `platform` tells it apart from a WooCommerce, Magento, BigCommerce or JSON-LD item, and `image_urls` is empty unless `--images` is given.
+Each line holds the full product or collection JSON from Shopify's API, plus four added fields. `platform` tells it apart from a WooCommerce, Magento, BigCommerce, JSON-LD or Squarespace item, and `image_urls` is empty unless `--images` is given.
 
 ```json
 {
@@ -173,6 +173,51 @@ With `--platform jsonld`, each line holds the schema.org `Product` or `ProductGr
 - **Fidelity:** a store's JSON-LD is written for search engines, not as a catalog, so it can leave out fields the native platforms have (tags, stock counts, variant options). See [JSON-LD stores](troubleshooting.md#json-ld-stores).
 - **XML:** keys that aren't valid element names (such as `@type`) have their invalid characters replaced with `_`.
 
+## Squarespace items
+
+With `--platform squarespace`, an item's shape depends on where it was read from, which its `source` field records. Squarespace's robots.txt disallows `?format=json` URLs for every crawler, so which source is read depends on whether robots.txt is obeyed (see [Squarespace stores](troubleshooting.md#squarespace-stores)), and the log says which at INFO level.
+
+**From product pages** (`"source": "product_page"`, the default): each item is the page's schema.org `Product` or `ProductGroup` node, exactly as a [JSON-LD item](#json-ld-items) is, with `"platform": "squarespace"` and `source` added. Only the `/<collection>/p/<slug>` pages the store's sitemap lists are read, and no URL with a `format` query parameter is requested.
+
+**From collection data** (`"source": "format_json"`, with `--ignore-robots`): each item is a product record from a collection's `?format=json` page, as Squarespace returned it, plus five added fields (`image_urls` is empty unless `--images` is given). The record has every variant, with its price, sale price and stock:
+
+```json
+{
+  "id": "5f1c2a3b4c5d6e7f8a9b0c1d",
+  "title": "Tee",
+  "urlId": "tee",
+  "fullUrl": "/shop/p/tee",
+  "tags": ["summer"],
+  "categories": ["Shirts"],
+  "addedOn": 1735787045000,
+  "updatedOn": 1767323045000,
+  "publishOn": 1735787045000,
+  "body": "<p>A cotton tee.</p>",
+  "assetUrl": "https://images.squarespace-cdn.com/.../tee.jpg",
+  "items": [{ "assetUrl": "https://images.squarespace-cdn.com/.../tee.jpg" }],
+  "structuredContent": {
+    "productType": 1,
+    "variantOptionOrdering": ["Color", "Size"],
+    "variants": [
+      { "id": "v1", "sku": "TEE-RED-S", "attributes": { "Color": "Red", "Size": "S" }, "onSale": true, "priceMoney": { "currency": "USD", "value": "20.00" }, "salePriceMoney": { "currency": "USD", "value": "15.00" }, "stock": { "quantity": 4, "unlimited": false } },
+      { "id": "v2", "sku": "TEE-RED-M", "attributes": { "Color": "Red", "Size": "M" }, "onSale": false, "priceMoney": { "currency": "USD", "value": "20.00" }, "salePriceMoney": { "currency": "USD", "value": "0.00" }, "stock": { "quantity": 0, "unlimited": false } }
+    ]
+  },
+  "store": "store.com",
+  "platform": "squarespace",
+  "html_url": "https://store.com/shop/p/tee",
+  "image_urls": [],
+  "source": "format_json"
+}
+```
+
+- **How collections are found:** the collections are the parents of the product pages the sitemap lists (`/shop` for `/shop/p/tee`), and each collection's `?format=json` pages are read, following `pagination.nextPageUrl`. A product in two collections is emitted once. Records without `structuredContent.variants` (a collection's non-product entries) are skipped.
+- **Fields:** the record format is undocumented and varies a little between stores; `SquarespaceProductItem` lists the common fields. Prices (`priceMoney.value`, `salePriceMoney.value`) are decimal strings, and `salePriceMoney` counts only when `onSale` is true. `addedOn`, `updatedOn` and `publishOn` are epoch milliseconds. `body` is HTML.
+- **`html_url`** is the store's origin plus `fullUrl`.
+- **Images:** `image_urls` lists the record's `items` images (else its `assetUrl`), then each variant's `mainImage` not already listed.
+- **Fallback:** when no collection gives a product, the listed product pages are read instead, so a run with `--ignore-robots` can give `product_page` items too.
+- **XML:** keys that aren't valid element names (such as a product-page item's `@type`) have their invalid characters replaced with `_`.
+
 ## Images
 
 With `--images`, each item gets a `scraped_images` field recording each download:
@@ -197,51 +242,52 @@ Supported formats are JPEG, PNG, GIF, WebP, AVIF, HEIC/HEIF, JPEG XL, JPEG 2000,
 
 ## Unified schema
 
-The unified schema has one row per variant and a plain value in every cell (no embedded JSON), so you can sort and filter it in a spreadsheet or load it as a table. CSV and Excel (XLSX) always use it; JSONL, JSON and XML use it with `--schema unified`. The product's columns repeat on each of its variant rows, and a product without variants still gets one row. Every platform shares the same columns, so one file can hold Shopify, WooCommerce, Magento, BigCommerce and JSON-LD items. A column a platform lacks is blank on its rows (empty in CSV and XML, `null` in JSON).
+The unified schema has one row per variant and a plain value in every cell (no embedded JSON), so you can sort and filter it in a spreadsheet or load it as a table. CSV and Excel (XLSX) always use it; JSONL, JSON and XML use it with `--schema unified`. The product's columns repeat on each of its variant rows, and a product without variants still gets one row. Every platform shares the same columns, so one file can hold Shopify, WooCommerce, Magento, BigCommerce, JSON-LD and Squarespace items. Squarespace items read from product pages fill the JSON-LD column; the Squarespace column is for `format_json` items. A column a platform lacks is blank on its rows (empty in CSV and XML, `null` in JSON).
 
-| Column | Shopify | WooCommerce | Magento | BigCommerce | JSON-LD |
-|---|---|---|---|---|---|
-| `platform` | `shopify` | `woocommerce` | `magento` | `bigcommerce` | `jsonld` |
-| `kind` | `product` or `collection` (`--collections`) | `product` | `product` | `product` | `product` |
-| `store`, `sku`, `image_count` | yes | yes | yes | yes | yes |
-| `id` | `id` | `id` | `uid` | `entityId` | `productID`, `productGroupID`, `sku` or `@id` |
-| `tags` | yes | yes | | | |
-| `handle` | `handle` | `slug` | `url_key` | `path` without its slashes | the last segment of the page's path |
-| `title` | `title` | `name` | `name` | `name` | `name` |
-| `vendor` | `vendor` | brand names | | `brand.name` | `brand` names |
-| `product_type` | `product_type` | | | | |
-| `categories` | | category names | category names | category names | `category` |
-| `options` | option names, such as `Color, Size` | names of the attributes that define variations | `configurable_options` labels (the attribute code for an option without one) | `displayName` of the `productOptions` that define variants | the `variesBy` properties of a `ProductGroup`, such as `size` |
-| `created_at`, `updated_at`, `published_at` | yes | | | `created_at` (`createdAt.utc`) | |
-| `description` | `body_html` as plain text | `description` as plain text | `description.html` as plain text | `description` as plain text | `description` as plain text |
-| `short_description` | | as plain text | `short_description.html` as plain text | | |
-| `html_url` | the product or collection page | `permalink` | `html_url` | `html_url` | `html_url` |
-| `image_url` | the first image | the first image | the first `media_gallery` image by position, not disabled | the default image, else the first | the first `image` |
-| `products_count` | collections only | | | | |
-| `currency` | | `currency_code` | the minimum final price's `currency` | the price range's `currencyCode` | the first offer's `priceCurrency` |
-| `min_price`, `max_price` | the lowest and highest variant price (products only) | the price range | the minimum and maximum final price | `priceRange` (else `price`) | the lowest and highest offer price, across variants (an `AggregateOffer`'s `lowPrice` and `highPrice`) |
-| `on_sale`, `is_purchasable` | | yes | | `is_purchasable` (the variant's) | |
-| `average_rating`, `review_count` | | yes; for items from product pages, as for JSON-LD | | `summationOfRatings / numberOfReviews`, to 2 decimals (blank without reviews), and `numberOfReviews` | the `aggregateRating`'s `ratingValue`, out of 5 (one on another `bestRating` scale is converted), and its `reviewCount` or `ratingCount` |
-| `variant_count` | variants | variations | `variants` | `variants` | `hasVariant` entries with `offers` or a `sku`, or the offers in a list of offers |
-| `variant_id` | the variant's ID | the variation's ID | the variant product's `uid` | the variant's `entityId` | the variant's `productID`, `sku` or `@id`; an offer's `sku`, `@id` or `url` |
-| `variant_title` | such as `Red / S` | the variation's attribute values, such as `Red / S` | the variant's option labels, such as `Red / S` | the variant's option values, such as `Red / S` | the variant's `variesBy` values, such as `Red / S`, else its `name`; an offer's `name` |
-| `gtin`, `mpn` | | for items from product pages only, as for JSON-LD | blank: only store-defined custom attributes hold them | the variant's `gtin` (else its `upc`) and `mpn`, else the product's | the variant's (or its offer's) `gtin`, `gtin13`, `gtin12`, `gtin14` or `gtin8` and `mpn`, else the product's (or its offer's; an offer's row doesn't take another offer's) |
-| `option1`-`option3` | the variant's option values | the variation's attribute values, in the product's attribute order | the variant's option labels, in `configurable_options` order | the variant's option values, in `productOptions` order | the variant's `variesBy` values, in `variesBy` order |
-| `price` | the variant's price | `price` | the final price (the variant's, else the product's minimum) | `prices.price` (the variant's, else the product's) | the lowest offer price (the variant's or offer's, else the product's) |
-| `compare_at_price` | the variant's `compare_at_price` | `regular_price`, only when `price` is below it | the regular price, only when `price` is below it | the first of `basePrice` and `retailPrice` (MSRP) that `price` is below | a `ListPrice` or `StrikethroughPrice`, only when `price` is below it |
-| `available` | the variant's `available` | `is_in_stock` | `stock_status` is `IN_STOCK` | `inventory.isInStock` | `availability` isn't `OutOfStock`, `SoldOut` or `Discontinued` (an `AggregateOffer` without one has an in-stock offer's among its `offers`, if any) |
-| `grams`, `requires_shipping`, `taxable`, `variant_position` | the variant's | | | | |
-| `variant_image_url` | the variant's | | the variant product's `image.url` | the variant's `defaultImage.urlOriginal` | the variant's first `image` |
-| `url` | the scraped JSON document | | | | |
-| `source` | | `store_api`, or `product_page` for the partial items read from product pages | | | |
-| `image_paths` | with `--images`: the downloaded files | with `--images`: the downloaded files | with `--images`: the downloaded files | with `--images`: the downloaded files | with `--images`: the downloaded files |
+| Column | Shopify | WooCommerce | Magento | BigCommerce | JSON-LD | Squarespace (`format_json`) |
+|---|---|---|---|---|---|---|
+| `platform` | `shopify` | `woocommerce` | `magento` | `bigcommerce` | `jsonld` | `squarespace` |
+| `kind` | `product` or `collection` (`--collections`) | `product` | `product` | `product` | `product` | `product` |
+| `store`, `sku`, `image_count` | yes | yes | yes | yes | yes | yes |
+| `id` | `id` | `id` | `uid` | `entityId` | `productID`, `productGroupID`, `sku` or `@id` | `id` |
+| `tags` | yes | yes | | | | yes |
+| `handle` | `handle` | `slug` | `url_key` | `path` without its slashes | the last segment of the page's path | `urlId` |
+| `title` | `title` | `name` | `name` | `name` | `name` | `title` |
+| `vendor` | `vendor` | brand names | | `brand.name` | `brand` names | |
+| `product_type` | `product_type` | | | | | |
+| `categories` | | category names | category names | category names | `category` | `categories` |
+| `options` | option names, such as `Color, Size` | names of the attributes that define variations | `configurable_options` labels (the attribute code for an option without one) | `displayName` of the `productOptions` that define variants | the `variesBy` properties of a `ProductGroup`, such as `size` | `structuredContent.variantOptionOrdering`, else the variants' `attributes` names |
+| `created_at`, `updated_at`, `published_at` | yes | | | `created_at` (`createdAt.utc`) | | `addedOn`, `updatedOn`, `publishOn`, in UTC |
+| `description` | `body_html` as plain text | `description` as plain text | `description.html` as plain text | `description` as plain text | `description` as plain text | `body` as plain text, else `excerpt` |
+| `short_description` | | as plain text | `short_description.html` as plain text | | | |
+| `html_url` | the product or collection page | `permalink` | `html_url` | `html_url` | `html_url` | `html_url` |
+| `image_url` | the first image | the first image | the first `media_gallery` image by position, not disabled | the default image, else the first | the first `image` | the first `items` image, else `assetUrl` |
+| `products_count` | collections only | | | | | |
+| `currency` | | `currency_code` | the minimum final price's `currency` | the price range's `currencyCode` | the first offer's `priceCurrency` | the first variant's `priceMoney.currency` |
+| `min_price`, `max_price` | the lowest and highest variant price (products only) | the price range | the minimum and maximum final price | `priceRange` (else `price`) | the lowest and highest offer price, across variants (an `AggregateOffer`'s `lowPrice` and `highPrice`) | the lowest and highest variant price (the sale price when `onSale`) |
+| `on_sale`, `is_purchasable` | | yes | | `is_purchasable` (the variant's) | | `on_sale`: any variant's `onSale` |
+| `average_rating`, `review_count` | | yes; for items from product pages, as for JSON-LD | | `summationOfRatings / numberOfReviews`, to 2 decimals (blank without reviews), and `numberOfReviews` | the `aggregateRating`'s `ratingValue`, out of 5 (one on another `bestRating` scale is converted), and its `reviewCount` or `ratingCount` | |
+| `variant_count` | variants | variations | `variants` | `variants` | `hasVariant` entries with `offers` or a `sku`, or the offers in a list of offers | `structuredContent.variants` |
+| `variant_id` | the variant's ID | the variation's ID | the variant product's `uid` | the variant's `entityId` | the variant's `productID`, `sku` or `@id`; an offer's `sku`, `@id` or `url` | the variant's `id` |
+| `variant_title` | such as `Red / S` | the variation's attribute values, such as `Red / S` | the variant's option labels, such as `Red / S` | the variant's option values, such as `Red / S` | the variant's `variesBy` values, such as `Red / S`, else its `name`; an offer's `name` | the variant's `attributes` values, such as `Red / S` |
+| `gtin`, `mpn` | | for items from product pages only, as for JSON-LD | blank: only store-defined custom attributes hold them | the variant's `gtin` (else its `upc`) and `mpn`, else the product's | the variant's (or its offer's) `gtin`, `gtin13`, `gtin12`, `gtin14` or `gtin8` and `mpn`, else the product's (or its offer's; an offer's row doesn't take another offer's) | |
+| `option1`-`option3` | the variant's option values | the variation's attribute values, in the product's attribute order | the variant's option labels, in `configurable_options` order | the variant's option values, in `productOptions` order | the variant's `variesBy` values, in `variesBy` order | the variant's `attributes` values, in `options` order |
+| `price` | the variant's price | `price` | the final price (the variant's, else the product's minimum) | `prices.price` (the variant's, else the product's) | the lowest offer price (the variant's or offer's, else the product's) | `salePriceMoney.value` when `onSale`, else `priceMoney.value` |
+| `compare_at_price` | the variant's `compare_at_price` | `regular_price`, only when `price` is below it | the regular price, only when `price` is below it | the first of `basePrice` and `retailPrice` (MSRP) that `price` is below | a `ListPrice` or `StrikethroughPrice`, only when `price` is below it | `priceMoney.value`, only when `price` is below it |
+| `available` | the variant's `available` | `is_in_stock` | `stock_status` is `IN_STOCK` | `inventory.isInStock` | `availability` isn't `OutOfStock`, `SoldOut` or `Discontinued` (an `AggregateOffer` without one has an in-stock offer's among its `offers`, if any) | `stock.unlimited`, or `stock.quantity` above 0 |
+| `grams`, `requires_shipping`, `taxable`, `variant_position` | the variant's | | | | | |
+| `variant_image_url` | the variant's | | the variant product's `image.url` | the variant's `defaultImage.urlOriginal` | the variant's first `image` | the variant's `mainImage.assetUrl` |
+| `url` | the scraped JSON document | | | | | |
+| `source` | | `store_api`, or `product_page` for the partial items read from product pages | | | `product_page` on Squarespace items read from product pages (by default, or after an `--ignore-robots` run falls back to them) | `format_json` |
+| `image_paths` | with `--images`: the downloaded files | with `--images`: the downloaded files | with `--images`: the downloaded files | with `--images`: the downloaded files | with `--images`: the downloaded files | with `--images`: the downloaded files |
 
 - **Prices** are decimal amounts, with WooCommerce's minor units converted. JSON-LD prices written with a currency symbol or separators are read: of a dot and a comma, the last is the decimal point (`1.234,56`, `1,299.00`), and a lone comma is decimal (`19,99`) unless three digits follow it (`1,299`). A price that can't be read is left blank. `min_price` and `max_price` are the product's price range on each of its rows. In JSON, prices are strings.
 - **WooCommerce variation rows** have the variation's own `sku`, `price`, `compare_at_price` and `available`. If the store refuses the variation listing, they're the product's.
 - **Magento variant rows** have the variant's own `sku`, `price`, `compare_at_price` and `available`. A product without `variants` gets one row with its own.
 - **BigCommerce variant rows** have the variant's own `sku`, `price`, `compare_at_price`, `available` and `is_purchasable`; a variant without its own price has the product's. A product without variant edges gets one row with its own `sku`, price and stock.
 - **JSON-LD variant rows:** a `ProductGroup` gets a row per `hasVariant` Product, with the variant's own `sku`, `price` and `available`; a variant without a price keeps the product's. Entries with neither `offers` nor a `sku`, which some stores use to link the product's other colours, get no row. A Product with a list of offers gets a row per offer, with each offer's `sku`, `price` and `available`. A single `Offer` or an `AggregateOffer` gives one row.
-- **`gtin` and `mpn`** come from BigCommerce's own fields and from schema.org data. Shopify's `products.json` has no barcodes, WooCommerce's Store API has no GTINs or MPNs, and Magento's storefront GraphQL has them only as custom attributes each store defines and names, which aren't read, so they're blank on those rows (WooCommerce items read from product pages have their JSON-LD's).
+- **Squarespace variant rows:** a `format_json` item gets a row per `structuredContent.variants` entry, with the variant's own `sku`, `price`, `compare_at_price` (the regular price while it is on sale), `available` and image; a product with no variants gets one row. Squarespace items read from product pages get the JSON-LD rows above, with `platform` `squarespace` and `source` `product_page`.
+- **`gtin` and `mpn`** come from BigCommerce's own fields and from schema.org data. Shopify's `products.json` has no barcodes, WooCommerce's Store API and Squarespace's `?format=json` have no GTINs or MPNs, and Magento's storefront GraphQL has them only as custom attributes each store defines and names, which aren't read, so they're blank on those rows (WooCommerce and Squarespace items read from product pages have their JSON-LD's).
 - **Left out:** WooCommerce's `type` (`simple`, `variable`, ...) and descriptive attributes are only in the native schema. So are Magento's `__typename` and option `value_index` codes, BigCommerce's `availabilityV2`, `salePrice` and option `entityId`s, and JSON-LD properties without a column (`color`, `weight`, ...). Without `--images`, the `image_paths` column is left out; with it, the column lists the downloaded files, relative to the images directory.
 - **JSON-LD text:** pages often escape their JSON-LD text, sometimes twice (`&amp;amp;`), so `title`, `vendor`, `categories`, `description` and the variant titles are unescaped until they stop changing; names are put on one line.
 - **Values:** booleans are `true`/`false` in JSON, CSV and unified XML. In CSV and XML, an empty cell means no value.
@@ -291,11 +337,14 @@ cat output/data/*.jsonl | jq 'select(.platform == "bigcommerce") | {name, sku, p
 # JSON-LD: extract product names, pages and offers
 cat output/data/*.jsonl | jq 'select(.platform == "jsonld") | {name, html_url, offers}'
 
+# Squarespace (--ignore-robots): each variant's SKU, price and stock
+cat output/data/*.jsonl | jq 'select(.source == "format_json") | {title, variant: .structuredContent.variants[] | {sku, price: .priceMoney.value, stock}}'
+
 # Unified schema (--schema unified): the same fields on every platform, a line per variant
 cat output/data/*.jsonl | jq -r '[.platform, .title, .variant_title, .price] | @tsv'
 ```
 
-**With DuckDB**, which reads JSONL and CSV directly. Each run writes a new timestamped file, so a glob over `output/data/` queries every run at once, such as each variant's price over time. Point a query at files of one shape: a JSONL query that reads `product` fails if the glob also matches WooCommerce, Magento, BigCommerce, JSON-LD or unified files.
+**With DuckDB**, which reads JSONL and CSV directly. Each run writes a new timestamped file, so a glob over `output/data/` queries every run at once, such as each variant's price over time. Point a query at files of one shape: a JSONL query that reads `product` fails if the glob also matches WooCommerce, Magento, BigCommerce, JSON-LD, Squarespace or unified files.
 
 ```bash
 # Native JSONL from Shopify runs
@@ -319,7 +368,7 @@ with open("output/data/shopify_spider_2024-01-15T10-30-00+00-00.jsonl", encoding
     for line in f:
         item = json.loads(line)
         print(item["product"]["title"])  # Shopify
-        # print(item["name"])            # WooCommerce, Magento, BigCommerce or JSON-LD
+        # print(item["name"])            # WooCommerce, Magento, BigCommerce, JSON-LD or Squarespace product pages
 ```
 
 **With pandas:**
