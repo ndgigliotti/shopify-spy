@@ -74,6 +74,9 @@ buildPythonPackage (finalAttrs: {
     # nixpkgs also skips e2e (tight timeouts on its builders); our CI check runs them
   ];
 
+  # Tests that start a local HTTP server fail in the Darwin sandbox without this (#85)
+  __darwinAllowLocalNetworking = true;
+
   pythonImportsCheck = [ "shopify_spy" ];
 
   meta = {
