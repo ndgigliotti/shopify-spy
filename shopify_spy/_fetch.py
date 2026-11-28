@@ -495,11 +495,19 @@ def _ssl_context(trust_env: bool) -> ssl.SSLContext:
     return ssl.create_default_context(cafile=cafile, capath=capath)
 
 
+def _proxy_with(url: str, context: ssl.SSLContext) -> httpx.Proxy:
+    import httpx
+
+    # httpcore refuses a context for an http:// proxy, which has no TLS to use it
+    https = httpx.URL(url).scheme == "https"
+    return httpx.Proxy(url, ssl_context=context if https else None)
+
+
 class HttpxFetcher:
     """Default transport: httpx over HTTP/1.1, one hop per fetch.
 
     An explicit ``proxy`` replaces any proxy from the environment (NO_PROXY included).
-    CAs come from ca_locations, read on entry.
+    CAs come from ca_locations, read on entry, for the store and an https:// proxy.
     """
 
     capabilities = FetcherCapabilities()
@@ -515,13 +523,29 @@ class HttpxFetcher:
     async def __aenter__(self) -> Self:
         import httpx  # imported here: it's slow to import and only needed for real HTTP
 
+        # An SSLContext, so httpx's own reading of SSL_CERT_FILE/DIR never applies
+        context = _ssl_context(self._trust_env) if self._verify else None
+        proxy: str | httpx.Proxy | None = self._proxy
+        mounts: dict[str, httpx.AsyncBaseTransport | None] | None = None
+        if context is not None:
+            # httpcore checks an https:// proxy against its own default context
+            # unless the Proxy carries one, which httpx never gives the environment's
+            if proxy is not None:
+                proxy = _proxy_with(proxy, context)
+            elif self._trust_env:
+                mounts = {
+                    pattern: None
+                    if url is None
+                    else httpx.AsyncHTTPTransport(verify=context, proxy=_proxy_with(url, context))
+                    for pattern, url in _env_proxy_mounts().items()
+                }
         self._client = httpx.AsyncClient(
             http1=True,
             http2=False,
-            # An SSLContext, so httpx's own reading of SSL_CERT_FILE/DIR never applies
-            verify=_ssl_context(self._trust_env) if self._verify else False,
+            verify=context or False,
             trust_env=self._trust_env,
-            proxy=self._proxy,
+            proxy=proxy,
+            mounts=mounts,
             follow_redirects=False,
             headers={"Accept-Encoding": ACCEPT_ENCODING},
             timeout=None,  # a total deadline is enforced per fetch instead

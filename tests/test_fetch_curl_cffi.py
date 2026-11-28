@@ -690,6 +690,31 @@ async def test_https_proxy_receives_connect(clean_proxy_env, ca_env, tls):
         httpd.server_close()
 
 
+@pytest.mark.parametrize("transport", ["curl", "httpx"])
+@pytest.mark.parametrize("via", ["proxy", "HTTPS_PROXY"])
+async def test_https_proxy_is_checked_against_the_ca_environment(
+    clean_proxy_env, ca_env, tls, transport, via
+):
+    httpd = _serve(_RecordingProxyHandler, tls=tls, records=[])
+    proxy = f"https://127.0.0.1:{httpd.server_address[1]}"
+    kwargs = {"proxy": proxy} if via == "proxy" else {}
+    if via == "HTTPS_PROXY":
+        clean_proxy_env.setenv("HTTPS_PROXY", proxy)
+    try:
+        with pytest.raises(FetchTLSError):
+            await fetch("https://store.example:8443/", transport, **kwargs)
+        # Not SSL_CERT_FILE: OpenSSL's defaults, which httpcore loads for a proxy
+        # without a context of its own, read that one
+        ca_env.setenv("REQUESTS_CA_BUNDLE", tls.ca)
+        with pytest.raises(FetchConnectionError) as info:  # the proxy's 502 to CONNECT
+            await fetch("https://store.example:8443/", transport, **kwargs)
+        assert not isinstance(info.value, FetchTLSError)
+        assert httpd.records[0][:2] == ("CONNECT", "store.example:8443")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 async def test_proxy_credentials_reach_the_proxy(server, clean_proxy_env, recording_proxy):
     proxy = recording_proxy()
     url = proxy.url.replace("http://", "http://us?er:pa/ss@")
