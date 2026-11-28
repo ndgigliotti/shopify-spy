@@ -202,7 +202,9 @@ EXPECTED = {
 
 def test_bigcommerce_diagnosis(tmp_path, stores):
     urls = {scenario: stores(scenario) for scenario in EXPECTED}
-    statuses = _run(tmp_path, list(urls.values()), "--platform", "bigcommerce")
+    # Several requests to one host before the first item (the complexity store halves
+    # its page five times): at the default 1 s minimum they outlast the e2e --bail
+    statuses = _run(tmp_path, list(urls.values()), "--platform", "bigcommerce", "--min-delay", "0")
     assert {scenario: statuses[url] for scenario, url in urls.items()} == EXPECTED
     [output] = tmp_path.rglob("*.jsonl")
     items = [json.loads(line) for line in output.read_text().splitlines()]
@@ -216,7 +218,11 @@ def test_bigcommerce_diagnosis(tmp_path, stores):
 
 def test_bigcommerce_variant_rows_in_csv(tmp_path, stores):
     url = stores("ok")
-    statuses = _run(tmp_path, [url], "--platform", "bigcommerce", "--format", "csv")
+    # Several requests to one host before the first item: at the default 1 s minimum
+    # they come close to the short e2e --bail on a slow runner
+    statuses = _run(
+        tmp_path, [url], "--platform", "bigcommerce", "--format", "csv", "--min-delay", "0"
+    )
     assert statuses[url] == "ok"
     [output] = tmp_path.rglob("*.csv")
     rows = list(csv.DictReader(output.open(newline="", encoding="utf-8")))
