@@ -1,4 +1,4 @@
-"""Generic JSON-LD platform flows through spy.scrape with a FakeFetcher."""
+"""Generic platform flows through spy.scrape with a FakeFetcher."""
 
 import asyncio
 import re
@@ -67,7 +67,7 @@ def store(n, start=0, sitemap_url=SITEMAP, page=None):
 
 
 def scrape_ld(routes, **options):
-    return scrape(routes, platform="jsonld", **options)
+    return scrape(routes, platform="generic", **options)
 
 
 def pages_requested(fetcher):
@@ -344,12 +344,12 @@ def test_item_shape_without_images():
         {
             **node(0),
             "store": "shop.test",
-            "platform": "jsonld",
+            "platform": "generic",
             "html_url": url(0),
             "image_urls": [],
         }
     ]
-    assert result.stores[0].platform == "jsonld"
+    assert result.stores[0].platform == "generic"
 
 
 def test_html_url_drops_the_fragment():
@@ -860,7 +860,7 @@ def test_no_hint_probe_when_items_come_first():
 async def test_request_shutdown_during_pages():
     fetcher = FakeFetcher(store(200, page=lambda i: slow(product_page(node(i)), 0.01)))
     async with asyncio.timeout(6):
-        run = spy.scrape_async(STORE, platform="jsonld", fetcher_factory=lambda: fetcher, **FAST)
+        run = spy.scrape_async(STORE, platform="generic", fetcher_factory=lambda: fetcher, **FAST)
         start = time.monotonic()
         count = 0
         async for _ in run:

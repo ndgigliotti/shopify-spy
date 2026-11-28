@@ -113,8 +113,8 @@ class BigCommerceProductItem(TypedDict, total=False):
     scraped_images: list[ScrapedImage]
 
 
-JsonLdProductItem = TypedDict(
-    "JsonLdProductItem",
+GenericProductItem = TypedDict(
+    "GenericProductItem",
     {
         "@context": Any,
         "@type": str | list[str],
@@ -125,7 +125,7 @@ JsonLdProductItem = TypedDict(
         "brand": Any,
         "hasVariant": list[dict[str, Any]],
         "store": str,
-        "platform": Literal["jsonld", "squarespace"],
+        "platform": Literal["generic", "squarespace"],
         "html_url": str,
         "image_urls": list[str],
         "scraped_images": list[ScrapedImage],
@@ -134,7 +134,7 @@ JsonLdProductItem = TypedDict(
     total=False,
 )
 # The functional form, since keys like "@type" aren't identifiers, can't take a docstring
-JsonLdProductItem.__doc__ = """A schema.org ``Product`` or ``ProductGroup`` node from a product
+GenericProductItem.__doc__ = """A schema.org ``Product`` or ``ProductGroup`` node from a product
 page's JSON-LD, as found but with its ``{"@id": ...}`` references to the page's
 other nodes resolved (only the common properties are listed), plus ``store``,
 ``platform``, ``html_url`` and ``image_urls`` (and ``scraped_images`` with images

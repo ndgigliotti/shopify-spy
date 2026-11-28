@@ -61,7 +61,7 @@ LIBRARY_EPILOG = (
     "Also a Python library: import shopify_spy as spy; "
     "spy.scrape(urls) yields items as dicts (options: help(spy.scrape)). "
     "Run a script without installing anything: "
-    "uv run --with 'shopify-spy>=0.4' python script.py"
+    "uv run --with 'shopify-spy>=0.5' python script.py"
 )
 # Whole pages, not headings: installed help keeps these links for good
 DOCS_EPILOG = (
@@ -257,9 +257,15 @@ def scrape(
         typer.Option(
             "--platform",
             "-p",
-            help="Ecommerce platform: shopify, woocommerce, magento, bigcommerce, jsonld or "
-            "squarespace "
-            f"(default: {_DEFAULTS.scrape.platform.value}).",
+            help="The store's platform "
+            f"(default: {_DEFAULTS.scrape.platform.value}). shopify, woocommerce, magento and "
+            "bigcommerce read the platform's own API. squarespace reads a Squarespace store's "
+            "product pages, or with --ignore-robots its collections' ?format=json data. "
+            "generic is for any other store (Wix, custom sites): it reads schema.org product "
+            "data (JSON-LD or microdata) from each product page the sitemaps list, one request "
+            "per product, so it's slow; use --limit for a sample. A store that fails because it "
+            "looks like Shopify, WooCommerce or Magento gets a hint naming that platform (in the "
+            "end-of-run summary when nothing was scraped, and in the library's StoreResult.hint).",
             rich_help_panel=SCRAPE_PANEL,
         ),
     ] = None,
@@ -267,7 +273,7 @@ def scrape(
         bool | None,
         typer.Option(
             "--products/--no-products",
-            help="Scrape products. Shopify only; WooCommerce, Magento, BigCommerce, JSON-LD and "
+            help="Scrape products. Shopify only; WooCommerce, Magento, BigCommerce, generic and "
             "Squarespace always do "
             f"(default: {_on_off(_DEFAULTS.scrape.products)}).",
             rich_help_panel=SCRAPE_PANEL,
@@ -345,8 +351,11 @@ def scrape(
         int | None,
         typer.Option(
             "--concurrent",
-            help="Concurrent requests per host "
-            f"(default: {_DEFAULTS.network.concurrent_requests}).",
+            help="Most requests in flight to one host at once "
+            f"(default: {_DEFAULTS.network.concurrent_requests}). While throttling, "
+            "--min-delay spaces requests to one host, so they go out about one at a time; "
+            "this caps how many can be in flight when responses are slow or with "
+            "--no-throttle.",
             rich_help_panel=NETWORK_PANEL,
         ),
     ] = None,

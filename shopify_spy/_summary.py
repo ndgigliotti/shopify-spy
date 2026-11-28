@@ -3,9 +3,9 @@
 Provisional API. Each platform's items have their own shape (Shopify wraps the
 payload in "product"/"collection"; WooCommerce is flat, with prices in minor units;
 Magento is flat, with prices in ``price_range``; BigCommerce is a GraphQL node, with
-prices in ``prices``; JSON-LD is the page's schema.org node, with prices in
+prices in ``prices``; a generic item is the page's schema.org node, with prices in
 ``offers``; Squarespace is a ``?format=json`` record, with prices in
-``structuredContent.variants``, or a JSON-LD node); this reads any of them.
+``structuredContent.variants``, or a schema.org node); this reads any of them.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ logger = logging.getLogger("shopify_spy")
 @dataclass(frozen=True)
 class ItemSummary:
     kind: str  # "product" or "collection"
-    platform: str  # "shopify", "woocommerce", "magento", "bigcommerce", "jsonld" or "squarespace"
+    platform: str  # "shopify", "woocommerce", "magento", "bigcommerce", "generic" or "squarespace"
     id: Any
     title: str | None
     min_price: Decimal | None
@@ -112,11 +112,11 @@ def is_bigcommerce(item: dict[str, Any]) -> bool:
     return item.get("platform") == "bigcommerce" and "entityId" in item
 
 
-def is_jsonld(item: dict[str, Any]) -> bool:
-    """Whether ``item`` is a scraped JSON-LD product, from the ``jsonld`` platform or a
-    Squarespace product page (``summarize().asdict()`` has a ``platform`` but no
+def is_generic(item: dict[str, Any]) -> bool:
+    """Whether ``item`` is a scraped schema.org product, from the ``generic`` platform or
+    a Squarespace product page (``summarize().asdict()`` has a ``platform`` but no
     ``@type``)."""
-    return item.get("platform") in ("jsonld", "squarespace") and "@type" in item
+    return item.get("platform") in ("generic", "squarespace") and "@type" in item
 
 
 def is_squarespace(item: dict[str, Any]) -> bool:
@@ -126,7 +126,7 @@ def is_squarespace(item: dict[str, Any]) -> bool:
 
 
 def summarize(item: dict[str, Any]) -> ItemSummary:
-    """Summarize a Shopify, WooCommerce, Magento, BigCommerce, JSON-LD or Squarespace
+    """Summarize a Shopify, WooCommerce, Magento, BigCommerce, generic or Squarespace
     item from ``scrape()``."""
     if isinstance(item.get("product"), dict) or isinstance(item.get("collection"), dict):
         return _shopify(item)
@@ -136,8 +136,8 @@ def summarize(item: dict[str, Any]) -> ItemSummary:
         return _bigcommerce(item)
     if is_squarespace(item):
         return _squarespace(item)
-    if is_jsonld(item):
-        return _jsonld(item)
+    if is_generic(item):
+        return _generic(item)
     return _woocommerce(item)
 
 
@@ -222,8 +222,8 @@ def _magento(item: dict[str, Any]) -> ItemSummary:
     )
 
 
-def jsonld_prices(item: dict[str, Any]) -> tuple[Decimal | None, Decimal | None, str | None]:
-    """The lowest and highest price and the currency across a JSON-LD product's
+def generic_prices(item: dict[str, Any]) -> tuple[Decimal | None, Decimal | None, str | None]:
+    """The lowest and highest price and the currency across a generic product's
     ``offers`` and its variants' ``offers``, or Nones."""
     found = [jsonld.offers(item.get("offers"))]
     found += [jsonld.offers(v.get("offers")) for v in jsonld.variants(item)]
@@ -235,8 +235,8 @@ def jsonld_prices(item: dict[str, Any]) -> tuple[Decimal | None, Decimal | None,
     return min(amounts), max(amounts), currency
 
 
-def _jsonld(item: dict[str, Any]) -> ItemSummary:
-    low, high, currency = jsonld_prices(item)
+def _generic(item: dict[str, Any]) -> ItemSummary:
+    low, high, currency = generic_prices(item)
     return ItemSummary(
         kind="product",
         platform=item["platform"],

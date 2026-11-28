@@ -276,7 +276,7 @@ def test_bigcommerce_summary_dict_is_not_a_bigcommerce_item():
     assert item_platform(summary) is None
 
 
-JSONLD_PRODUCT = {
+GENERIC_PRODUCT = {
     "@context": "https://schema.org",
     "@type": "Product",
     "name": "Hat &amp; Scarf",
@@ -289,32 +289,32 @@ JSONLD_PRODUCT = {
     },
     "image": ["https://j.test/hat.jpg"],
     "store": "j.test",
-    "platform": "jsonld",
+    "platform": "generic",
     "html_url": "https://j.test/products/hat",
     "image_urls": [],
 }
 
 
-def test_jsonld_product():
-    s = spy.summarize(JSONLD_PRODUCT)
-    assert (s.kind, s.platform, s.id, s.title) == ("product", "jsonld", "HAT-1", "Hat & Scarf")
+def test_generic_product():
+    s = spy.summarize(GENERIC_PRODUCT)
+    assert (s.kind, s.platform, s.id, s.title) == ("product", "generic", "HAT-1", "Hat & Scarf")
     assert (s.min_price, s.max_price, s.currency) == (Decimal("12.50"), Decimal("20"), "USD")
     assert (s.html_url, s.store) == ("https://j.test/products/hat", "j.test")
     assert s.image_urls == ["https://j.test/hat.jpg"]
 
 
-def test_jsonld_image_urls_do_not_depend_on_images():
+def test_generic_image_urls_do_not_depend_on_images():
     variant = {"@type": "Product", "sku": "S", "image": "/hat-s.jpg"}
     stub = {"@type": "Product", "url": "https://j.test/products/red", "image": "/red.jpg"}
-    group = {**JSONLD_PRODUCT, "@type": "ProductGroup", "hasVariant": [variant, stub]}
+    group = {**GENERIC_PRODUCT, "@type": "ProductGroup", "hasVariant": [variant, stub]}
     expected = ["https://j.test/hat.jpg", "https://j.test/hat-s.jpg"]
     assert spy.summarize(group).image_urls == expected
     assert spy.summarize({**group, "image_urls": [*expected, "x"]}).image_urls == expected
 
 
-def test_jsonld_product_group_prices_span_its_variants():
+def test_generic_product_group_prices_span_its_variants():
     group = {
-        **JSONLD_PRODUCT,
+        **GENERIC_PRODUCT,
         "@type": "ProductGroup",
         "productGroupID": "G1",
         "offers": None,
@@ -332,15 +332,15 @@ def test_jsonld_product_group_prices_span_its_variants():
     )
 
 
-def test_jsonld_product_without_prices():
-    s = spy.summarize({**JSONLD_PRODUCT, "offers": None})
+def test_generic_product_without_prices():
+    s = spy.summarize({**GENERIC_PRODUCT, "offers": None})
     assert (s.min_price, s.max_price, s.currency) == (None, None, None)
 
 
-def test_jsonld_summary_dict_is_not_a_jsonld_item():
+def test_generic_summary_dict_is_not_a_generic_item():
     from shopify_spy._flatten import flatten
 
-    assert flatten(spy.summarize(JSONLD_PRODUCT).asdict()) is None
+    assert flatten(spy.summarize(GENERIC_PRODUCT).asdict()) is None
 
 
 def _sq_variant(vid, price, *, sale=None, quantity=3, **attributes):
@@ -387,8 +387,8 @@ def test_squarespace_format_json_product():
     assert s.image_urls == ["https://images.test/tee.jpg"]
 
 
-def test_squarespace_product_page_item_is_a_jsonld_product():
-    page_item = JSONLD_PRODUCT | {"platform": "squarespace", "source": "product_page"}
+def test_squarespace_product_page_item_is_a_generic_product():
+    page_item = GENERIC_PRODUCT | {"platform": "squarespace", "source": "product_page"}
     s = spy.summarize(page_item)
     assert (s.kind, s.platform, s.id, s.title) == ("product", "squarespace", "HAT-1", "Hat & Scarf")
     assert (s.min_price, s.max_price, s.currency) == (Decimal("12.50"), Decimal("20"), "USD")
@@ -437,6 +437,6 @@ def test_squarespace_item_types_are_exported():
     hints = spy.SquarespaceProductItem.__annotations__
     assert get_args(hints["platform"]) == ("squarespace",)
     assert get_args(hints["source"]) == ("format_json",)
-    jsonld_hints = spy.JsonLdProductItem.__annotations__
-    assert get_args(jsonld_hints["platform"]) == ("jsonld", "squarespace")
-    assert get_args(jsonld_hints["source"]) == ("product_page",)
+    generic_hints = spy.GenericProductItem.__annotations__
+    assert get_args(generic_hints["platform"]) == ("generic", "squarespace")
+    assert get_args(generic_hints["source"]) == ("product_page",)

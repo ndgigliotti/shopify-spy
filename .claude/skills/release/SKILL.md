@@ -24,6 +24,11 @@ be undone.
   (`.../shopify-spy/blob/vX.Y.Z/docs/...`), so the PyPI page opens this
   release's docs. `tests/test_docs.py` fails until they match `pyproject.toml`.
 - `CHANGELOG.md` starts with a `## X.Y.Z` section describing what's on master.
+- The `uv run --with 'shopify-spy>=X.Y'` example's minimum is raised to this
+  release's X.Y (`LIBRARY_EPILOG` in `shopify_spy/cli.py`, the README,
+  `docs/install.md` and `docs/library.md`), so it installs a version with every
+  platform and option the help describes. Between releases it names the latest
+  published version, so the example on master still resolves.
 - X.Y.Z has no tag yet (`git tag -l vX.Y.Z`) and isn't on PyPI
   (`curl -s https://pypi.org/pypi/shopify-spy/X.Y.Z/json` is a 404).
 

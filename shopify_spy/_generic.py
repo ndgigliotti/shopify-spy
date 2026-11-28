@@ -2,7 +2,7 @@
 pages that the store's sitemaps list.
 
 A store whose pages have no Product data (it renders products in the browser, say)
-raises JsonLdError after ``PROBE_PAGES`` pages, so it reports ``error`` with the
+raises GenericError after ``PROBE_PAGES`` pages, so it reports ``error`` with the
 reason rather than ``empty``; ``ctx.no_item_reason`` holds that reason for the
 runner in case ``--bail`` stops the store first.
 
@@ -29,7 +29,7 @@ from shopify_spy._session import Emit, RequestFailed, StoreContext
 from shopify_spy._utils import canonicalize_url, hostname
 from shopify_spy._woocommerce import FETCH_CONCURRENCY, GONE, _site
 
-__all__ = ["JsonLdError", "read_pages", "run"]
+__all__ = ["GenericError", "read_pages", "run"]
 
 logger = logging.getLogger("shopify_spy")
 
@@ -49,7 +49,7 @@ _TAXONOMY_FRAGMENTS = (
 )
 
 
-class JsonLdError(Exception):
+class GenericError(Exception):
     """The store's sitemaps listed pages, but none gave a schema.org Product; no
     sitemap could be found; or the sitemaps to read for pages couldn't be read."""
 
@@ -86,15 +86,15 @@ async def read_pages(
     if not listing.roots:
         await pages.probe_others()
         if listing.answered:
-            raise JsonLdError(f"no sitemap found at {', '.join(listing.tried)}")
+            raise GenericError(f"no sitemap found at {', '.join(listing.tried)}")
         return False  # diagnose() reports the sitemaps' 404, 403 or robots.txt
     if pages.counts.checked == 0:
         if (reason := listing.no_page_reason(product_shape)) is not None:
             await pages.probe_others()
-            raise JsonLdError(reason)
+            raise GenericError(reason)
         return listing.complete  # no on-site page listed: empty
     await pages.probe_others()
-    raise JsonLdError(f"{pages.reason()}; {pages.stopped_by()}")
+    raise GenericError(f"{pages.reason()}; {pages.stopped_by()}")
 
 
 def _is_product_sitemap(url: str) -> bool:

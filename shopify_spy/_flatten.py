@@ -10,9 +10,9 @@ per variation, with the variation's own price, SKU and stock when the scrape fet
 its record (otherwise the product's). Magento products get a row per configurable
 variant, with the variant's own price, SKU and stock (a simple product gets one row
 with its own). BigCommerce products get a row per variant in the same way, with the
-GraphQL ``edges``/``node`` connections read through. JSON-LD products get a row per
+GraphQL ``edges``/``node`` connections read through. Generic products get a row per
 ``hasVariant`` Product, else per offer in a list of offers, else one row; Squarespace
-items read from product pages are JSON-LD products. Squarespace ``?format=json``
+items read from product pages are generic products. Squarespace ``?format=json``
 products get a row per ``structuredContent.variants`` entry. JSONL, JSON and XML keep
 each platform's native item shape.
 """
@@ -36,7 +36,7 @@ from shopify_spy._summary import (
     bigcommerce_price,
     html_url,
     is_bigcommerce,
-    is_jsonld,
+    is_generic,
     is_magento,
     is_squarespace,
     magento_price,
@@ -129,8 +129,8 @@ def _builder(item: dict[str, Any]) -> Callable[[dict[str, Any]], list[dict[str, 
         return _magento
     if is_squarespace(item):
         return _squarespace
-    if is_jsonld(item):
-        return _jsonld
+    if is_generic(item):
+        return _generic
     # Before WooCommerce: both have a prices dict
     if is_bigcommerce(item):
         return _bigcommerce
@@ -140,7 +140,7 @@ def _builder(item: dict[str, Any]) -> Callable[[dict[str, Any]], list[dict[str, 
 
 
 def item_platform(item: dict[str, Any]) -> str | None:
-    """``"shopify"``, ``"woocommerce"``, ``"magento"``, ``"bigcommerce"``, ``"jsonld"``
+    """``"shopify"``, ``"woocommerce"``, ``"magento"``, ``"bigcommerce"``, ``"generic"``
     or ``"squarespace"``; None when it isn't a scraped item."""
     builder = _builder(item)
     if builder is _jsonld:
@@ -374,7 +374,7 @@ def _magento_offer(item: dict[str, Any], fallback: dict[str, Any] | None = None)
     return offer
 
 
-def _jsonld(item: dict[str, Any]) -> list[dict[str, Any]]:
+def _generic(item: dict[str, Any]) -> list[dict[str, Any]]:
     summary = summarize(item)
     images = jsonld.image_urls(item.get("image"), item.get("html_url"))
     variants = jsonld.variants(item)
@@ -708,7 +708,7 @@ _PLATFORMS: dict[Callable[[dict[str, Any]], list[dict[str, Any]]], str] = {
     _woocommerce: "woocommerce",
     _magento: "magento",
     _bigcommerce: "bigcommerce",
-    _jsonld: "jsonld",
+    _generic: "generic",
     _squarespace: "squarespace",
 }
 

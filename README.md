@@ -28,7 +28,7 @@ uv add shopify-spy        # or: pip install shopify-spy
 
 # Or run either once, nothing to install
 uvx shopify-spy scrape --peek https://www.example.com
-uv run --with 'shopify-spy>=0.4' python script.py
+uv run --with 'shopify-spy>=0.5' python script.py
 
 # Excel output (--format xlsx) needs the excel extra: install 'shopify-spy[excel]'
 ```
@@ -55,8 +55,8 @@ spy scrape --platform bigcommerce https://www.example.com
 # Scrape a Squarespace store, from its product pages (one request per product)
 spy scrape --platform squarespace https://www.example.com --limit 100
 
-# Any other store, from its product pages' JSON-LD (one request per product)
-spy scrape --platform jsonld https://www.example.com --limit 100
+# Any other store, from its product pages' schema.org data (one request per product)
+spy scrape --platform generic https://www.example.com --limit 100
 
 # Several stores, with collections (Shopify only) and images
 spy scrape https://store1.com https://store2.com --collections --images
@@ -92,7 +92,7 @@ for store in run.result.failed:
 
 ### With a coding agent
 
-An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an item's shape, and a script run with `uv run --with 'shopify-spy>=0.4' python script.py` filters and saves only what the task needs. The CLI is simpler for whole-catalog dumps and image downloads. Everything an agent needs to work this out is in `spy scrape --help`, which prints plain, complete text when piped, and in `help(spy.scrape)`.
+An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an item's shape, and a script run with `uv run --with 'shopify-spy>=0.5' python script.py` filters and saves only what the task needs. The CLI is simpler for whole-catalog dumps and image downloads. Everything an agent needs to work this out is in `spy scrape --help`, which prints plain, complete text when piped, and in `help(spy.scrape)`.
 
 ## Features
 
@@ -116,7 +116,7 @@ An agent needs nothing installed. `uvx shopify-spy scrape --peek URL` shows an i
 | Magento | storefront GraphQL `products` query at `/graphql` | No authentication required; default store view |
 | BigCommerce | Storefront GraphQL `site.products` at `/graphql`, with the public API token from the homepage | Stencil storefronts whose theme exposes the token, and headless ones whose page names its `mybigcommerce.com` endpoint; default currency |
 | Squarespace | product pages from the sitemap, schema.org `Product` JSON-LD or microdata; with `--ignore-robots`, collection pages' `?format=json` | Squarespace's robots.txt disallows `?format=json`, so product pages are read by default, one request per product |
-| JSON-LD | product pages from the sitemaps, schema.org `Product` JSON-LD or microdata | Best-effort fallback; one request per product |
+| Generic | product pages from the sitemaps, schema.org `Product` JSON-LD or microdata | Best-effort fallback; one request per product |
 
 ## Documentation
 

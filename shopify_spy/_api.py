@@ -63,7 +63,7 @@ class ScrapeOptions(BaseModel):
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
     platform: Literal[
-        "shopify", "woocommerce", "magento", "bigcommerce", "jsonld", "squarespace"
+        "shopify", "woocommerce", "magento", "bigcommerce", "generic", "squarespace"
     ] = "shopify"
     products: bool = True
     collections: bool = False
@@ -106,7 +106,7 @@ def _prepare(
     if options.get("platform") == "auto":
         raise ValueError(
             "auto-detection isn't supported yet; "
-            "use 'shopify', 'woocommerce', 'magento', 'bigcommerce', 'jsonld' or 'squarespace'"
+            "use 'shopify', 'woocommerce', 'magento', 'bigcommerce', 'generic' or 'squarespace'"
         )
     proxy = options.get("proxy")
     if proxy is not None and not isinstance(proxy, str):
@@ -474,7 +474,7 @@ _SCRAPE_DOC = """
     Args:
         urls: A store URL or an iterable of them. Only the host matters; paths are
             ignored. One platform per call.
-        platform: "shopify", "woocommerce", "magento", "bigcommerce", "jsonld" or
+        platform: "shopify", "woocommerce", "magento", "bigcommerce", "generic" or
             "squarespace" (default {platform}). When a WooCommerce store's Store
             API is unavailable, its product pages are read instead: partial items
             in the Store API's shape with ``source="product_page"``. Magento
@@ -484,20 +484,21 @@ _SCRAPE_DOC = """
             read through the Storefront GraphQL API at ``/graphql`` (or the
             ``mybigcommerce.com`` endpoint a headless storefront's page names), with
             the public API token the storefront's homepage carries, in the default
-            currency; there are no BigCommerce collections. JSON-LD stores are
-            read from the product pages listed in their sitemaps: each page with
-            schema.org Product JSON-LD (or microdata) becomes an item, at one request per
-            product. It is a best-effort fallback for platforms without an
-            adapter, so ``max_items_per_store`` and the throttle matter.
+            currency; there are no BigCommerce collections. Generic stores (any
+            other platform) are read from the product pages listed in their
+            sitemaps: each page with schema.org Product JSON-LD (or microdata)
+            becomes an item, at one request per product. It is a best-effort
+            fallback for platforms without an adapter, so ``max_items_per_store``
+            and the throttle matter.
             Squarespace's robots.txt disallows ``?format=json``, so with
             ``respect_robots_txt`` (the default) "squarespace" reads the product
-            pages its sitemap lists as "jsonld" does (``source="product_page"``);
+            pages its sitemap lists as "generic" does (``source="product_page"``);
             with ``respect_robots_txt=False`` it reads the collections'
             ``?format=json`` product records, with every variant and its stock
             (``source="format_json"``), falling back to the product pages when no
             collection gives a product. The log says which source was read.
         products: Scrape products (default {products}). Shopify only; WooCommerce,
-            Magento, BigCommerce, JSON-LD and Squarespace always scrape products.
+            Magento, BigCommerce, generic and Squarespace always scrape products.
         collections: Also scrape collections (default {collections}). Shopify only.
         images: Download product images into ``images_dir/full/`` (default {images}).
             Requires ``images_dir``. Each item gains ``scraped_images`` records
@@ -594,12 +595,12 @@ _SCRAPE_DOC = """
     (status ``error``: an unexpected error, a Magento store whose ``/graphql``
     answered without products, with the GraphQL message in ``StoreResult.errors``,
     a BigCommerce store without a token on its homepage, or whose ``/graphql``
-    answered without products, a JSON-LD or Squarespace store whose pages have no
+    answered without products, a generic or Squarespace store whose pages have no
     Product data (with robots.txt ignored, a Squarespace store whose collections
     gave no product either), or a Squarespace store whose sitemap lists no product
     page); ``run.result.failed`` lists them with a status and, sometimes, a
     ``hint`` (e.g. a likely wrong ``platform``). A store stopped by ``bail`` can
-    also end ``error`` with a reason when its adapter recorded one (JSON-LD pages,
+    also end ``error`` with a reason when its adapter recorded one (generic pages,
     or Squarespace collection pages, checked without a product). An empty store is
     not a failure. A store's ``hint`` and ``products_from`` also name the
     ``myshopify.com`` domain a headless store's products came from. Invalid URLs and options raise
@@ -608,14 +609,14 @@ _SCRAPE_DOC = """
     URL is on one.
 
     Items are each platform's native shape plus ``store``, ``platform``
-    ("shopify", "woocommerce", "magento", "bigcommerce", "jsonld" or "squarespace")
-    and ``image_urls`` (Magento, BigCommerce, JSON-LD and Squarespace items also get
-    ``html_url``; a JSON-LD item is the page's schema.org Product or ProductGroup
+    ("shopify", "woocommerce", "magento", "bigcommerce", "generic" or "squarespace")
+    and ``image_urls`` (Magento, BigCommerce, generic and Squarespace items also get
+    ``html_url``; a generic item is the page's schema.org Product or ProductGroup
     node, with ``@type``, ``name``, ``offers`` and so on, and so is a Squarespace
     item with ``source="product_page"``; one with ``source="format_json"`` is the
     Squarespace product record; see ``ShopifyProductItem``,
     ``WooCommerceProductItem``, ``MagentoProductItem``, ``BigCommerceProductItem``,
-    ``JsonLdProductItem``, ``SquarespaceProductItem``); ``write_items(...,
+    ``GenericProductItem``, ``SquarespaceProductItem``); ``write_items(...,
     schema="unified")`` flattens them into one row per variant with the same
     columns on every platform.
 

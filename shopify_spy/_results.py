@@ -50,7 +50,7 @@ _PLATFORM_NAMES = {
     "shopify": "Shopify",
     "woocommerce": "WooCommerce",
     "magento": "Magento",
-    "jsonld": "JSON-LD",
+    "generic": "the generic platform",
     "bigcommerce": "BigCommerce",
     "squarespace": "Squarespace",
 }

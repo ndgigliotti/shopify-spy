@@ -307,5 +307,5 @@ def test_bigcommerce_gtin12_in_the_row():
     from shopify_spy._flatten import flatten
 
     found = parse((FIXTURES / "andoverfabrics-empty-value.html").read_text(), ANDOVER)
-    (row,) = flatten(found | {"store": "andoverfabrics.com", "platform": "jsonld"})
+    (row,) = flatten(found | {"store": "andoverfabrics.com", "platform": "generic"})
     assert (row["gtin"], row["sku"], row["available"]) == ("199716017379", "A-10420-B", False)

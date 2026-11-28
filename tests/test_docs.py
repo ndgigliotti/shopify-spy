@@ -80,8 +80,8 @@ def test_scrape_doc_names_every_platform():
     # Lowercase quoted platform lists, which a case-sensitive grep for stale
     # three-platform text misses
     doc = spy.scrape.__doc__
-    assert doc.count('"jsonld"') >= 2
-    assert "JsonLdProductItem" in doc
+    assert doc.count('"generic"') >= 2
+    assert "GenericProductItem" in doc
     assert doc.count('"squarespace"') >= 2
     assert "SquarespaceProductItem" in doc
     assert '"woocommerce" or "magento"' not in doc
