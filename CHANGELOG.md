@@ -18,7 +18,7 @@
 - Throttling is more conservative by default. A robots.txt `Crawl-delay` (for the
   `shopify-spy` group, else `*`) spaces that host's requests, capped at the
   throttle's `max_delay` and applied even with `--no-throttle`. Throttled page and
-  API requests to one host are at least 1 second apart, set by the new
+  API requests to one host are at least 1 second apart (typically 1 to 1.5 seconds), set by the new
   `--min-delay` option, config `throttle.min_delay` and library option
   `throttle_min_delay`. Throttled image downloads from one host, the store's own
   included, are at least 0.25 seconds apart, set by the new `--image-delay`

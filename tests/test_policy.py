@@ -138,6 +138,38 @@ async def test_wait_turn_jitters_above_min_delay_when_the_delay_is_below_it(monk
     assert t2 - t1 >= 0.29  # 1.5 * min_delay, not a fixed min_delay beat
 
 
+async def test_wait_turn_jitters_only_upward_from_min_delay(monkeypatch):
+    """Below the minimum gap the draw is uniform(1.0, 1.5), so no send lands under it
+    and none is pinned to it by the clamp."""
+    draws = []
+
+    def uniform(a, b):
+        draws.append((a, b))
+        return a
+
+    monkeypatch.setattr(policy.random, "uniform", uniform)
+    s = slot(start_delay=0.0, min_delay=0.2)
+    async with asyncio.timeout(2):
+        await s.wait_turn()
+        await s.wait_turn()
+    assert draws == [(1.0, 1.5)]
+
+
+async def test_wait_turn_jitters_around_a_delay_above_min_delay(monkeypatch):
+    draws = []
+
+    def uniform(a, b):
+        draws.append((a, b))
+        return 1.0
+
+    monkeypatch.setattr(policy.random, "uniform", uniform)
+    s = slot(start_delay=0.3, min_delay=0.1)
+    async with asyncio.timeout(2):
+        await s.wait_turn()
+        await s.wait_turn()
+    assert draws == [(0.5, 1.5)]
+
+
 def test_default_image_delay_is_a_quarter_second():
     assert ThrottleSettings().image_delay == 0.25
 
