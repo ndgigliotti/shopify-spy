@@ -867,6 +867,26 @@ async def test_aclose_after_the_run_finished_drops_buffered_items():
     assert run.result.stores[0].finish_reason == "finished"
 
 
+async def test_aclose_after_a_runner_bug_still_raises_it(monkeypatch):
+    store = _runner.Runner._store
+
+    async def buggy_store(self, *args):
+        await store(self, *args)
+        raise RuntimeError("runner bug")
+
+    monkeypatch.setattr(_runner.Runner, "_store", buggy_store)
+    async with asyncio.timeout(5):
+        run = spy.scrape_async(STORE, fetcher_factory=fake(ok_routes(n=3)), **FAST)
+        items = aiter(run)
+        await anext(items)
+        assert run._runner is not None and run._runner._driver is not None
+        await run._runner._driver  # the failure is queued behind two items
+        await run.aclose()
+        with pytest.raises(RuntimeError, match="runner bug"):
+            await anext(items)
+        assert [item async for item in items] == []
+
+
 async def test_rejected_second_consumer_leaves_the_run_going():
     async with asyncio.timeout(5):
         run = spy.scrape_async(STORE, fetcher_factory=fake(ok_routes(n=3)), **FAST)
