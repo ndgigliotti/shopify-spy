@@ -46,7 +46,7 @@ It covers commits, commit messages, PR descriptions, reviews and GitHub comments
      reports the right one.
    - `dependencies` match `[project] dependencies` in `pyproject.toml` at the tag,
      as unversioned attributes. An extra on a dependency is
-     `++ <pkg>.optional-dependencies.<extra>`, as `httpx[socks]` is.
+     `++ <pkg>.optional-dependencies.<extra>` for `pkg[extra]`.
    - If nixpkgs ships a dependency older than our lower bound, the runtime-deps
      check fails. Use `pythonRelaxDeps` with a comment saying why it's safe, not an
      override, or raise it with the user if the older version really won't work.

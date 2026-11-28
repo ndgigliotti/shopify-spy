@@ -407,7 +407,8 @@ def scrape(
             "--user-agent",
             "-A",
             help="Fixed User-Agent header, never swapped; turns impersonation off "
-            "(requests go through httpx). Can't be combined with --impersonate.",
+            "(plain requests through curl_cffi, no browser profile). Can't be combined "
+            "with --impersonate.",
             rich_help_panel=NETWORK_PANEL,
         ),
     ] = None,
