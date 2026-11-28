@@ -584,6 +584,8 @@ class CurlCffiFetcher:
     It keeps HttpxFetcher's contract: no redirects followed, no cookies kept, the
     MAX_SIZE cap, the same errors, a total deadline on the loop clock, and proxies
     chosen by httpx's rules (an explicit ``proxy`` replaces the environment's).
+    CA trust differs: curl_cffi reads SSL_CERT_FILE (and CURL_CA_BUNDLE or
+    REQUESTS_CA_BUNDLE) once, at import, and never SSL_CERT_DIR.
     Each request uses ``Request.identity.impersonate``, or ``impersonate`` when that
     is None. The profile brings its own user agent and headers, so the identity's
     are never applied; ``Request.headers`` override the profile's.
