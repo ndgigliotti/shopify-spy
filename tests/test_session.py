@@ -14,6 +14,7 @@ from shopify_spy._fetch import (
     FetchConnectionError,
     FetchTimeout,
     FetchTLSError,
+    FetchUndecodable,
     Seq,
 )
 from shopify_spy._policy import IdentityPool, RetryPolicy, ThrottleSettings, now
@@ -794,6 +795,14 @@ async def test_tls_error_not_retried():
         await get(session, f"{STORE}/p")
     assert fetcher.count(f"{STORE}/p") == 1
     assert session.stats.tls_errors == 1
+
+
+async def test_undecodable_body_not_retried():
+    session, fetcher = make_session({f"{STORE}/p": FetchUndecodable("utf-8, gzip")})
+    with pytest.raises(RequestFailed):
+        await get(session, f"{STORE}/p")
+    assert fetcher.count(f"{STORE}/p") == 1
+    assert session.stats.transport_errors == {"FetchUndecodable": 1}
 
 
 @pytest.mark.parametrize("status", [429, 503])

@@ -141,6 +141,13 @@
 
 ### Fixed
 
+- A POST (BigCommerce's `/graphql`) whose response libcurl can't decode is no longer
+  sent a second time inside the transport to read the body raw. It fails once,
+  without retries, since the same encoding would refuse every resend; GET requests
+  still reread the body raw.
+- A request already waiting out the gap since the host's previous request no longer
+  leaves before a `Retry-After` pause the host got meanwhile: it waits out the pause
+  too, then the slowed spacing, as the docs say.
 - An unknown key in the config file, such as `scrape: {limt: 1}`, was ignored,
   silently dropping the setting; it is now an error naming the key, its section and
   the closest known key (`unknown key 'limt' in the scrape section; did you mean
