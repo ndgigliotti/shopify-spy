@@ -6,6 +6,7 @@ redirects, cookies, sizes, encodings, deadlines, errors and proxies.
 
 import asyncio
 import base64
+import dataclasses
 import gzip
 import hashlib
 import http.server
@@ -33,6 +34,7 @@ from shopify_spy._fetch import (
     FetchTimeout,
     FetchTLSError,
     FetchTooLarge,
+    FetchUndecodable,
     Identity,
     Request,
 )
@@ -89,6 +91,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._route()
         except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
             pass
+
+    def do_POST(self):  # noqa: N802
+        self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        self.server.paths.append(f"POST {self.path}")  # type: ignore[attr-defined]
+        self._route()
 
     def _write_forever(self, chunk: bytes, pause: float) -> None:
         deadline = time.monotonic() + ENDLESS
@@ -505,6 +512,31 @@ def test_paused_clock_excludes_time_outside_the_loop(server):
 async def test_bodies_are_decoded(server, path, expected, transport):
     response = await fetch(f"{server.url}{path}", transport)
     assert (response.status, response.body) == (200, expected)
+
+
+@pytest.mark.parametrize(("path", "expected"), [("/gzip", PAYLOAD), ("/br", b"hello")])
+@pytest.mark.parametrize("transport", ["profile", "plain"])
+async def test_post_bodies_are_decoded(server, path, expected, transport):
+    request = dataclasses.replace(
+        make_request(f"{server.url}{path}"), method="POST", body=b'{"query": "{}"}'
+    )
+    async with _fetcher(transport) as fetcher:
+        response = await fetcher.fetch(request)
+    assert (response.status, response.body) == (200, expected)
+
+
+@pytest.mark.parametrize("transport", ["profile", "plain"])
+async def test_undecodable_post_is_never_sent_twice(server, transport):
+    # Reading the body raw means sending the request again; a POST's retries are the
+    # session's to count and pace (BigCommerce queries /graphql over POST)
+    request = dataclasses.replace(
+        make_request(f"{server.url}/gzip-unknown"), method="POST", body=b'{"query": "{}"}'
+    )
+    server.paths.clear()
+    async with _fetcher(transport) as fetcher:
+        with pytest.raises(FetchUndecodable):
+            await fetcher.fetch(request)
+    assert server.paths == ["POST /gzip-unknown"]
 
 
 @pytest.mark.parametrize("path", ["/gzip-bomb", "/gzip-bomb-unknown"])

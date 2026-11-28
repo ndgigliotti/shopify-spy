@@ -128,6 +128,10 @@ class FetchIncomplete(FetchError):
     """The connection closed before the body was complete."""
 
 
+class FetchUndecodable(FetchIncomplete):
+    """The body's Content-Encoding can't be decoded, so sending it again won't help."""
+
+
 class FetchInvalidURL(FetchError):
     """The URL can't be requested (control characters, a bad host, ...)."""
 
@@ -554,6 +558,10 @@ MAX_CURL_CLIENTS = 100
 _HTTPS_PROXY_WARNING = "Make sure you are using https over https proxy"
 
 
+# Methods the fetcher may send twice to read one response (RFC 9110 9.2.1)
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
 class _UndecodableBody(Exception):
     """libcurl refused a Content-Encoding before writing any body."""
 
@@ -739,8 +747,11 @@ class CurlCffiFetcher:
             async with asyncio.timeout(request.timeout):
                 try:
                     return await self._attempt(profile, False, request, route, proxy)
-                except _UndecodableBody:
-                    # Every request the adapters make is a GET, so resending is safe
+                except _UndecodableBody as exc:
+                    # Reading the body raw means sending the request again, which a
+                    # POST (BigCommerce's /graphql) must not get from the fetcher
+                    if request.method not in _SAFE_METHODS:
+                        raise FetchUndecodable(f"undecodable response body: {exc}") from exc
                     return await self._attempt(profile, True, request, route, proxy)
         except TimeoutError as exc:
             raise FetchTimeout(f"no complete response within {request.timeout}s") from exc

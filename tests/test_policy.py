@@ -469,6 +469,21 @@ async def test_wait_turn_honors_a_pause_extended_while_waiting():
     assert loop.time() - t0 >= 0.2
 
 
+async def test_wait_turn_honors_a_pause_imposed_while_spacing(no_jitter):
+    # A Retry-After that arrives while a queued request sleeps out the gap since the
+    # previous send must hold that request too, not just the ones queued after it
+    s = slot(start_delay=0.1, max_delay=0.2)  # the slowed pace stays below the pause
+    loop = asyncio.get_running_loop()
+    async with asyncio.timeout(2):
+        await s.wait_turn()
+        t0 = loop.time()
+        waiter = asyncio.create_task(s.wait_turn())
+        await asyncio.sleep(0.02)  # the waiter is now sleeping out the 0.1 s gap
+        s.pause(0.3)
+        await waiter
+    assert loop.time() - t0 >= 0.3
+
+
 def test_adjust_ignores_429_but_follows_slow_503():
     # pause() owns 429s; a slow 503 still says the host is overloaded
     s = slot(start_delay=1.0)
