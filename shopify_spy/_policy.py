@@ -114,10 +114,9 @@ class HostSlot:
                 # a delay just above it isn't faster on average than one just below;
                 # --no-throttle keeps just the Crawl-delay
                 pace = max(self.delay, spacing)
-                if self.throttle.enabled and pace > 0:
+                if self.throttle.enabled:
                     jitter = self.throttle.jitter
-                    low = max(1 - jitter, spacing / pace)
-                    spacing = max(pace * random.uniform(low, 1 + jitter), spacing)
+                    spacing = random.uniform(max(pace * (1 - jitter), spacing), pace * (1 + jitter))
                 wait = spacing - (now() - self.last_seen)
                 if wait > 0:
                     await asyncio.sleep(wait)

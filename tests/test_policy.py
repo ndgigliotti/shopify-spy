@@ -22,7 +22,7 @@ from shopify_spy._policy import (
 
 @pytest.fixture
 def no_jitter(monkeypatch):
-    monkeypatch.setattr(policy.random, "uniform", lambda a, b: 1.0)
+    monkeypatch.setattr(policy.random, "uniform", lambda a, b: (a + b) / 2)
 
 
 def slot(**throttle) -> HostSlot:
@@ -99,7 +99,7 @@ def test_disabled_throttle_has_zero_delay_and_ignores_adjust():
 
 @pytest.fixture
 def low_jitter(monkeypatch):
-    monkeypatch.setattr(policy.random, "uniform", lambda a, b: 0.5)
+    monkeypatch.setattr(policy.random, "uniform", lambda a, b: a)
 
 
 def test_default_min_delay_is_one_second():
@@ -127,7 +127,7 @@ async def test_wait_turn_never_closer_than_min_delay(low_jitter):
 
 
 async def test_wait_turn_jitters_above_min_delay_when_the_delay_is_below_it(monkeypatch):
-    monkeypatch.setattr(policy.random, "uniform", lambda a, b: 1.5)
+    monkeypatch.setattr(policy.random, "uniform", lambda a, b: b)
     s = slot(start_delay=0.0, min_delay=0.2)
     loop = asyncio.get_running_loop()
     async with asyncio.timeout(2):
@@ -139,7 +139,7 @@ async def test_wait_turn_jitters_above_min_delay_when_the_delay_is_below_it(monk
 
 
 async def test_wait_turn_jitters_only_upward_from_min_delay(monkeypatch):
-    """Below the minimum gap the draw is uniform(1.0, 1.5), so no send lands under it
+    """Below the minimum gap the draw is 1 to 1.5 times it, so no send lands under it
     and none is pinned to it by the clamp."""
     draws = []
 
@@ -152,7 +152,7 @@ async def test_wait_turn_jitters_only_upward_from_min_delay(monkeypatch):
     async with asyncio.timeout(2):
         await s.wait_turn()
         await s.wait_turn()
-    assert draws == [(1.0, 1.5)]
+    assert draws == [(0.2, pytest.approx(0.3))]
 
 
 async def test_wait_turn_jitters_around_a_delay_above_min_delay(monkeypatch):
@@ -160,14 +160,14 @@ async def test_wait_turn_jitters_around_a_delay_above_min_delay(monkeypatch):
 
     def uniform(a, b):
         draws.append((a, b))
-        return 1.0
+        return (a + b) / 2
 
     monkeypatch.setattr(policy.random, "uniform", uniform)
     s = slot(start_delay=0.3, min_delay=0.1)
     async with asyncio.timeout(2):
         await s.wait_turn()
         await s.wait_turn()
-    assert draws == [(0.5, 1.5)]
+    assert draws == [(pytest.approx(0.15), pytest.approx(0.45))]
 
 
 async def test_jitter_setting_scales_the_spread(monkeypatch):
@@ -184,7 +184,7 @@ async def test_jitter_setting_scales_the_spread(monkeypatch):
         for s in (below, above):
             await s.wait_turn()
             await s.wait_turn()
-    assert draws == [(1.0, 1.2), (0.8, 1.2)]
+    assert [x for d in draws for x in d] == pytest.approx([0.2, 0.24, 0.24, 0.36])
 
 
 async def test_jitter_draw_starts_at_the_minimum_just_above_it(monkeypatch):
@@ -202,7 +202,7 @@ async def test_jitter_draw_starts_at_the_minimum_just_above_it(monkeypatch):
         await s.wait_turn()
         await s.wait_turn()
     [(low, high)] = draws
-    assert low == pytest.approx(0.2 / 0.202) and high == 1.5
+    assert low == 0.2 and high == pytest.approx(0.303)
 
 
 async def test_zero_jitter_spaces_exactly_at_the_minimum():
@@ -290,7 +290,7 @@ async def test_crawl_delay_spaces_requests_without_throttle():
 
 
 async def test_crawl_delay_not_jittered_without_throttle(monkeypatch):
-    monkeypatch.setattr(policy.random, "uniform", lambda a, b: 1.5)
+    monkeypatch.setattr(policy.random, "uniform", lambda a, b: b)
     s = slot(enabled=False)
     s.set_crawl_delay(0.2)
     loop = asyncio.get_running_loop()
