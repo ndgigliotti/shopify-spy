@@ -860,7 +860,8 @@ async def test_aclose_after_the_run_finished_drops_buffered_items():
         run = spy.scrape_async(STORE, fetcher_factory=fake(ok_routes(n=3)), **FAST)
         items = aiter(run)
         await anext(items)
-        await asyncio.sleep(0.1)  # the driver finishes, leaving two items queued
+        assert run._runner is not None and run._runner._driver is not None
+        await run._runner._driver  # the driver finishes, leaving two items queued
         await run.aclose()
         assert [item async for item in items] == []
     assert run.result.stores[0].finish_reason == "finished"
