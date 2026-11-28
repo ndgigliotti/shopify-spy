@@ -744,10 +744,8 @@ class CurlCffiFetcher:
                 try:
                     return await self._attempt(profile, False, request, route, proxy)
                 except _UndecodableBody as exc:
-                    # Reading the body raw means sending the request again. A GET is
-                    # safe to resend; a POST (BigCommerce's /graphql) is not, so it
-                    # fails here and the session's retry policy decides, counted and
-                    # paced like any other retry
+                    # Reading the body raw means sending the request again, which a
+                    # POST (BigCommerce's /graphql) must not get from the fetcher
                     if request.method not in _SAFE_METHODS:
                         raise FetchIncomplete(f"undecodable response body: {exc}") from exc
                     return await self._attempt(profile, True, request, route, proxy)
