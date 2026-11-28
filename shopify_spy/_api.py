@@ -56,7 +56,9 @@ class ScrapeOptions(BaseModel):
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
-    platform: Literal["shopify", "woocommerce", "magento", "bigcommerce", "jsonld"] = "shopify"
+    platform: Literal[
+        "shopify", "woocommerce", "magento", "bigcommerce", "jsonld", "squarespace"
+    ] = "shopify"
     products: bool = True
     collections: bool = False
     images: bool = False
@@ -90,7 +92,7 @@ def _prepare(
     if options.get("platform") == "auto":
         raise ValueError(
             "auto-detection isn't supported yet; "
-            "use 'shopify', 'woocommerce', 'magento', 'bigcommerce' or 'jsonld'"
+            "use 'shopify', 'woocommerce', 'magento', 'bigcommerce', 'jsonld' or 'squarespace'"
         )
     proxy = options.get("proxy")
     if proxy is not None and not isinstance(proxy, str):

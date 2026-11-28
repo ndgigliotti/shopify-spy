@@ -23,6 +23,7 @@ from shopify_spy import _bigcommerce as bigcommerce
 from shopify_spy import _generic as generic
 from shopify_spy import _magento as magento
 from shopify_spy import _shopify as shopify
+from shopify_spy import _squarespace as squarespace
 from shopify_spy import _woocommerce as woocommerce
 from shopify_spy._fetch import FetcherFactory, HttpxFetcher, redact_url, uses_proxy
 from shopify_spy._images import RESULT_FIELD as IMAGES_FIELD
@@ -51,6 +52,7 @@ ADAPTERS: dict[str, Callable[[StoreContext, Emit], Awaitable[bool]]] = {
     "magento": magento.run,
     "bigcommerce": bigcommerce.run,
     "jsonld": generic.run,
+    "squarespace": squarespace.run,
 }
 
 

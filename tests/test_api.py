@@ -77,8 +77,15 @@ def test_paths_ignored():
 
 
 def test_platform_auto_rejected():
-    with pytest.raises(ValueError, match="auto-detection isn't supported yet"):
+    with pytest.raises(ValueError, match="auto-detection isn't supported yet") as exc:
         spy.scrape(STORE, platform="auto")
+    assert "'squarespace'" in str(exc.value)
+
+
+def test_platform_squarespace_accepted_and_a_typo_rejected():
+    spy.scrape(STORE, platform="squarespace")  # nothing runs until iteration
+    with pytest.raises(ValueError, match="platform"):
+        spy.scrape(STORE, platform="squarespac")
 
 
 def test_images_without_images_dir():

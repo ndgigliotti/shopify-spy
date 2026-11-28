@@ -52,6 +52,7 @@ _PLATFORM_NAMES = {
     "magento": "Magento",
     "jsonld": "JSON-LD",
     "bigcommerce": "BigCommerce",
+    "squarespace": "Squarespace",
 }
 
 _LABELS = {
