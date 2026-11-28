@@ -197,13 +197,11 @@ class Runner:
         if self._driver is None:
             return
         try:
-            if not self._driver.done():
-                self._driver.cancel()
-                try:
-                    await self._driver
-                except asyncio.CancelledError:
-                    if asyncio.current_task() and asyncio.current_task().cancelling():
-                        raise
+            self._driver.cancel()  # a no-op once the driver is done
+            await self._driver
+        except asyncio.CancelledError:
+            if asyncio.current_task() and asyncio.current_task().cancelling():
+                raise
         finally:
             while not self.queue.empty():
                 self.queue.get_nowait()
