@@ -908,3 +908,20 @@ def test_collections_come_from_the_myshopify_domain():
     assert [(i["url"], i["store"]) for i in items if "collection" in i] == [
         (f"{STORE}/collections/c.json", "shop.test")
     ]
+
+
+# --- Completeness: a store missing part of its catalog is partial ---
+
+
+def test_repeated_bulk_page_falls_back_to_the_sitemap():
+    # A server that ignores ?page= repeats page 1: product p250 is only in the sitemap
+    routes = {
+        bulk_url(1): products(250),
+        bulk_url(2): products(250),
+        SITEMAP: urlset(*(f"{STORE}/products/p{i}" for i in range(251))),
+        f"{STORE}/products/p250.json": {"product": product(250)},
+    }
+    items, result, fetcher = scrape(routes)
+    assert fetcher.count(bulk_url(3)) == 0
+    assert len(items) == 251
+    assert (result.stores[0].status, result.stores[0].complete) == ("ok", True)

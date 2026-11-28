@@ -150,6 +150,9 @@
   nothing, and a store's hint replaces the status hint it would otherwise share
   with other stores. The wrong-platform hint now reads the same in the CLI and the
   library (`looks like WooCommerce; use the woocommerce platform`).
+- A Shopify store whose `/products.json` repeats a page (a server that ignores
+  `page`) now reads the sitemap for the products past it, instead of ending
+  `ok` with the rest missing.
 
 ## 0.5.1
 

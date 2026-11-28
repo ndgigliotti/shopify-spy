@@ -178,7 +178,10 @@ def test_bulk_paging_stops_when_pages_repeat():
     fetcher = FakeFetcher({bulk_url(i): same_page for i in range(1, 5)})
     items, result, _ = scrape(fetcher)
     assert len(items) == 250
-    assert result.stores[0].status == spy.StoreStatus.ok
+    assert fetcher.count(bulk_url(3)) == 0
+    # The repeat proves nothing about the rest, and there's no sitemap to fill it
+    assert fetcher.count(f"{STORE}/sitemap.xml") == 1
+    assert result.stores[0].status == spy.StoreStatus.partial
 
 
 def test_woocommerce_paging_stops_when_pages_repeat():

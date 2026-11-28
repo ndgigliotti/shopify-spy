@@ -338,10 +338,12 @@ async def _page_products(
         logger.info(
             "%s: %d products (%d new) from %s", label, len(products), len(new), response.url
         )
-        # A server that ignores `page` would otherwise repeat this page forever
+        # A server that ignores `page` would otherwise repeat this page forever. A
+        # repeated bulk page says nothing about the products past it, so the sitemap
+        # still has to fill the gap; a collection's are left to the sitemap anyway
         if handles and (handles == previous if overlapping else not new):
             logger.warning("%s page repeated earlier products; stopping at %s", label, response.url)
-            return done(Paging.COMPLETE)
+            return done(Paging.COMPLETE if overlapping else Paging.FAILED)
         previous = handles
         seen |= handles
         found += len(new)
