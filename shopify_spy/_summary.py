@@ -18,7 +18,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from shopify_spy._bigcommerce import image_list
-from shopify_spy._magento import gallery_urls
+from shopify_spy._magento import _dig, gallery_urls
 from shopify_spy._utils import dicts
 
 logger = logging.getLogger("shopify_spy")
@@ -203,9 +203,7 @@ def _magento(item: dict[str, Any]) -> ItemSummary:
 def bigcommerce_price(prices: Any, *keys: str) -> tuple[Decimal | None, str | None]:
     """The amount and currency of the BigCommerce ``Money`` at ``prices[keys...]``
     (say ``"price"``, or ``"priceRange", "min"``), or Nones if absent."""
-    money = prices
-    for key in keys:
-        money = money.get(key) if isinstance(money, dict) else None
+    money = _dig(prices, *keys)
     if not isinstance(money, dict):
         return None, None
     currency = money.get("currencyCode")

@@ -24,7 +24,7 @@ from html.parser import HTMLParser
 from typing import Any
 
 from shopify_spy._bigcommerce import image_list, nodes
-from shopify_spy._magento import gallery_urls
+from shopify_spy._magento import _dig, gallery_urls
 from shopify_spy._summary import (
     bigcommerce_price,
     html_url,
@@ -371,10 +371,10 @@ def _bigcommerce(item: dict[str, Any]) -> list[dict[str, Any]]:
         "id": item.get("entityId"),
         "handle": path.strip("/") or None if isinstance(path, str) else None,
         "title": summary.title,
-        "vendor": _field(item.get("brand"), "name"),
+        "vendor": _dig(item, "brand", "name"),
         "categories": _names(nodes(item.get("categories"))),
         "options": _join(o.get("displayName") for o in options),
-        "created_at": _field(item.get("createdAt"), "utc"),
+        "created_at": _dig(item, "createdAt", "utc"),
         "description": _text(item.get("description")),
         "html_url": item.get("html_url"),
         "image_url": images[0] if images else None,
@@ -403,7 +403,7 @@ def _bigcommerce_variant(
         {"variant_id": variant.get("entityId"), "is_purchasable": variant.get("isPurchasable")}
         | _variant_options(labels, option_ids)
         | _bigcommerce_offer(variant, fallback=item)
-        | {"variant_image_url": _field(variant.get("defaultImage"), "urlOriginal")}
+        | {"variant_image_url": _dig(variant, "defaultImage", "urlOriginal")}
     )
 
 
@@ -430,22 +430,18 @@ def _bigcommerce_offer(
         "sku": data.get("sku"),
         "price": price,
         "compare_at_price": was[0] if was else None,
-        "available": _field(data.get("inventory"), "isInStock"),
+        "available": _dig(data, "inventory", "isInStock"),
     }
 
 
 def _bigcommerce_reviews(summary: Any) -> tuple[Decimal | None, Any]:
     """The average rating (None without reviews) and the review count."""
-    count = _field(summary, "numberOfReviews")
-    total = _field(summary, "summationOfRatings")
+    count = _dig(summary, "numberOfReviews")
+    total = _dig(summary, "summationOfRatings")
     numeric = all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in (count, total))
     if not numeric or count <= 0:
         return None, count
     return (Decimal(str(total)) / Decimal(str(count))).quantize(Decimal("0.01")), count
-
-
-def _field(value: Any, key: str) -> Any:
-    return value.get(key) if isinstance(value, dict) else None
 
 
 _PLATFORMS: dict[Callable[[dict[str, Any]], list[dict[str, Any]]], str] = {
