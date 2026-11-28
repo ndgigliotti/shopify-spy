@@ -136,6 +136,12 @@ class _JsonSource:
                 raise SquarespaceError(f"no sitemap found at {', '.join(self.listing.tried)}")
             return False  # diagnose() reports the sitemap's 404, 403 or robots.txt
         if not self.collections:
+            if self.listing.unread:
+                # diagnose() would call it empty: the sitemap index's 2xx is a success
+                await generic._probe_others(self.ctx)
+                raise SquarespaceError(
+                    f"no page listed; unreadable sitemaps: {', '.join(self.listing.unread)}"
+                )
             if self.listing.filtered:
                 await generic._probe_others(self.ctx)
                 raise SquarespaceError(

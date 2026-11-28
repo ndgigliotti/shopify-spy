@@ -7,7 +7,7 @@ import pytest
 
 from shopify_spy._fetch import FetchConnectionError
 from shopify_spy._squarespace import collection_path, is_product_url
-from tests.flow_support import STORE, product_page, requested, scrape, urlset
+from tests.flow_support import STORE, product_page, requested, scrape, sitemapindex, urlset
 
 ROBOTS = f"{STORE}/robots.txt"
 SITEMAP = f"{STORE}/sitemap.xml"
@@ -280,6 +280,16 @@ def test_sitemap_without_product_pages_is_an_error(respect):
     )
     assert requested(fetcher)[0] == SITEMAP
     assert not any(page in requested(fetcher) for page in OTHER_PAGES)
+
+
+@BOTH_MODES
+def test_unreadable_child_sitemap_is_an_error(respect):
+    child = f"{STORE}/sitemap-products.xml"
+    routes = {SITEMAP: sitemapindex(child), child: (503, "")}
+    _, result, _ = scrape_sq(routes, respect_robots_txt=respect)
+    [s] = result.stores
+    assert s.status == "error"
+    assert f"no page listed; unreadable sitemaps: {child}" in s.errors[0]
 
 
 @pytest.mark.parametrize(("respect", "status"), [(True, "robots_blocked"), (False, "ok")])
